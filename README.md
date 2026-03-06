@@ -91,6 +91,11 @@ capture-app --interactive
   - fallback from `window` to `fullscreen`/`region`
   - fallback from `region` to `fullscreen`
   - run install commands directly from the prompt
+- Bash menu (`scripts/menu.sh`) includes the same interactive recovery options.
+- Go TUI (`screeny-tui`) applies automatic recovery for common cases:
+  - disable clipboard when `wl-copy` is missing
+  - fallback to fullscreen when mode-specific tools are missing
+  - show install hints when manual installation is required
 - Use `capture-app --doctor` to print a full dependency readiness report.
 
 If no mode is provided, the app uses `default_capture_mode` from config.

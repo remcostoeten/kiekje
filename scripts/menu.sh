@@ -154,6 +154,165 @@ run_capture() {
   "$RESOLVED_APP_BIN" "$mode"
 }
 
+run_capture_command() {
+  local mode="$1"
+  if ! resolve_app_bin; then
+    return 1
+  fi
+  "$RESOLVED_APP_BIN" "$mode" 2>&1
+}
+
+has_missing_dep() {
+  local output="$1"
+  local dep="$2"
+  grep -Eq "^[[:space:]]*-[[:space:]]+${dep}[[:space:]]*\\(" <<<"$output"
+}
+
+extract_install_commands() {
+  local output="$1"
+  grep -E "^[[:space:]]*Install:[[:space:]]+" <<<"$output" \
+    | sed -E 's/^[[:space:]]*Install:[[:space:]]+//' \
+    | sed '/^[[:space:]]*$/d' \
+    | awk '!seen[$0]++'
+}
+
+run_doctor() {
+  if ! resolve_app_bin; then
+    return 1
+  fi
+  "$RESOLVED_APP_BIN" --doctor || true
+}
+
+attempt_install_commands() {
+  local output="$1"
+  local cmd
+  while IFS= read -r cmd; do
+    [[ -z "$cmd" ]] && continue
+    read -r -p "Run '${cmd}' now? [y/N]: " yn
+    case "${yn:-N}" in
+      y|Y|yes|YES)
+        if sh -lc "$cmd"; then
+          ok "Install command completed."
+        else
+          warn "Install command failed: $cmd"
+        fi
+        ;;
+      *)
+        ;;
+    esac
+  done < <(extract_install_commands "$output")
+}
+
+run_capture_with_recovery() {
+  local mode="$1"
+  local current_mode="$mode"
+  local attempts=0
+  local output=""
+
+  while [[ "$attempts" -lt 3 ]]; do
+    if output="$(run_capture_command "$current_mode")"; then
+      [[ -n "$output" ]] && echo "$output"
+      return 0
+    fi
+
+    echo "$output"
+
+    if ! grep -q "Code: SCREENY-E001" <<<"$output"; then
+      err "Capture failed."
+      return 1
+    fi
+
+    local missing_grim=0
+    local missing_wlcopy=0
+    local missing_hyprctl=0
+    local missing_slurp=0
+
+    has_missing_dep "$output" "grim" && missing_grim=1
+    has_missing_dep "$output" "wl-copy" && missing_wlcopy=1
+    has_missing_dep "$output" "hyprctl" && missing_hyprctl=1
+    has_missing_dep "$output" "slurp" && missing_slurp=1
+
+    if [[ "$missing_grim" -eq 1 ]]; then
+      err "grim is required for all capture modes."
+      attempt_install_commands "$output"
+      return 1
+    fi
+
+    while true; do
+      echo
+      echo "$(style "$C_BOLD" "Recovery options")"
+      if [[ "$missing_wlcopy" -eq 1 && "$(read_json_value copy_to_clipboard)" == "true" ]]; then
+        echo "1) Disable clipboard copy and retry"
+      fi
+      if [[ "$current_mode" == "window" && "$missing_hyprctl" -eq 1 ]]; then
+        echo "2) Fallback to fullscreen and retry"
+        echo "3) Fallback to region and retry"
+      elif [[ "$current_mode" == "region" && "$missing_slurp" -eq 1 ]]; then
+        echo "2) Fallback to fullscreen and retry"
+      fi
+      if [[ -n "$(extract_install_commands "$output")" ]]; then
+        echo "i) Attempt install commands"
+      fi
+      echo "d) Run doctor report"
+      echo "b) Back"
+      read -r -p "Choose: " action
+
+      case "$action" in
+        1)
+          if [[ "$missing_wlcopy" -eq 1 && "$(read_json_value copy_to_clipboard)" == "true" ]]; then
+            set_json_scalar copy_to_clipboard false
+            ok "copy_to_clipboard=false"
+            attempts=$((attempts+1))
+            break
+          fi
+          warn "Option not available."
+          ;;
+        2)
+          if [[ "$current_mode" == "window" && "$missing_hyprctl" -eq 1 ]]; then
+            current_mode="fullscreen"
+            ok "Fallback mode: fullscreen"
+            attempts=$((attempts+1))
+            break
+          fi
+          if [[ "$current_mode" == "region" && "$missing_slurp" -eq 1 ]]; then
+            current_mode="fullscreen"
+            ok "Fallback mode: fullscreen"
+            attempts=$((attempts+1))
+            break
+          fi
+          warn "Option not available."
+          ;;
+        3)
+          if [[ "$current_mode" == "window" && "$missing_hyprctl" -eq 1 ]]; then
+            current_mode="region"
+            ok "Fallback mode: region"
+            attempts=$((attempts+1))
+            break
+          fi
+          warn "Option not available."
+          ;;
+        i|I)
+          attempt_install_commands "$output"
+          attempts=$((attempts+1))
+          break
+          ;;
+        d|D)
+          run_doctor
+          ;;
+        b|B|q|Q)
+          return 1
+          ;;
+        *)
+          warn "Unknown option."
+          ;;
+      esac
+    done
+  done
+
+  err "Capture aborted after recovery attempts."
+  return 1
+}
+
 resolve_app_bin() {
   if [[ -n "$RESOLVED_APP_BIN" && -x "$RESOLVED_APP_BIN" ]]; then
     return 0
@@ -225,9 +384,9 @@ capture_menu() {
     read -r -p "Choose: " choice
 
     case "$choice" in
-      1|region|r) run_capture region; pause_continue ;;
-      2|fullscreen|f) run_capture fullscreen; pause_continue ;;
-      3|window|w) run_capture window; pause_continue ;;
+      1|region|r) run_capture_with_recovery region; pause_continue ;;
+      2|fullscreen|f) run_capture_with_recovery fullscreen; pause_continue ;;
+      3|window|w) run_capture_with_recovery window; pause_continue ;;
       b|back) return 0 ;;
       q|quit|exit|0) exit 0 ;;
       *) warn "Unknown option"; pause_continue ;;

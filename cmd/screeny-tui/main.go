@@ -180,11 +180,11 @@ func updateCaptureMenu(m model, key string) (tea.Model, tea.Cmd) {
 	case "enter":
 		switch m.cursor {
 		case 0:
-			m.status = runCapture(modeRegion)
+			m.status = runCaptureWithRecovery(modeRegion, &m.settings, m.configPath)
 		case 1:
-			m.status = runCapture(modeFullscreen)
+			m.status = runCaptureWithRecovery(modeFullscreen, &m.settings, m.configPath)
 		case 2:
-			m.status = runCapture(modeWindow)
+			m.status = runCaptureWithRecovery(modeWindow, &m.settings, m.configPath)
 		case 3:
 			m.current = mainMenu
 			m.cursor = 0
@@ -410,6 +410,109 @@ func runCapture(mode captureMode) string {
 		return "capture failed: " + err.Error()
 	}
 	return fmt.Sprintf("capture done (%s)", mode)
+}
+
+type dependencyFailure struct {
+	tools    map[string]bool
+	installs []string
+}
+
+func runCaptureWithRecovery(mode captureMode, s *settings, configPath string) string {
+	currentMode := mode
+
+	for attempts := 0; attempts < 3; attempts++ {
+		output, err := runCaptureCommand(currentMode)
+		if err == nil {
+			return fmt.Sprintf("capture done (%s)", currentMode)
+		}
+
+		failure := parseDependencyFailure(output)
+		if failure == nil {
+			return "capture failed: " + strings.TrimSpace(output)
+		}
+
+		if failure.tools["grim"] {
+			if len(failure.installs) > 0 {
+				return "missing grim: install required first (" + failure.installs[0] + ")"
+			}
+			return "missing grim: install required first"
+		}
+
+		recovered := false
+		actions := []string{}
+
+		if failure.tools["wl-copy"] && s.CopyToClipboard {
+			s.CopyToClipboard = false
+			if saveErr := saveSettings(configPath, *s); saveErr == nil {
+				actions = append(actions, "disabled clipboard")
+				recovered = true
+			}
+		}
+
+		if currentMode == modeWindow && failure.tools["hyprctl"] {
+			currentMode = modeFullscreen
+			actions = append(actions, "fallback mode=fullscreen")
+			recovered = true
+		} else if currentMode == modeRegion && failure.tools["slurp"] {
+			currentMode = modeFullscreen
+			actions = append(actions, "fallback mode=fullscreen")
+			recovered = true
+		}
+
+		if recovered {
+			continue
+		}
+
+		if len(failure.installs) > 0 {
+			return "missing dependencies: run install and retry (" + strings.Join(failure.installs, " | ") + ")"
+		}
+
+		return "missing dependencies: run `capture-app --doctor`"
+	}
+
+	return "capture aborted after recovery attempts"
+}
+
+func runCaptureCommand(mode captureMode) (string, error) {
+	bin, err := resolveAppBin()
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command(bin, string(mode))
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func parseDependencyFailure(output string) *dependencyFailure {
+	if !strings.Contains(output, "Code: SCREENY-E001") {
+		return nil
+	}
+
+	failure := &dependencyFailure{
+		tools:    map[string]bool{},
+		installs: []string{},
+	}
+
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "- ") {
+			name := strings.TrimPrefix(trimmed, "- ")
+			if idx := strings.Index(name, " "); idx > 0 {
+				name = name[:idx]
+			}
+			failure.tools[name] = true
+		}
+		if strings.HasPrefix(trimmed, "Install: ") {
+			cmd := strings.TrimPrefix(trimmed, "Install: ")
+			if cmd != "" {
+				failure.installs = append(failure.installs, cmd)
+			}
+		}
+	}
+
+	return failure
 }
 
 func buildCaptureApp() error {
