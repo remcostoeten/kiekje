@@ -69,12 +69,46 @@ impl Settings {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+    config_path_from_env(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+}
+
+pub(crate) fn config_path_from_env(
+    xdg_config_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf> {
+    if let Some(xdg) = xdg_config_home {
         return Ok(PathBuf::from(xdg).join("screeny").join("config.json"));
     }
 
-    let home = std::env::var_os("HOME")
+    let home = home
         .map(PathBuf::from)
         .context("HOME and XDG_CONFIG_HOME are not set")?;
     Ok(home.join(".config").join("screeny").join("config.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::config_path_from_env;
+    use std::path::PathBuf;
+
+    #[test]
+    fn uses_xdg_config_home_when_available() {
+        let path = config_path_from_env(Some("/tmp/xdg".into()), Some("/tmp/home".into())).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/xdg/screeny/config.json"));
+    }
+
+    #[test]
+    fn falls_back_to_home_dot_config() {
+        let path = config_path_from_env(None, Some("/tmp/home".into())).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/home/.config/screeny/config.json"));
+    }
+
+    #[test]
+    fn errors_when_both_xdg_and_home_are_missing() {
+        let err = config_path_from_env(None, None).unwrap_err();
+        assert!(
+            err.to_string().contains("HOME and XDG_CONFIG_HOME are not set"),
+            "unexpected error: {err}"
+        );
+    }
 }

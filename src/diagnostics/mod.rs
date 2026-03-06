@@ -32,15 +32,23 @@ struct Requirement {
 }
 
 pub fn check_capture_requirements(mode: CaptureMode, settings: &Settings) -> Result<()> {
+    check_capture_requirements_with_path(mode, settings, env::var_os("PATH"))
+}
+
+pub(crate) fn check_capture_requirements_with_path(
+    mode: CaptureMode,
+    settings: &Settings,
+    path: Option<std::ffi::OsString>,
+) -> Result<()> {
     let requirements = capture_requirements(mode, settings);
     let mut missing = Vec::new();
 
     for req in requirements {
-        if !is_available(req.tool) {
+        if !is_available_with_path(req.tool, path.clone()) {
             missing.push(MissingDependency {
                 tool: req.tool.to_string(),
                 required_for: req.required_for.to_string(),
-                install_command: install_command_for(req.tool),
+                install_command: install_command_for_with_path(req.tool, path.clone()),
                 workaround: req.workaround.map(|w| w.to_string()),
             });
         }
@@ -54,6 +62,10 @@ pub fn check_capture_requirements(mode: CaptureMode, settings: &Settings) -> Res
 }
 
 pub fn doctor_report() -> String {
+    doctor_report_with_path(env::var_os("PATH"))
+}
+
+pub(crate) fn doctor_report_with_path(path: Option<std::ffi::OsString>) -> String {
     let checks = [
         ("grim", "capture backend"),
         ("slurp", "region selection"),
@@ -66,11 +78,11 @@ pub fn doctor_report() -> String {
     out.push_str("====================\n");
 
     for (tool, purpose) in checks {
-        if is_available(tool) {
+        if is_available_with_path(tool, path.clone()) {
             out.push_str(&format!("[OK]   {:8} - {}\n", tool, purpose));
         } else {
             out.push_str(&format!("[MISS] {:8} - {}\n", tool, purpose));
-            if let Some(cmd) = install_command_for(tool) {
+            if let Some(cmd) = install_command_for_with_path(tool, path.clone()) {
                 out.push_str(&format!("       Install: {}\n", cmd));
             }
         }
@@ -111,31 +123,31 @@ fn capture_requirements(mode: CaptureMode, settings: &Settings) -> Vec<Requireme
     requirements
 }
 
-fn is_available(tool: &str) -> bool {
+fn is_available_with_path(tool: &str, path: Option<std::ffi::OsString>) -> bool {
     if tool.contains('/') {
         return std::path::Path::new(tool).is_file();
     }
 
-    let Some(path) = env::var_os("PATH") else {
+    let Some(path) = path else {
         return false;
     };
 
     env::split_paths(&path).any(|dir| dir.join(tool).is_file())
 }
 
-fn install_command_for(tool: &str) -> Option<String> {
+fn install_command_for_with_path(tool: &str, path: Option<std::ffi::OsString>) -> Option<String> {
     let package = map_package(tool);
 
-    if is_available("pacman") {
+    if is_available_with_path("pacman", path.clone()) {
         return Some(format!("sudo pacman -S {}", package));
     }
-    if is_available("apt-get") {
+    if is_available_with_path("apt-get", path.clone()) {
         return Some(format!("sudo apt-get install -y {}", package));
     }
-    if is_available("dnf") {
+    if is_available_with_path("dnf", path.clone()) {
         return Some(format!("sudo dnf install -y {}", package));
     }
-    if is_available("zypper") {
+    if is_available_with_path("zypper", path) {
         return Some(format!("sudo zypper install {}", package));
     }
 
@@ -147,5 +159,40 @@ fn map_package(tool: &str) -> String {
         "wl-copy" => "wl-clipboard".to_string(),
         "hyprctl" => "hyprland".to_string(),
         _ => tool.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_capture_requirements_with_path, doctor_report_with_path};
+    use crate::settings::config::{CaptureMode, Settings};
+
+    #[test]
+    fn reports_mode_specific_missing_dependencies() {
+        let settings = Settings {
+            copy_to_clipboard: true,
+            ..Settings::default()
+        };
+
+        let err = check_capture_requirements_with_path(CaptureMode::Window, &settings, Some("".into()))
+            .unwrap_err();
+        let missing = err
+            .downcast_ref::<super::MissingDependenciesError>()
+            .expect("expected MissingDependenciesError");
+
+        let tools: Vec<&str> = missing.items.iter().map(|x| x.tool.as_str()).collect();
+        assert!(tools.contains(&"grim"));
+        assert!(tools.contains(&"hyprctl"));
+        assert!(tools.contains(&"wl-copy"));
+        assert!(!tools.contains(&"slurp"));
+    }
+
+    #[test]
+    fn doctor_report_marks_missing_when_path_is_empty() {
+        let report = doctor_report_with_path(Some("".into()));
+        assert!(report.contains("[MISS] grim"));
+        assert!(report.contains("[MISS] slurp"));
+        assert!(report.contains("[MISS] wl-copy"));
+        assert!(report.contains("[MISS] hyprctl"));
     }
 }
