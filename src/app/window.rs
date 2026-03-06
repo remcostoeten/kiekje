@@ -19,10 +19,17 @@ pub fn run(capture: CaptureResult, settings: Settings) -> Result<()> {
         let settings = Rc::new(RefCell::new(settings.clone()));
         let capture = capture.clone();
 
+        let canvas = match EditorCanvas::new(&capture.png_data) {
+            Ok(canvas) => canvas,
+            Err(err) => {
+                eprintln!("Failed to initialize editor canvas: {err:#}");
+                show_startup_error_window(app, &err.to_string());
+                return;
+            }
+        };
+
         let header = adw::HeaderBar::new();
         let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-
-        let canvas = EditorCanvas::new(&capture.png_data).expect("failed to create editor canvas");
         let canvas_widget = canvas.widget();
 
         let add_tool_button = |label: &str, tool: ToolKind, canvas: &EditorCanvas| {
@@ -93,4 +100,38 @@ pub fn run(capture: CaptureResult, settings: Settings) -> Result<()> {
 
     app.run();
     Ok(())
+}
+
+fn show_startup_error_window(app: &adw::Application, details: &str) {
+    let box_root = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    box_root.set_margin_top(24);
+    box_root.set_margin_bottom(24);
+    box_root.set_margin_start(24);
+    box_root.set_margin_end(24);
+
+    let title = gtk::Label::new(Some("Failed to open annotation editor"));
+    title.set_xalign(0.0);
+    title.add_css_class("title-3");
+
+    let body = gtk::Label::new(Some(details));
+    body.set_xalign(0.0);
+    body.set_wrap(true);
+    body.set_selectable(true);
+
+    let close_btn = gtk::Button::with_label("Close");
+    let app_clone = app.clone();
+    close_btn.connect_clicked(move |_| app_clone.quit());
+
+    box_root.append(&title);
+    box_root.append(&body);
+    box_root.append(&close_btn);
+
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title("Screeny Error")
+        .default_width(560)
+        .default_height(220)
+        .content(&box_root)
+        .build();
+    window.present();
 }
