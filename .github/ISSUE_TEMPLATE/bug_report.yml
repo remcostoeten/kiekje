@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible bug
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened and what you expected to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Provide exact steps and inputs
+      placeholder: |
+        1. Run ...
+        2. Click ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Wayland compositor, and tool versions
+      placeholder: Linux distro, Hyprland version, Rust/Go versions
+    validations:
+      required: true
