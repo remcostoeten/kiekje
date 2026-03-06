@@ -1,6 +1,7 @@
 mod app;
 mod capture;
 mod clipboard;
+mod diagnostics;
 mod editor;
 mod image;
 mod platform;
@@ -26,11 +27,25 @@ struct Cli {
     mode: Option<CliMode>,
     #[arg(short, long, help = "Open interactive terminal menu")]
     interactive: bool,
+    #[arg(long, help = "Check system dependencies and print readiness report")]
+    doctor: bool,
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = run() {
+        render_error(&err);
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     let mut settings = Settings::load_or_default()?;
+
+    if cli.doctor {
+        println!("{}", diagnostics::doctor_report());
+        return Ok(());
+    }
 
     if cli.interactive {
         run_interactive_menu(&mut settings)?;
@@ -52,6 +67,8 @@ fn main() -> Result<()> {
 }
 
 fn run_capture(mode: CaptureMode, settings: &Settings) -> Result<()> {
+    diagnostics::check_capture_requirements(mode, settings)?;
+
     if settings.delay_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(settings.delay_ms));
     }
@@ -182,4 +199,29 @@ fn print_settings(settings: &Settings) {
     );
     println!("auto_save: {}", settings.auto_save);
     println!("filename_template: {}", settings.filename_template);
+}
+
+fn render_error(err: &anyhow::Error) {
+    eprintln!("Screeny Error");
+    eprintln!("============");
+
+    if let Some(missing) = err.downcast_ref::<diagnostics::MissingDependenciesError>() {
+        eprintln!("Code: SCREENY-E001");
+        eprintln!("Missing required dependencies:");
+        for item in &missing.items {
+            eprintln!("  - {} ({})", item.tool, item.required_for);
+            if let Some(cmd) = &item.install_command {
+                eprintln!("    Install: {}", cmd);
+            }
+            if let Some(workaround) = &item.workaround {
+                eprintln!("    Option:  {}", workaround);
+            }
+        }
+        eprintln!();
+        eprintln!("Alternative: run `capture-app --doctor` for full environment diagnostics.");
+        return;
+    }
+
+    eprintln!("Code: SCREENY-E999");
+    eprintln!("{err:#}");
 }

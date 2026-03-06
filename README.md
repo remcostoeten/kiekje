@@ -28,6 +28,7 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
   - `capture-app region`
   - `capture-app fullscreen`
   - `capture-app window`
+  - `capture-app --doctor`
   - `capture-app --interactive` (menu-driven)
 
 ## Requirements
@@ -73,8 +74,19 @@ Binary:
 capture-app region
 capture-app fullscreen
 capture-app window
+capture-app --doctor
 capture-app --interactive
 ```
+
+## Error Handling and Recovery
+
+- The app validates required tools before running capture flows.
+- Missing dependencies return a structured error with:
+  - error code
+  - what is missing and why
+  - install command suggestions (when package manager is detected)
+  - workaround options (for example, fallback capture modes or disabling clipboard)
+- Use `capture-app --doctor` to print a full dependency readiness report.
 
 If no mode is provided, the app uses `default_capture_mode` from config.
 
