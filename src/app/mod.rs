@@ -1,3 +1,4 @@
+pub mod region_selector;
 pub mod tray;
 pub mod window;
 

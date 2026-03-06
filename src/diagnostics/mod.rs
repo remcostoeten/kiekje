@@ -68,7 +68,6 @@ pub fn doctor_report() -> String {
 pub(crate) fn doctor_report_with_path(path: Option<std::ffi::OsString>) -> String {
     let checks = [
         ("grim", "capture backend"),
-        ("slurp", "region selection"),
         ("wl-copy", "clipboard copy"),
         ("hyprctl", "Hyprland active-window capture"),
     ];
@@ -99,11 +98,7 @@ fn capture_requirements(mode: CaptureMode, settings: &Settings) -> Vec<Requireme
     }];
 
     match mode {
-        CaptureMode::Region => requirements.push(Requirement {
-            tool: "slurp",
-            required_for: "region capture mode",
-            workaround: Some("use `capture-app fullscreen`"),
-        }),
+        CaptureMode::Region => {}
         CaptureMode::Fullscreen => {}
         CaptureMode::Window => requirements.push(Requirement {
             tool: "hyprctl",
@@ -174,8 +169,9 @@ mod tests {
             ..Settings::default()
         };
 
-        let err = check_capture_requirements_with_path(CaptureMode::Window, &settings, Some("".into()))
-            .unwrap_err();
+        let err =
+            check_capture_requirements_with_path(CaptureMode::Window, &settings, Some("".into()))
+                .unwrap_err();
         let missing = err
             .downcast_ref::<super::MissingDependenciesError>()
             .expect("expected MissingDependenciesError");
@@ -191,7 +187,6 @@ mod tests {
     fn doctor_report_marks_missing_when_path_is_empty() {
         let report = doctor_report_with_path(Some("".into()));
         assert!(report.contains("[MISS] grim"));
-        assert!(report.contains("[MISS] slurp"));
         assert!(report.contains("[MISS] wl-copy"));
         assert!(report.contains("[MISS] hyprctl"));
     }

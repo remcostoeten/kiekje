@@ -242,7 +242,6 @@ fn prompt_dependency_recovery(
     let missing_grim = missing.items.iter().any(|x| x.tool == "grim");
     let missing_wl_copy = missing.items.iter().any(|x| x.tool == "wl-copy");
     let missing_hyprctl = missing.items.iter().any(|x| x.tool == "hyprctl");
-    let missing_slurp = missing.items.iter().any(|x| x.tool == "slurp");
     let has_install_cmds = missing.items.iter().any(|x| x.install_command.is_some());
 
     loop {
@@ -254,8 +253,6 @@ fn prompt_dependency_recovery(
         if *mode == CaptureMode::Window && missing_hyprctl {
             println!("2) Fallback to fullscreen and retry");
             println!("3) Fallback to region and retry");
-        } else if *mode == CaptureMode::Region && missing_slurp {
-            println!("2) Fallback to fullscreen and retry");
         }
         if has_install_cmds {
             println!("i) Attempt install commands");
@@ -280,11 +277,6 @@ fn prompt_dependency_recovery(
             "3" if *mode == CaptureMode::Window && missing_hyprctl => {
                 *mode = CaptureMode::Region;
                 println!("Using fallback mode: region");
-                return Ok(true);
-            }
-            "2" if *mode == CaptureMode::Region && missing_slurp => {
-                *mode = CaptureMode::Fullscreen;
-                println!("Using fallback mode: fullscreen");
                 return Ok(true);
             }
             "i" if has_install_cmds => {
