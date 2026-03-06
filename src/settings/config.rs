@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CaptureMode {
     #[default]
@@ -50,9 +50,20 @@ impl Settings {
 
         let raw = fs::read_to_string(&path)
             .with_context(|| format!("failed to read settings file at {}", path.display()))?;
-        let settings: Settings = serde_json::from_str(&raw)
-            .with_context(|| format!("failed to parse settings file at {}", path.display()))?;
-        Ok(settings)
+        match serde_json::from_str(&raw) {
+            Ok(settings) => Ok(settings),
+            Err(parse_err) => {
+                let backup = backup_corrupt_config(&path)?;
+                eprintln!(
+                    "Warning: invalid settings file at {} ({parse_err}). Backed up to {} and reset to defaults.",
+                    path.display(),
+                    backup.display()
+                );
+                let defaults = Self::default();
+                defaults.save()?;
+                Ok(defaults)
+            }
+        }
     }
 
     pub fn save(&self) -> Result<()> {
@@ -84,6 +95,32 @@ pub(crate) fn config_path_from_env(
         .map(PathBuf::from)
         .context("HOME and XDG_CONFIG_HOME are not set")?;
     Ok(home.join(".config").join("screeny").join("config.json"))
+}
+
+fn backup_corrupt_config(path: &std::path::Path) -> Result<PathBuf> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("failed to generate backup timestamp")?
+        .as_secs();
+
+    let file_name = path
+        .file_name()
+        .and_then(|x| x.to_str())
+        .unwrap_or("config.json");
+    let backup_name = format!("{file_name}.corrupt-{ts}");
+    let backup_path = path.with_file_name(backup_name);
+
+    fs::rename(path, &backup_path).with_context(|| {
+        format!(
+            "failed to backup corrupt settings file {} to {}",
+            path.display(),
+            backup_path.display()
+        )
+    })?;
+
+    Ok(backup_path)
 }
 
 #[cfg(test)]

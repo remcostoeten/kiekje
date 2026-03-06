@@ -12,6 +12,7 @@ use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use settings::config::{CaptureMode, Settings};
 use std::io::{self, Write};
+use std::process::Command;
 
 #[derive(Debug, Clone, ValueEnum)]
 enum CliMode {
@@ -114,9 +115,9 @@ fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
 
         let choice = read_line_trimmed()?;
         match choice.as_str() {
-            "1" | "r" | "region" => run_capture(CaptureMode::Region, settings)?,
-            "2" | "f" | "fullscreen" => run_capture(CaptureMode::Fullscreen, settings)?,
-            "3" | "w" | "window" => run_capture(CaptureMode::Window, settings)?,
+            "1" | "r" | "region" => run_capture_with_recovery(CaptureMode::Region, settings)?,
+            "2" | "f" | "fullscreen" => run_capture_with_recovery(CaptureMode::Fullscreen, settings)?,
+            "3" | "w" | "window" => run_capture_with_recovery(CaptureMode::Window, settings)?,
             "4" => {
                 settings.copy_to_clipboard = !settings.copy_to_clipboard;
                 println!("copy_to_clipboard = {}", settings.copy_to_clipboard);
@@ -199,6 +200,138 @@ fn print_settings(settings: &Settings) {
     );
     println!("auto_save: {}", settings.auto_save);
     println!("filename_template: {}", settings.filename_template);
+}
+
+fn run_capture_with_recovery(mode: CaptureMode, settings: &mut Settings) -> Result<()> {
+    let mut current_mode = mode;
+    loop {
+        match run_capture(current_mode, settings) {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if let Some(missing) = err.downcast_ref::<diagnostics::MissingDependenciesError>() {
+                    let retry =
+                        prompt_dependency_recovery(missing, &mut current_mode, settings)?;
+                    if retry {
+                        continue;
+                    }
+                    return Ok(());
+                }
+                return Err(err);
+            }
+        }
+    }
+}
+
+fn prompt_dependency_recovery(
+    missing: &diagnostics::MissingDependenciesError,
+    mode: &mut CaptureMode,
+    settings: &mut Settings,
+) -> Result<bool> {
+    println!();
+    println!("Capture cannot continue due to missing dependencies.");
+    for item in &missing.items {
+        println!("- {} ({})", item.tool, item.required_for);
+        if let Some(cmd) = &item.install_command {
+            println!("  install: {cmd}");
+        }
+        if let Some(workaround) = &item.workaround {
+            println!("  option:  {workaround}");
+        }
+    }
+
+    let missing_grim = missing.items.iter().any(|x| x.tool == "grim");
+    let missing_wl_copy = missing.items.iter().any(|x| x.tool == "wl-copy");
+    let missing_hyprctl = missing.items.iter().any(|x| x.tool == "hyprctl");
+    let missing_slurp = missing.items.iter().any(|x| x.tool == "slurp");
+    let has_install_cmds = missing.items.iter().any(|x| x.install_command.is_some());
+
+    loop {
+        println!();
+        println!("Recovery options:");
+        if missing_wl_copy && settings.copy_to_clipboard {
+            println!("1) Disable clipboard copy and retry");
+        }
+        if *mode == CaptureMode::Window && missing_hyprctl {
+            println!("2) Fallback to fullscreen and retry");
+            println!("3) Fallback to region and retry");
+        } else if *mode == CaptureMode::Region && missing_slurp {
+            println!("2) Fallback to fullscreen and retry");
+        }
+        if has_install_cmds {
+            println!("i) Attempt install commands");
+        }
+        println!("d) Show doctor report");
+        println!("b) Back to main menu");
+        print!("Choose: ");
+        io::stdout().flush()?;
+
+        let choice = read_line_trimmed()?;
+        match choice.as_str() {
+            "1" if missing_wl_copy && settings.copy_to_clipboard => {
+                settings.copy_to_clipboard = false;
+                println!("copy_to_clipboard set to false");
+                return Ok(true);
+            }
+            "2" if *mode == CaptureMode::Window && missing_hyprctl => {
+                *mode = CaptureMode::Fullscreen;
+                println!("Using fallback mode: fullscreen");
+                return Ok(true);
+            }
+            "3" if *mode == CaptureMode::Window && missing_hyprctl => {
+                *mode = CaptureMode::Region;
+                println!("Using fallback mode: region");
+                return Ok(true);
+            }
+            "2" if *mode == CaptureMode::Region && missing_slurp => {
+                *mode = CaptureMode::Fullscreen;
+                println!("Using fallback mode: fullscreen");
+                return Ok(true);
+            }
+            "i" if has_install_cmds => {
+                attempt_dependency_install(missing)?;
+                if !missing_grim {
+                    return Ok(true);
+                }
+            }
+            "d" => println!("{}", diagnostics::doctor_report()),
+            "b" | "q" | "back" | "quit" => return Ok(false),
+            _ => println!("Unknown option: {}", choice),
+        }
+    }
+}
+
+fn attempt_dependency_install(missing: &diagnostics::MissingDependenciesError) -> Result<()> {
+    let mut commands = Vec::<String>::new();
+    for item in &missing.items {
+        if let Some(cmd) = &item.install_command {
+            if !commands.contains(cmd) {
+                commands.push(cmd.clone());
+            }
+        }
+    }
+
+    if commands.is_empty() {
+        println!("No install commands available for this system.");
+        return Ok(());
+    }
+
+    for cmd in commands {
+        print!("Run `{}` now? [y/N]: ", cmd);
+        io::stdout().flush()?;
+        let confirm = read_line_trimmed()?.to_lowercase();
+        if confirm != "y" && confirm != "yes" {
+            continue;
+        }
+
+        let status = Command::new("sh").arg("-lc").arg(&cmd).status()?;
+        if status.success() {
+            println!("Install command completed successfully.");
+        } else {
+            println!("Install command failed with status: {}", status);
+        }
+    }
+
+    Ok(())
 }
 
 fn render_error(err: &anyhow::Error) {

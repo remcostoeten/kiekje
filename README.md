@@ -86,6 +86,11 @@ capture-app --interactive
   - what is missing and why
   - install command suggestions (when package manager is detected)
   - workaround options (for example, fallback capture modes or disabling clipboard)
+- In `--interactive` mode, dependency failures include recovery actions:
+  - disable clipboard and retry
+  - fallback from `window` to `fullscreen`/`region`
+  - fallback from `region` to `fullscreen`
+  - run install commands directly from the prompt
 - Use `capture-app --doctor` to print a full dependency readiness report.
 
 If no mode is provided, the app uses `default_capture_mode` from config.
