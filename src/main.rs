@@ -81,7 +81,7 @@ fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
         println!("capture-app interactive");
         println!("1) Capture region");
         println!("2) Capture fullscreen");
-        println!("3) Capture window (placeholder)");
+        println!("3) Capture window (active Hyprland window)");
         println!("4) Toggle clipboard copy    [{}]", on_off(settings.copy_to_clipboard));
         println!("5) Toggle open editor       [{}]", on_off(settings.open_editor));
         println!("6) Toggle auto-save         [{}]", on_off(settings.auto_save));

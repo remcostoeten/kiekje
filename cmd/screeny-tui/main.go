@@ -88,7 +88,7 @@ func main() {
 		captureItems: []string{
 			"Region",
 			"Fullscreen",
-			"Window (placeholder)",
+			"Window (active Hyprland window)",
 			"Back",
 		},
 	}

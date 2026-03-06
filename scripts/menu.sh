@@ -219,7 +219,7 @@ capture_menu() {
     echo "$(style "$C_BOLD" "Capture")"
     echo "1) Region"
     echo "2) Fullscreen"
-    echo "3) Window (placeholder)"
+    echo "3) Window (active Hyprland window)"
     echo "b) Back"
     echo "q) Quit"
     read -r -p "Choose: " choice
