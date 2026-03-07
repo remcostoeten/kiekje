@@ -22,7 +22,11 @@ enum CliMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "capture-app", version, about = "Wayland-first screenshot utility")]
+#[command(
+    name = "capture-app",
+    version,
+    about = "Wayland-first screenshot utility"
+)]
 struct Cli {
     #[arg(value_enum)]
     mode: Option<CliMode>,
@@ -87,7 +91,7 @@ fn run_capture(mode: CaptureMode, settings: &Settings) -> Result<()> {
     }
 
     if settings.open_editor {
-        app::run_editor(capture, settings.clone())?;
+        app::run_editor(capture, settings.clone(), mode)?;
     }
 
     Ok(())
@@ -100,9 +104,18 @@ fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
         println!("1) Capture region");
         println!("2) Capture fullscreen");
         println!("3) Capture window (active Hyprland window)");
-        println!("4) Toggle clipboard copy    [{}]", on_off(settings.copy_to_clipboard));
-        println!("5) Toggle open editor       [{}]", on_off(settings.open_editor));
-        println!("6) Toggle auto-save         [{}]", on_off(settings.auto_save));
+        println!(
+            "4) Toggle clipboard copy    [{}]",
+            on_off(settings.copy_to_clipboard)
+        );
+        println!(
+            "5) Toggle open editor       [{}]",
+            on_off(settings.open_editor)
+        );
+        println!(
+            "6) Toggle auto-save         [{}]",
+            on_off(settings.auto_save)
+        );
         println!("7) Set delay (ms)           [{}]", settings.delay_ms);
         println!(
             "8) Set default mode         [{}]",
@@ -116,7 +129,9 @@ fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
         let choice = read_line_trimmed()?;
         match choice.as_str() {
             "1" | "r" | "region" => run_capture_with_recovery(CaptureMode::Region, settings)?,
-            "2" | "f" | "fullscreen" => run_capture_with_recovery(CaptureMode::Fullscreen, settings)?,
+            "2" | "f" | "fullscreen" => {
+                run_capture_with_recovery(CaptureMode::Fullscreen, settings)?
+            }
             "3" | "w" | "window" => run_capture_with_recovery(CaptureMode::Window, settings)?,
             "4" => {
                 settings.copy_to_clipboard = !settings.copy_to_clipboard;
@@ -178,7 +193,11 @@ fn read_line_trimmed() -> Result<String> {
 }
 
 fn on_off(v: bool) -> &'static str {
-    if v { "on" } else { "off" }
+    if v {
+        "on"
+    } else {
+        "off"
+    }
 }
 
 fn capture_mode_label(mode: CaptureMode) -> &'static str {
@@ -191,8 +210,13 @@ fn capture_mode_label(mode: CaptureMode) -> &'static str {
 
 fn print_settings(settings: &Settings) {
     println!("delay_ms: {}", settings.delay_ms);
-    println!("default_save_location: {}", settings.default_save_location.display());
+    println!(
+        "default_save_location: {}",
+        settings.default_save_location.display()
+    );
     println!("copy_to_clipboard: {}", settings.copy_to_clipboard);
+    println!("close_after_copy: {}", settings.close_after_copy);
+    println!("open_after_save: {}", settings.open_after_save);
     println!("open_editor: {}", settings.open_editor);
     println!(
         "default_capture_mode: {}",
@@ -209,8 +233,7 @@ fn run_capture_with_recovery(mode: CaptureMode, settings: &mut Settings) -> Resu
             Ok(()) => return Ok(()),
             Err(err) => {
                 if let Some(missing) = err.downcast_ref::<diagnostics::MissingDependenciesError>() {
-                    let retry =
-                        prompt_dependency_recovery(missing, &mut current_mode, settings)?;
+                    let retry = prompt_dependency_recovery(missing, &mut current_mode, settings)?;
                     if retry {
                         continue;
                     }

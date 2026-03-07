@@ -5,17 +5,30 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
 ## Features (MVP)
 
 - Capture modes:
-  - `region` (via `slurp` + `grim`)
+  - `region` (via in-app area selector + `grim`)
   - `fullscreen` (via `grim`)
   - `window` (active Hyprland window via `hyprctl` + `grim`)
 - Editor tools:
   - rectangle
   - arrow
   - freehand draw
-  - text (basic)
+  - text
   - highlight
   - undo
   - clear
+- Editor accessibility:
+  - keyboard shortcuts for tool selection, save, undo, clear, close
+  - visible shortcut/status help
+  - scrollable canvas for large screenshots
+  - text entry field for placed annotations
+- Editor controls:
+  - `Save As` button
+  - default save folder picker
+  - right-click color picker
+  - scroll to change annotation size
+- Region capture UX:
+  - dimmed in-app overlay with higher-contrast selection border
+  - `Fullscreen` action available while choosing an area
 - Clipboard:
   - auto-copy PNG to Wayland clipboard via `wl-copy`
 - Saving:
@@ -37,7 +50,6 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
 - Hyprland (target compositor, but works with generic Wayland tools)
 - Installed tools:
   - `grim`
-  - `slurp`
   - `wl-copy`
   - `hyprctl` (required for `window` capture mode)
 - GTK dependencies for build/runtime:
@@ -47,7 +59,7 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
 Example (Arch):
 
 ```bash
-sudo pacman -S grim slurp wl-clipboard hyprland gtk4 libadwaita
+sudo pacman -S grim wl-clipboard hyprland gtk4 libadwaita
 ```
 
 ## Build

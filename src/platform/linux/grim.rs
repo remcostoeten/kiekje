@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::process::Command;
 
 pub fn capture_region(geometry: &str) -> Result<Vec<u8>> {

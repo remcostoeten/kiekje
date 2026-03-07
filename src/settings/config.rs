@@ -17,6 +17,8 @@ pub struct Settings {
     pub delay_ms: u64,
     pub default_save_location: PathBuf,
     pub copy_to_clipboard: bool,
+    pub close_after_copy: bool,
+    pub open_after_save: bool,
     pub open_editor: bool,
     pub default_capture_mode: CaptureMode,
     pub auto_save: bool,
@@ -33,6 +35,8 @@ impl Default for Settings {
             delay_ms: 0,
             default_save_location: home.join("Pictures").join("Screenshots"),
             copy_to_clipboard: true,
+            close_after_copy: false,
+            open_after_save: false,
             open_editor: true,
             default_capture_mode: CaptureMode::Region,
             auto_save: false,
@@ -69,8 +73,9 @@ impl Settings {
     pub fn save(&self) -> Result<()> {
         let path = config_path()?;
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create config directory {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create config directory {}", parent.display())
+            })?;
         }
         let body = serde_json::to_string_pretty(self).context("failed to serialize settings")?;
         fs::write(&path, body)
@@ -80,7 +85,10 @@ impl Settings {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    config_path_from_env(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+    config_path_from_env(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
 }
 
 pub(crate) fn config_path_from_env(
@@ -144,7 +152,8 @@ mod tests {
     fn errors_when_both_xdg_and_home_are_missing() {
         let err = config_path_from_env(None, None).unwrap_err();
         assert!(
-            err.to_string().contains("HOME and XDG_CONFIG_HOME are not set"),
+            err.to_string()
+                .contains("HOME and XDG_CONFIG_HOME are not set"),
             "unexpected error: {err}"
         );
     }

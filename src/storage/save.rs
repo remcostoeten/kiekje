@@ -2,20 +2,25 @@ use crate::settings::config::{CaptureMode, Settings};
 use anyhow::{Context, Result};
 use chrono::Local;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub fn save_capture(png_data: &[u8], settings: &Settings, mode: CaptureMode) -> Result<PathBuf> {
-    let path = render_path(settings, mode);
+    let path = suggested_save_path(settings, mode);
+    save_capture_to_path(png_data, &path)?;
+    Ok(path)
+}
+
+pub fn save_capture_to_path(png_data: &[u8], path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create save directory {}", parent.display()))?;
     }
-    fs::write(&path, png_data)
+    fs::write(path, png_data)
         .with_context(|| format!("failed to save capture to {}", path.display()))?;
-    Ok(path)
+    Ok(())
 }
 
-fn render_path(settings: &Settings, mode: CaptureMode) -> PathBuf {
+pub fn suggested_save_path(settings: &Settings, mode: CaptureMode) -> PathBuf {
     let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     render_path_with_timestamp(settings, mode, &timestamp)
 }
@@ -44,8 +49,9 @@ pub(crate) fn render_path_with_timestamp(
 
 #[cfg(test)]
 mod tests {
-    use super::render_path_with_timestamp;
+    use super::{render_path_with_timestamp, save_capture_to_path};
     use crate::settings::config::{CaptureMode, Settings};
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
@@ -56,7 +62,8 @@ mod tests {
             ..Settings::default()
         };
 
-        let path = render_path_with_timestamp(&settings, CaptureMode::Window, "2026-03-06_13-00-00");
+        let path =
+            render_path_with_timestamp(&settings, CaptureMode::Window, "2026-03-06_13-00-00");
         assert_eq!(
             path,
             PathBuf::from("/tmp/shots/screeny-2026-03-06_13-00-00-window.png")
@@ -71,7 +78,21 @@ mod tests {
             ..Settings::default()
         };
 
-        let path = render_path_with_timestamp(&settings, CaptureMode::Region, "2026-03-06_13-00-00");
+        let path =
+            render_path_with_timestamp(&settings, CaptureMode::Region, "2026-03-06_13-00-00");
         assert_eq!(path, PathBuf::from("/tmp/shots/shot-region.png"));
+    }
+
+    #[test]
+    fn saves_to_explicit_path() {
+        let base = std::env::temp_dir().join(format!("screeny-test-{}", std::process::id()));
+        let path = base.join("nested").join("image.png");
+        let png = [1_u8, 2, 3];
+
+        save_capture_to_path(&png, &path).unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), png);
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir_all(&base);
     }
 }
