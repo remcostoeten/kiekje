@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use gdk_pixbuf::PixbufLoader;
-use gtk4 as gtk;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use libadwaita as adw;
 use std::cell::RefCell;
 use std::rc::Rc;

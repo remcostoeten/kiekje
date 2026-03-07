@@ -6,8 +6,8 @@ use image::{imageops, ImageFormat};
 use std::io::Cursor;
 
 pub fn capture() -> Result<CaptureResult> {
-    let fullscreen_png =
-        grim::capture_fullscreen().context("grim failed to capture fullscreen for area selection")?;
+    let fullscreen_png = grim::capture_fullscreen()
+        .context("grim failed to capture fullscreen for area selection")?;
 
     let png_data = match choose_region_or_fullscreen(&fullscreen_png)? {
         SelectionChoice::Fullscreen => fullscreen_png,

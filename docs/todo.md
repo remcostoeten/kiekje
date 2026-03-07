@@ -22,15 +22,17 @@ Status legend:
   Current state: editor save failures update the status label.
   Missing: tray and non-editor flows should show visible errors too.
 - `[~]` Make the editor keyboard-accessible end to end.
-  Current state: tool shortcuts, save, undo, clear, and close exist.
-  Missing: a fully keyboard-driven color/size workflow and better focus handling.
-- `[ ]` Add redo support.
-- `[ ]` Add unsaved-changes warning on close.
-- `[ ]` Add selection and resize handles for existing annotations.
-- `[ ]` Copy the annotated result back to clipboard on demand or after save.
+  Current state: tool shortcuts, save, undo, clear, close, visible color presets, and keyboard-focusable size controls exist.
+  Missing: focus-order polish, shortcut coverage for secondary controls, and a proper screen-reader pass.
+- `[x]` Add redo support.
+- `[x]` Add unsaved-changes warning on close.
+- `[x]` Add selection and resize handles for existing annotations.
+- `[x]` Copy the annotated result back to clipboard on demand or after save.
 - `[ ]` Add capture delay presets to the GUI/tray.
 - `[ ]` Make tray and CLI expose the same settings consistently.
-- `[ ]` Make cancellation behavior explicit and user-visible for region/window capture.
+- `[~]` Make cancellation behavior explicit and user-visible for region/window capture.
+  Current state: region selection shows cancel/fullscreen affordances and returns a user-visible cancel error.
+  Missing: the window/CLI/TUI flows still need clearer cancellation messaging and parity.
 - `[ ]` Validate screen-reader behavior for toolbar, status text, and dialogs.
 
 ## Nice to have
@@ -58,8 +60,8 @@ Status legend:
 
 ## Suggested next order
 
-1. Add redo and unsaved-changes detection.
-2. Add annotation selection and resizing.
-3. Add clipboard export of the annotated image.
+1. Improve tray parity and cancellation UX.
+2. Add stronger UI feedback for non-editor save and dependency failures.
+3. Revisit screen-reader and focus behavior after the editor layout stabilizes.
 4. Add blur / pixelate and crop.
-5. Improve tray parity and cancellation UX.
+5. Add automated coverage around editor interactions and export rendering.

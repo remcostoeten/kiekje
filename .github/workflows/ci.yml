@@ -32,10 +32,12 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: cmd/screeny-tui/go.mod
       - name: Go format check
         run: test -z "$(gofmt -l ./cmd)"
       - name: Go vet
+        working-directory: cmd/screeny-tui
         run: go vet ./...
       - name: Go test
+        working-directory: cmd/screeny-tui
         run: go test ./...

@@ -15,6 +15,7 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
   - text
   - highlight
   - undo
+  - redo
   - clear
 - Editor accessibility:
   - keyboard shortcuts for tool selection, save, undo, clear, close
@@ -23,7 +24,12 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
   - text entry field for placed annotations
 - Editor controls:
   - `Save As` button
+  - unsaved-changes warning on close
+  - annotation selection and resize handles
+  - explicit annotated-image copy
   - default save folder picker
+  - close-after-copy toggle
+  - open-after-save toggle
   - right-click color picker
   - scroll to change annotation size
 - Region capture UX:
@@ -103,7 +109,6 @@ capture-app --interactive
   - fallback from `window` to `fullscreen`/`region`
   - fallback from `region` to `fullscreen`
   - run install commands directly from the prompt
-- Bash menu (`scripts/menu.sh`) includes the same interactive recovery options.
 - Go TUI (`screeny-tui`) applies automatic recovery for common cases:
   - disable clipboard when `wl-copy` is missing
   - fallback to fullscreen when mode-specific tools are missing
@@ -119,29 +124,13 @@ Interactive mode provides a small menu to:
 - set default capture mode
 - inspect current settings
 
-Small Bash menu (requested):
-
-```bash
-./scripts/menu.sh
-```
-
-If `capture-app` is not in `PATH`, set:
-
-```bash
-APP_BIN=./target/release/capture-app ./scripts/menu.sh
-```
-
-Navigation in the Bash menu:
-- `b` / `back` returns to previous menu
-- `q` / `quit` / `0` exits
-- Prompts for delay/mode support `b` to cancel
-- Colorized output is enabled on TTY by default; disable with `NO_COLOR=1 ./scripts/menu.sh`
-
 Bubble Tea TUI (Go):
 
 ```bash
+cd cmd/screeny-tui
 go mod tidy
-go build -o ./bin/screeny-tui ./cmd/screeny-tui
+go build -o ../../bin/screeny-tui .
+cd ../..
 ./bin/screeny-tui
 ```
 
@@ -178,6 +167,8 @@ Default config shape:
   "delay_ms": 0,
   "default_save_location": "/home/user/Pictures/Screenshots",
   "copy_to_clipboard": true,
+  "close_after_copy": false,
+  "open_after_save": false,
   "open_editor": true,
   "default_capture_mode": "region",
   "auto_save": false,

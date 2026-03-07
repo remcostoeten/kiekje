@@ -1,6 +1,6 @@
 # Screeny release feature spec
 
-See also: [docs/todo.md](/home/remcostoeten/tmp/screeny/docs/todo.md) for the actionable backlog with current status.
+See also: [docs/todo.md](/home/remcostoeten/projects/screeny/docs/todo.md) for the actionable backlog with current status.
 
 ## Goal
 
@@ -12,6 +12,11 @@ Make Screeny good enough to ship as a daily-use Linux screenshot tool, not just 
 - Accessible editor that works with keyboard-first users and remains usable on large screenshots.
 - Reliable save and clipboard behavior with recoverable errors.
 - A small but polished feature set that covers the main screenshot jobs people actually repeat.
+
+## Current status
+
+- The editor already supports redo, unsaved-change warnings, Save As, annotation selection/resizing, and explicit annotated-image copy.
+- The remaining release risk is concentrated in tray parity, keyboard-only access for secondary controls, clearer cancellation/error paths, and general UI polish.
 
 ## Must-have before release
 
@@ -82,8 +87,8 @@ Make Screeny good enough to ship as a daily-use Linux screenshot tool, not just 
 
 1. Finish editor accessibility and keyboard flow.
 2. Replace placeholder text annotations with inline text editing.
-3. Add redo, unsaved-changes detection, and Save As.
-4. Add blur/pixelate and color controls.
+3. Unify tray/TUI/CLI parity and dependency recovery messaging.
+4. Add blur/pixelate and crop.
 5. Expand compositor support and desktop integration.
 
 ## Success metrics

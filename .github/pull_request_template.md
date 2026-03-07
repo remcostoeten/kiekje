@@ -6,8 +6,8 @@ Describe what this PR changes and why.
 
 - [ ] `cargo check --all-targets --all-features`
 - [ ] `cargo fmt --all -- --check`
-- [ ] `go test ./...`
-- [ ] `go vet ./...`
+- [ ] `(cd cmd/screeny-tui && go test ./...)`
+- [ ] `(cd cmd/screeny-tui && go vet ./...)`
 
 ## Checklist
 

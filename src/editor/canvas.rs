@@ -362,6 +362,24 @@ impl EditorCanvas {
         state.stroke_width
     }
 
+    pub fn set_stroke_width(&self, width: f64) -> f64 {
+        let mut state = self.state.borrow_mut();
+        let width = width.clamp(1.0, 32.0);
+        if let Some(index) = state.selected {
+            if let Some(annotation) = state.annotations.get_mut(index) {
+                let current = annotation_size(annotation);
+                let delta = width - current;
+                let size = adjust_annotation_size(annotation, delta);
+                state.redo_stack.clear();
+                state.dirty = true;
+                self.root.queue_draw();
+                return size;
+            }
+        }
+        state.stroke_width = width;
+        state.stroke_width
+    }
+
     pub fn set_text_value(&self, value: String) {
         self.state.borrow_mut().text_value = value;
     }

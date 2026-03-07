@@ -32,45 +32,103 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         };
         let (image_width, image_height) = canvas.image_size();
 
-        let header = adw::HeaderBar::new();
-        let toolbar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        toolbar.set_margin_top(6);
-        toolbar.set_margin_bottom(6);
-        toolbar.set_margin_start(6);
-        toolbar.set_margin_end(6);
         let canvas_widget = canvas.widget();
+        let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let tools_panel = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        tools_panel.set_margin_top(18);
+        tools_panel.set_margin_bottom(18);
+        tools_panel.set_margin_start(18);
+        tools_panel.set_margin_end(18);
+        tools_panel.set_size_request(180, -1);
+
+        let workspace = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        workspace.set_hexpand(true);
+        workspace.set_vexpand(true);
+        workspace.set_margin_top(18);
+        workspace.set_margin_bottom(18);
+        workspace.set_margin_start(18);
+        workspace.set_margin_end(18);
+
+        let inspector = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        inspector.set_margin_top(18);
+        inspector.set_margin_bottom(18);
+        inspector.set_margin_start(18);
+        inspector.set_margin_end(18);
+        inspector.set_size_request(300, -1);
+
         let recapture_buttons: Rc<RefCell<Vec<(CaptureMode, gtk::ToggleButton)>>> =
             Rc::new(RefCell::new(Vec::new()));
+        let shell_title = gtk::Label::new(Some("Screeny Editor"));
+        shell_title.add_css_class("title-3");
+        shell_title.set_xalign(0.0);
+
+        let shell_subtitle = gtk::Label::new(Some(
+            "A tighter editing shell with dedicated tool, canvas, and export zones.",
+        ));
+        shell_subtitle.set_wrap(true);
+        shell_subtitle.set_xalign(0.0);
+        shell_subtitle.add_css_class("dim-label");
+
+        let tool_state_label = gtk::Label::new(Some("Active tool: Rectangle"));
+        tool_state_label.set_xalign(0.0);
+        tool_state_label.set_wrap(true);
+        tool_state_label.set_selectable(true);
+
+        let mode_label = gtk::Label::new(Some(&format!(
+            "Capture mode: {}",
+            capture_mode_label(current_mode)
+        )));
+        mode_label.set_xalign(0.0);
+        mode_label.set_wrap(true);
+
+        let shortcut_label = gtk::Label::new(Some(
+            "Tools 1-5  Save Ctrl+S  Save As Ctrl+Shift+S  Copy Ctrl+C  Undo Ctrl+Z  Redo Ctrl+Shift+Z  Delete Backspace  Close Esc",
+        ));
+        shortcut_label.set_xalign(0.0);
+        shortcut_label.set_wrap(true);
+        shortcut_label.add_css_class("dim-label");
+
         let status_label = gtk::Label::new(Some(
-            "Shortcuts: 1-5 tools, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+Z undo, Ctrl+Shift+Z redo, Ctrl+C copy, Backspace remove selected, Esc close.",
+            "Ready. Tab through the rail and inspector for keyboard-only editing.",
         ));
         status_label.set_xalign(0.0);
         status_label.set_wrap(true);
-        status_label.set_margin_top(6);
-        status_label.set_margin_bottom(6);
-        status_label.set_margin_start(12);
-        status_label.set_margin_end(12);
         status_label.set_selectable(true);
+
         let save_folder_label = gtk::Label::new(Some(&format!(
             "Default save folder: {}",
             settings.borrow().default_save_location.display()
         )));
         save_folder_label.set_xalign(0.0);
         save_folder_label.set_wrap(true);
-        save_folder_label.set_margin_start(12);
-        save_folder_label.set_margin_end(12);
         save_folder_label.set_selectable(true);
 
         let text_entry = gtk::Entry::new();
         text_entry.set_placeholder_text(Some("Text to place on screenshot"));
         text_entry.set_text("Text");
-        text_entry.set_width_chars(18);
+        text_entry.set_width_chars(20);
         text_entry.set_tooltip_text(Some("Text tool content. Click on the image to place it."));
         canvas.set_text_value(text_entry.text().to_string());
 
-        let size_label = gtk::Label::new(Some(&format!("Size: {:.0}", canvas.stroke_width())));
-        size_label.set_tooltip_text(Some("Scroll on the screenshot to change tool size."));
-        size_label.set_selectable(true);
+        let size_value_label = gtk::Label::new(Some(&format!(
+            "Size: {:.0}",
+            canvas.stroke_width()
+        )));
+        size_value_label.set_xalign(0.0);
+        size_value_label.set_selectable(true);
+
+        let size_scale = gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 32.0, 1.0);
+        size_scale.set_value(canvas.stroke_width());
+        size_scale.set_draw_value(false);
+        size_scale.set_hexpand(true);
+        size_scale.set_tooltip_text(Some(
+            "Use Left/Right while focused to adjust the default or selected annotation size.",
+        ));
+
+        let size_down_btn = gtk::Button::with_label("Smaller");
+        let size_up_btn = gtk::Button::with_label("Larger");
+        size_down_btn.set_tooltip_text(Some("Reduce annotation size."));
+        size_up_btn.set_tooltip_text(Some("Increase annotation size."));
 
         let tool_buttons: Rc<RefCell<Vec<(ToolKind, gtk::ToggleButton)>>> =
             Rc::new(RefCell::new(Vec::new()));
@@ -80,6 +138,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
              shortcut: &str,
              tool: ToolKind,
              canvas: &EditorCanvas,
+             tool_state_label: &gtk::Label,
              status_label: &gtk::Label,
              tool_buttons: &Rc<RefCell<Vec<(ToolKind, gtk::ToggleButton)>>>| {
                 let btn = gtk::ToggleButton::with_label(label);
@@ -87,6 +146,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
                 let c = canvas.clone();
                 let label = label.to_string();
                 let shortcut = shortcut.to_string();
+                let tool_state_label = tool_state_label.clone();
                 let status_label = status_label.clone();
                 let tool_buttons = Rc::clone(tool_buttons);
                 btn.connect_clicked(move |_| {
@@ -94,6 +154,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
                     for (kind, button) in tool_buttons.borrow().iter() {
                         button.set_active(*kind == tool);
                     }
+                    tool_state_label.set_text(&format!("Active tool: {label}"));
                     status_label.set_text(&format!("Selected tool: {label}. {shortcut}"));
                 });
                 btn
@@ -104,6 +165,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             "Rectangle outline. Shortcut: 1.",
             ToolKind::Rectangle,
             &canvas,
+            &tool_state_label,
             &status_label,
             &tool_buttons,
         );
@@ -112,6 +174,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             "Arrow pointer. Shortcut: 2.",
             ToolKind::Arrow,
             &canvas,
+            &tool_state_label,
             &status_label,
             &tool_buttons,
         );
@@ -120,14 +183,16 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             "Freehand drawing. Shortcut: 3.",
             ToolKind::Freehand,
             &canvas,
+            &tool_state_label,
             &status_label,
             &tool_buttons,
         );
         let text_btn = add_tool_button(
             "Text",
-            "Text placeholder tool. Shortcut: 4.",
+            "Text annotation tool. Shortcut: 4.",
             ToolKind::Text,
             &canvas,
+            &tool_state_label,
             &status_label,
             &tool_buttons,
         );
@@ -136,6 +201,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             "Highlight region. Shortcut: 5.",
             ToolKind::Highlight,
             &canvas,
+            &tool_state_label,
             &status_label,
             &tool_buttons,
         );
@@ -156,6 +222,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         let save_as_btn = gtk::Button::with_label("Save As");
         let copy_btn = gtk::Button::with_label("Copy");
         let folder_btn = gtk::Button::with_label("Default Folder");
+        save_btn.add_css_class("suggested-action");
         undo_btn.set_tooltip_text(Some("Undo the last annotation. Shortcut: Ctrl+Z."));
         redo_btn.set_tooltip_text(Some("Redo the last undone annotation. Shortcut: Ctrl+Shift+Z."));
         clear_btn.set_tooltip_text(Some("Clear all annotations. Shortcut: Ctrl+Delete."));
@@ -261,53 +328,47 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             });
         }
 
-        toolbar.append(&rect_btn);
-        toolbar.append(&arrow_btn);
-        toolbar.append(&pen_btn);
-        toolbar.append(&text_btn);
-        toolbar.append(&hi_btn);
-        toolbar.append(&text_entry);
-        toolbar.append(&size_label);
-        toolbar.append(&undo_btn);
-        toolbar.append(&redo_btn);
-        toolbar.append(&delete_btn);
-        toolbar.append(&clear_btn);
-        toolbar.append(&copy_btn);
-        toolbar.append(&save_btn);
-        toolbar.append(&save_as_btn);
-        toolbar.append(&folder_btn);
-        toolbar.append(&close_after_copy_toggle);
-        toolbar.append(&open_after_save_toggle);
-
-        header.set_title_widget(Some(&toolbar));
-
         let scroller = gtk::ScrolledWindow::new();
         scroller.set_hexpand(true);
         scroller.set_vexpand(true);
         scroller.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
         scroller.set_child(Some(&canvas_widget));
 
-        let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        container.append(&header);
-        container.append(&status_label);
-        container.append(&save_folder_label);
-        container.append(&scroller);
+        let tool_buttons_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        tool_buttons_box.append(&rect_btn);
+        tool_buttons_box.append(&arrow_btn);
+        tool_buttons_box.append(&pen_btn);
+        tool_buttons_box.append(&text_btn);
+        tool_buttons_box.append(&hi_btn);
 
-        let window = adw::ApplicationWindow::builder()
-            .application(app)
-            .title("Screeny")
-            .default_width(image_width)
-            .default_height(image_height)
-            .content(&container)
-            .build();
-        let allow_close = Rc::new(Cell::new(false));
+        let action_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        action_bar.append(&save_btn);
+        action_bar.append(&save_as_btn);
+        action_bar.append(&copy_btn);
+        action_bar.append(&undo_btn);
+        action_bar.append(&redo_btn);
+        action_bar.append(&delete_btn);
+        action_bar.append(&clear_btn);
 
-        let recapture_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        recapture_box.set_halign(gtk::Align::End);
-        recapture_box.set_valign(gtk::Align::End);
-        recapture_box.set_margin_end(18);
-        recapture_box.set_margin_bottom(18);
-        recapture_box.add_css_class("osd");
+        let canvas_frame = gtk::Frame::new(None);
+        canvas_frame.set_hexpand(true);
+        canvas_frame.set_vexpand(true);
+        canvas_frame.set_child(Some(&scroller));
+
+        let status_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        status_box.append(&shortcut_label);
+        status_box.append(&status_label);
+
+        let size_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        size_row.append(&size_down_btn);
+        size_row.append(&size_scale);
+        size_row.append(&size_up_btn);
+
+        let color_swatches = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let custom_color_btn = gtk::Button::with_label("Custom Color");
+        custom_color_btn.set_tooltip_text(Some(
+            "Open the color chooser. Also available by right-clicking the canvas.",
+        ));
 
         let add_mode_button =
             |label: &str,
@@ -338,6 +399,30 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
                 });
                 btn
             };
+
+        let rail_title = gtk::Label::new(Some("Tool Rail"));
+        rail_title.add_css_class("heading");
+        rail_title.set_xalign(0.0);
+
+        let export_title = gtk::Label::new(Some("Inspector"));
+        export_title.add_css_class("heading");
+        export_title.set_xalign(0.0);
+
+        let text_title = gtk::Label::new(Some("Text"));
+        text_title.add_css_class("caption");
+        text_title.set_xalign(0.0);
+
+        let size_title = gtk::Label::new(Some("Size"));
+        size_title.add_css_class("caption");
+        size_title.set_xalign(0.0);
+
+        let color_title = gtk::Label::new(Some("Color"));
+        color_title.add_css_class("caption");
+        color_title.set_xalign(0.0);
+
+        let export_settings_title = gtk::Label::new(Some("Export"));
+        export_settings_title.add_css_class("caption");
+        export_settings_title.set_xalign(0.0);
 
         let region_mode_btn = add_mode_button(
             "Region",
@@ -371,10 +456,58 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         for (mode, button) in recapture_buttons.borrow().iter() {
             button.set_active(*mode == current_mode);
         }
+        let recapture_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
         recapture_box.append(&region_mode_btn);
         recapture_box.append(&fullscreen_mode_btn);
         recapture_box.append(&window_mode_btn);
-        canvas_widget.add_overlay(&recapture_box);
+
+        tools_panel.append(&shell_title);
+        tools_panel.append(&shell_subtitle);
+        tools_panel.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        tools_panel.append(&rail_title);
+        tools_panel.append(&tool_state_label);
+        tools_panel.append(&tool_buttons_box);
+        tools_panel.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        tools_panel.append(&mode_label);
+        tools_panel.append(&recapture_box);
+
+        workspace.append(&action_bar);
+        workspace.append(&canvas_frame);
+        workspace.append(&status_box);
+
+        inspector.append(&export_title);
+        inspector.append(&save_folder_label);
+        inspector.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        inspector.append(&text_title);
+        inspector.append(&text_entry);
+        inspector.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        inspector.append(&size_title);
+        inspector.append(&size_value_label);
+        inspector.append(&size_row);
+        inspector.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        inspector.append(&color_title);
+        inspector.append(&color_swatches);
+        inspector.append(&custom_color_btn);
+        inspector.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        inspector.append(&export_settings_title);
+        inspector.append(&folder_btn);
+        inspector.append(&close_after_copy_toggle);
+        inspector.append(&open_after_save_toggle);
+
+        shell.append(&tools_panel);
+        shell.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        shell.append(&workspace);
+        shell.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        shell.append(&inspector);
+
+        let window = adw::ApplicationWindow::builder()
+            .application(app)
+            .title("Screeny")
+            .default_width((image_width + 420).max(1100))
+            .default_height((image_height + 140).max(760))
+            .content(&shell)
+            .build();
+        let allow_close = Rc::new(Cell::new(false));
 
         {
             let c = canvas.clone();
@@ -394,9 +527,34 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
                 prompt_default_folder(&window, &s, &status_label, &save_folder_label);
             });
         }
+        {
+            let canvas = canvas.clone();
+            let size_value_label = size_value_label.clone();
+            let status_label = status_label.clone();
+            size_scale.connect_value_changed(move |scale| {
+                let size = canvas.set_stroke_width(scale.value());
+                size_value_label.set_text(&format!("Size: {:.0}", size));
+                status_label.set_text(&format!(
+                    "Tool size set to {:.0}. Use the inspector slider or buttons to refine it.",
+                    size
+                ));
+            });
+        }
+        {
+            let size_scale = size_scale.clone();
+            size_down_btn.connect_clicked(move |_| {
+                size_scale.set_value((size_scale.value() - 1.0).clamp(1.0, 32.0));
+            });
+        }
+        {
+            let size_scale = size_scale.clone();
+            size_up_btn.connect_clicked(move |_| {
+                size_scale.set_value((size_scale.value() + 1.0).clamp(1.0, 32.0));
+            });
+        }
 
         let color_popover = gtk::Popover::new();
-        color_popover.set_parent(&canvas_widget);
+        color_popover.set_parent(&custom_color_btn);
         color_popover.set_has_arrow(true);
         let color_chooser = gtk::ColorChooserWidget::new();
         color_chooser.set_rgba(&canvas.color());
@@ -424,15 +582,44 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
                 ));
             });
         }
+        for (label, rgba) in [
+            ("Brick", gtk::gdk::RGBA::new(0.82_f32, 0.27_f32, 0.22_f32, 1.0_f32)),
+            ("Amber", gtk::gdk::RGBA::new(0.86_f32, 0.62_f32, 0.14_f32, 1.0_f32)),
+            ("Lime", gtk::gdk::RGBA::new(0.38_f32, 0.67_f32, 0.18_f32, 1.0_f32)),
+            ("Azure", gtk::gdk::RGBA::new(0.12_f32, 0.47_f32, 0.84_f32, 1.0_f32)),
+            ("Ink", gtk::gdk::RGBA::new(0.12_f32, 0.13_f32, 0.18_f32, 1.0_f32)),
+        ] {
+            let btn = gtk::Button::with_label(label);
+            btn.set_tooltip_text(Some(&format!("Apply the {label} annotation color.")));
+            let canvas = canvas.clone();
+            let chooser = color_chooser.clone();
+            let status_label = status_label.clone();
+            btn.connect_clicked(move |_| {
+                canvas.set_color(rgba);
+                chooser.set_rgba(&rgba);
+                status_label.set_text(&format!("Color preset selected: {label}."));
+            });
+            color_swatches.append(&btn);
+        }
+        {
+            let chooser = color_chooser.clone();
+            let popover = color_popover.clone();
+            let canvas = canvas.clone();
+            custom_color_btn.connect_clicked(move |_| {
+                chooser.set_rgba(&canvas.color());
+                popover.popup();
+            });
+        }
 
         let right_click = gtk::GestureClick::new();
         right_click.set_button(3);
         canvas_widget.add_controller(right_click.clone());
         {
             let color_popover = color_popover.clone();
-            right_click.connect_pressed(move |_, _, x, y| {
-                color_popover
-                    .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            let color_chooser = color_chooser.clone();
+            let canvas = canvas.clone();
+            right_click.connect_pressed(move |_, _, _, _| {
+                color_chooser.set_rgba(&canvas.color());
                 color_popover.popup();
             });
         }
@@ -443,7 +630,8 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         canvas_widget.add_controller(scroll.clone());
         {
             let canvas = canvas.clone();
-            let size_label = size_label.clone();
+            let size_value_label = size_value_label.clone();
+            let size_scale = size_scale.clone();
             let status_label = status_label.clone();
             scroll.connect_scroll(move |controller, _, dy| {
                 if !controller
@@ -454,7 +642,8 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
                 }
                 let delta = if dy > 0.0 { -1.0 } else { 1.0 };
                 let size = canvas.adjust_stroke_width(delta);
-                size_label.set_text(&format!("Size: {:.0}", size));
+                size_scale.set_value(size);
+                size_value_label.set_text(&format!("Size: {:.0}", size));
                 status_label.set_text(&format!(
                     "Tool size set to {:.0}. Use Ctrl+scroll on the screenshot to adjust.",
                     size
@@ -608,7 +797,7 @@ fn prompt_save_as(
     );
     dialog.set_modal(true);
     dialog.set_current_name(
-        &save::suggested_save_path(&cfg, cfg.default_capture_mode)
+        save::suggested_save_path(&cfg, cfg.default_capture_mode)
             .file_name()
             .and_then(|x| x.to_str())
             .unwrap_or("screeny.png"),
