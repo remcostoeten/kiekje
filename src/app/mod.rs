@@ -10,3 +10,15 @@ pub fn run_editor(capture: CaptureResult, settings: Settings, mode: CaptureMode)
     tray::init_tray();
     window::run(capture, settings, mode)
 }
+
+pub fn run_launcher(settings: Settings) -> Result<()> {
+    tray::run_launcher(settings)
+}
+
+pub fn run_tray(settings: Settings) -> Result<()> {
+    tray::run_tray(settings)
+}
+
+pub fn show_feedback_window(title: &str, body: &str) {
+    tray::show_feedback_window(title, body);
+}

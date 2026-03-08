@@ -32,6 +32,10 @@ struct Cli {
     mode: Option<CliMode>,
     #[arg(short, long, help = "Open interactive terminal menu")]
     interactive: bool,
+    #[arg(long, help = "Open the GUI launcher")]
+    launcher: bool,
+    #[arg(long, help = "Run the tray icon service")]
+    tray: bool,
     #[arg(long, help = "Check system dependencies and print readiness report")]
     doctor: bool,
 }
@@ -54,6 +58,18 @@ fn run() -> Result<()> {
 
     if cli.interactive {
         run_interactive_menu(&mut settings)?;
+        settings.save()?;
+        return Ok(());
+    }
+
+    if cli.launcher {
+        app::run_launcher(settings.clone())?;
+        settings.save()?;
+        return Ok(());
+    }
+
+    if cli.tray {
+        app::run_tray(settings.clone())?;
         settings.save()?;
         return Ok(());
     }
@@ -367,9 +383,39 @@ fn render_error(err: &anyhow::Error) {
         }
         eprintln!();
         eprintln!("Alternative: run `capture-app --doctor` for full environment diagnostics.");
+        app::show_feedback_window(
+            "Missing Dependencies",
+            &format_missing_dependencies(missing),
+        );
+        return;
+    }
+
+    if err.to_string().contains("capture canceled") {
+        eprintln!("Code: SCREENY-E002");
+        eprintln!("Capture canceled.");
+        app::show_feedback_window(
+            "Capture Canceled",
+            "The capture was canceled before a screenshot was produced.",
+        );
         return;
     }
 
     eprintln!("Code: SCREENY-E999");
     eprintln!("{err:#}");
+    app::show_feedback_window("Capture Failed", &format!("{err:#}"));
+}
+
+fn format_missing_dependencies(missing: &diagnostics::MissingDependenciesError) -> String {
+    let mut body = String::from("Screeny cannot continue because required tools are missing.\n\n");
+    for item in &missing.items {
+        body.push_str(&format!("- {} ({})\n", item.tool, item.required_for));
+        if let Some(cmd) = &item.install_command {
+            body.push_str(&format!("  Install: {}\n", cmd));
+        }
+        if let Some(workaround) = &item.workaround {
+            body.push_str(&format!("  Option: {}\n", workaround));
+        }
+    }
+    body.push_str("\nRun `capture-app --doctor` for the full readiness report.");
+    body
 }

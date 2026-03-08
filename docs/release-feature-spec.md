@@ -16,7 +16,8 @@ Make Screeny good enough to ship as a daily-use Linux screenshot tool, not just 
 ## Current status
 
 - The editor already supports redo, unsaved-change warnings, Save As, annotation selection/resizing, and explicit annotated-image copy.
-- The remaining release risk is concentrated in tray parity, keyboard-only access for secondary controls, clearer cancellation/error paths, and general UI polish.
+- Tray and launcher entry surfaces now exist for capture actions, delay presets, doctor output, and the main shared toggles.
+- The remaining release risk is concentrated in deeper tray parity, keyboard-only access for secondary controls, clearer cancellation/error paths, and general UI polish.
 
 ## Must-have before release
 

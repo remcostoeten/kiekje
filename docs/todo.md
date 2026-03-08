@@ -29,7 +29,9 @@ Status legend:
 - `[x]` Add selection and resize handles for existing annotations.
 - `[x]` Copy the annotated result back to clipboard on demand or after save.
 - `[ ]` Add capture delay presets to the GUI/tray.
-- `[ ]` Make tray and CLI expose the same settings consistently.
+- `[~]` Make tray and CLI expose the same settings consistently.
+  Current state: tray and launcher now expose capture modes, delay presets, default mode, and the main clipboard/editor/auto-save toggles.
+  Missing: folder selection and secondary export toggles still live only in the editor shell.
 - `[~]` Make cancellation behavior explicit and user-visible for region/window capture.
   Current state: region selection shows cancel/fullscreen affordances and returns a user-visible cancel error.
   Missing: the window/CLI/TUI flows still need clearer cancellation messaging and parity.

@@ -47,6 +47,8 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
   - `capture-app region`
   - `capture-app fullscreen`
   - `capture-app window`
+  - `capture-app --launcher`
+  - `capture-app --tray`
   - `capture-app --doctor`
   - `capture-app --interactive` (menu-driven)
 
@@ -92,6 +94,8 @@ Binary:
 capture-app region
 capture-app fullscreen
 capture-app window
+capture-app --launcher
+capture-app --tray
 capture-app --doctor
 capture-app --interactive
 ```
@@ -113,6 +117,8 @@ capture-app --interactive
   - disable clipboard when `wl-copy` is missing
   - fallback to fullscreen when mode-specific tools are missing
   - show install hints when manual installation is required
+- GUI launcher (`capture-app --launcher`) exposes the same core capture actions, delay presets, and shared settings in a single GTK window.
+- Tray mode (`capture-app --tray`) adds a persistent StatusNotifier item with capture actions, delay presets, toggles, and a doctor shortcut.
 - Use `capture-app --doctor` to print a full dependency readiness report.
 
 If no mode is provided, the app uses `default_capture_mode` from config.

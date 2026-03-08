@@ -15,6 +15,7 @@ clap = { version = "4.5", features = ["derive"] }
 gtk4 = { version = "0.8", package = "gtk4" }
 gdk-pixbuf = "0.19"
 libadwaita = "0.6"
+ksni = { version = "0.3.3", features = ["blocking"] }
 
 # Suggested / future-ready dependencies
 arboard = { version = "3", optional = true }
