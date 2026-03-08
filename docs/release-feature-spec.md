@@ -1,10 +1,10 @@
-# Screeny release feature spec
+# Kiekje release feature spec
 
 See also: [docs/todo.md](/home/remcostoeten/projects/screeny/docs/todo.md) for the actionable backlog with current status.
 
 ## Goal
 
-Make Screeny good enough to ship as a daily-use Linux screenshot tool, not just a proof of concept for Hyprland power users.
+Make Kiekje good enough to ship as a daily-use Linux screenshot tool, not just a proof of concept for Hyprland power users.
 
 ## Release bar
 

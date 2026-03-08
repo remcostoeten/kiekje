@@ -1,0 +1,14 @@
+[
+  {
+    "text": "Wayland screenshot capture",
+    "checked": false
+  },
+  {
+    "text": "GTK annotation editor",
+    "checked": false
+  },
+  {
+    "text": "Tray controls and delay presets",
+    "checked": false
+  }
+]

@@ -4,6 +4,8 @@
 
 # Go
 /bin/
+/kiekje-tui
+/cmd/kiekje-tui/kiekje-tui
 *.test
 *.out
 coverage.out
@@ -30,3 +32,4 @@ Thumbs.db
 # Temporary files
 tmp/
 .temp/
+dist/

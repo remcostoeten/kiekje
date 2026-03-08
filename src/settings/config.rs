@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+const CONFIG_DIR_NAME: &str = "kiekje";
+const LEGACY_CONFIG_DIR_NAME: &str = "screeny";
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CaptureMode {
@@ -49,14 +52,14 @@ impl Default for Settings {
             shortcut_region: "SUPER SHIFT, S".to_string(),
             shortcut_fullscreen: "SUPER SHIFT, F".to_string(),
             shortcut_window: "SUPER SHIFT, W".to_string(),
-            filename_template: "screeny-{timestamp}-{mode}.png".to_string(),
+            filename_template: "kiekje-{timestamp}-{mode}.png".to_string(),
         }
     }
 }
 
 impl Settings {
     pub fn load_or_default() -> Result<Self> {
-        let path = config_path()?;
+        let path = existing_config_path()?.unwrap_or(config_path()?);
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -94,24 +97,70 @@ impl Settings {
 }
 
 pub fn config_path() -> Result<PathBuf> {
-    config_path_from_env(
+    preferred_config_path_from_env(
         std::env::var_os("XDG_CONFIG_HOME"),
         std::env::var_os("HOME"),
     )
 }
 
-pub(crate) fn config_path_from_env(
+fn existing_config_path() -> Result<Option<PathBuf>> {
+    existing_config_path_from_env(
+        std::env::var_os("XDG_CONFIG_HOME"),
+        std::env::var_os("HOME"),
+    )
+}
+
+pub(crate) fn preferred_config_path_from_env(
     xdg_config_home: Option<std::ffi::OsString>,
     home: Option<std::ffi::OsString>,
 ) -> Result<PathBuf> {
     if let Some(xdg) = xdg_config_home {
-        return Ok(PathBuf::from(xdg).join("screeny").join("config.json"));
+        return Ok(PathBuf::from(xdg).join(CONFIG_DIR_NAME).join("config.json"));
     }
 
     let home = home
         .map(PathBuf::from)
         .context("HOME and XDG_CONFIG_HOME are not set")?;
-    Ok(home.join(".config").join("screeny").join("config.json"))
+    Ok(home
+        .join(".config")
+        .join(CONFIG_DIR_NAME)
+        .join("config.json"))
+}
+
+pub(crate) fn legacy_config_path_from_env(
+    xdg_config_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<PathBuf> {
+    if let Some(xdg) = xdg_config_home {
+        return Ok(PathBuf::from(xdg)
+            .join(LEGACY_CONFIG_DIR_NAME)
+            .join("config.json"));
+    }
+
+    let home = home
+        .map(PathBuf::from)
+        .context("HOME and XDG_CONFIG_HOME are not set")?;
+    Ok(home
+        .join(".config")
+        .join(LEGACY_CONFIG_DIR_NAME)
+        .join("config.json"))
+}
+
+pub(crate) fn existing_config_path_from_env(
+    xdg_config_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> Result<Option<PathBuf>> {
+    let preferred = preferred_config_path_from_env(xdg_config_home.clone(), home.clone())?;
+    if preferred.exists() {
+        return Ok(Some(preferred));
+    }
+
+    let legacy = legacy_config_path_from_env(xdg_config_home, home)?;
+    if legacy.exists() {
+        return Ok(Some(legacy));
+    }
+
+    Ok(None)
 }
 
 fn backup_corrupt_config(path: &std::path::Path) -> Result<PathBuf> {
@@ -142,29 +191,57 @@ fn backup_corrupt_config(path: &std::path::Path) -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::config_path_from_env;
+    use super::{
+        existing_config_path_from_env, legacy_config_path_from_env, preferred_config_path_from_env,
+    };
+    use std::fs;
     use std::path::PathBuf;
 
     #[test]
     fn uses_xdg_config_home_when_available() {
-        let path = config_path_from_env(Some("/tmp/xdg".into()), Some("/tmp/home".into())).unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/xdg/screeny/config.json"));
+        let path =
+            preferred_config_path_from_env(Some("/tmp/xdg".into()), Some("/tmp/home".into()))
+                .unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/xdg/kiekje/config.json"));
     }
 
     #[test]
     fn falls_back_to_home_dot_config() {
-        let path = config_path_from_env(None, Some("/tmp/home".into())).unwrap();
-        assert_eq!(path, PathBuf::from("/tmp/home/.config/screeny/config.json"));
+        let path = preferred_config_path_from_env(None, Some("/tmp/home".into())).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/home/.config/kiekje/config.json"));
+    }
+
+    #[test]
+    fn keeps_legacy_path_available_for_upgrade_reads() {
+        let path =
+            legacy_config_path_from_env(Some("/tmp/xdg".into()), Some("/tmp/home".into())).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/xdg/screeny/config.json"));
     }
 
     #[test]
     fn errors_when_both_xdg_and_home_are_missing() {
-        let err = config_path_from_env(None, None).unwrap_err();
+        let err = preferred_config_path_from_env(None, None).unwrap_err();
         assert!(
             err.to_string()
                 .contains("HOME and XDG_CONFIG_HOME are not set"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn reads_legacy_config_when_new_path_is_missing() {
+        let base = std::env::temp_dir().join(format!("kiekje-config-test-{}", std::process::id()));
+        let legacy_dir = base.join("screeny");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_path = legacy_dir.join("config.json");
+        fs::write(&legacy_path, "{}").unwrap();
+
+        let resolved =
+            existing_config_path_from_env(Some(base.clone().into_os_string()), None).unwrap();
+        assert_eq!(resolved, Some(legacy_path.clone()));
+
+        let _ = fs::remove_file(legacy_path);
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]
@@ -179,7 +256,7 @@ mod tests {
                 "open_editor": true,
                 "default_capture_mode": "region",
                 "auto_save": false,
-                "filename_template": "screeny-{timestamp}-{mode}.png"
+                "filename_template": "kiekje-{timestamp}-{mode}.png"
             }"#,
         )
         .unwrap();

@@ -11,7 +11,7 @@
 
 Kiekje is a fast Wayland screenshot tool for Linux with annotation, tray controls, save automation, and Hyprland-friendly shortcut workflows.
 
-Current binary name: `capture-app`
+Current binary names: `kiekje` and `kiekje-tui`
 
 ## Feature List
 
@@ -63,17 +63,17 @@ Current binary name: `capture-app`
   - filename template with `{timestamp}` and `{mode}`
   - optional auto-save
 - Settings persistence:
-  - JSON config in `~/.config/screeny/config.json` (or `$XDG_CONFIG_HOME/screeny/config.json`)
+  - JSON config in `~/.config/kiekje/config.json` (or `$XDG_CONFIG_HOME/kiekje/config.json`)
 - CLI:
-  - `capture-app region`
-  - `capture-app fullscreen`
-  - `capture-app window`
-  - `capture-app --launcher`
-  - `capture-app --tray`
-  - `capture-app --doctor`
-  - `capture-app --interactive` (menu-driven)
+  - `kiekje region`
+  - `kiekje fullscreen`
+  - `kiekje window`
+  - `kiekje --launcher`
+  - `kiekje --tray`
+  - `kiekje --doctor`
+  - `kiekje --interactive` (menu-driven)
 - Desktop integration:
-  - StatusNotifier tray icon via `capture-app --tray`
+  - StatusNotifier tray icon via `kiekje --tray`
   - launcher toggle to start the tray on login
   - recordable Hyprland shortcut assignments for region/fullscreen/window capture
   - generated Hyprland include file plus reload action from the launcher
@@ -96,6 +96,60 @@ Example (Arch):
 sudo pacman -S grim wl-clipboard hyprland gtk4 libadwaita
 ```
 
+## Install
+
+Fastest for users:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/main/scripts/install-release.sh | bash
+```
+
+Install and attempt runtime dependencies too:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/main/scripts/install-release.sh | bash -s -- --install-deps
+```
+
+Install a specific release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/main/scripts/install-release.sh | bash -s -- --tag v0.0.1
+```
+
+Local install into `~/.local`:
+
+```bash
+scripts/install.sh
+```
+
+System-wide install into `/usr/local`:
+
+```bash
+sudo scripts/install.sh --prefix /usr/local
+```
+
+Manual source install:
+
+```bash
+cargo build --release
+install -Dm755 target/release/kiekje ~/.local/bin/kiekje
+```
+
+Optional helper binary:
+
+```bash
+cd cmd/kiekje-tui
+go build -o ../../kiekje-tui .
+install -Dm755 ../../kiekje-tui ~/.local/bin/kiekje-tui
+```
+
+Desktop launcher:
+
+- `scripts/install.sh` also installs [share/applications/kiekje.desktop](/home/remcostoeten/projects/screeny/share/applications/kiekje.desktop).
+- If `~/.local/bin` is not in `PATH`, add it before using the desktop entry.
+- Tagged GitHub releases now publish a `kiekje-linux-x86_64.tar.gz` bundle with `install.sh` and `uninstall.sh` included.
+- Installers check for `grim`, `wl-copy`, and `hyprctl`, print exact guidance, and support `--install-deps` for core packages on `pacman`, `apt-get`, `dnf`, and `zypper`.
+
 ## Build
 
 ```bash
@@ -111,19 +165,19 @@ cargo build --release
 Binary:
 
 ```bash
-./target/release/capture-app
+./target/release/kiekje
 ```
 
 ## Usage
 
 ```bash
-capture-app region
-capture-app fullscreen
-capture-app window
-capture-app --launcher
-capture-app --tray
-capture-app --doctor
-capture-app --interactive
+kiekje region
+kiekje fullscreen
+kiekje window
+kiekje --launcher
+kiekje --tray
+kiekje --doctor
+kiekje --interactive
 ```
 
 ## Error Handling and Recovery
@@ -139,14 +193,14 @@ capture-app --interactive
   - fallback from `window` to `fullscreen`/`region`
   - fallback from `region` to `fullscreen`
   - run install commands directly from the prompt
-- Go TUI (`screeny-tui`) applies automatic recovery for common cases:
+- Go TUI (`kiekje-tui`) applies automatic recovery for common cases:
   - disable clipboard when `wl-copy` is missing
   - fallback to fullscreen when mode-specific tools are missing
   - show install hints when manual installation is required
-- GUI launcher (`capture-app --launcher`) exposes the same core capture actions, delay presets, and shared settings in a single GTK window.
-- Tray mode (`capture-app --tray`) adds a persistent StatusNotifier item with capture actions, delay presets, toggles, and a doctor shortcut.
-- Launcher desktop integration controls can write `~/.config/autostart/screeny-tray.desktop` and generate `~/.config/hypr/screeny-shortcuts.conf`.
-- Use `capture-app --doctor` to print a full dependency readiness report.
+- GUI launcher (`kiekje --launcher`) exposes the same core capture actions, delay presets, and shared settings in a single GTK window.
+- Tray mode (`kiekje --tray`) adds a persistent StatusNotifier item with capture actions, delay presets, toggles, and a doctor shortcut.
+- Launcher desktop integration controls can write `~/.config/autostart/kiekje-tray.desktop` and generate `~/.config/hypr/kiekje-shortcuts.conf`.
+- Use `kiekje --doctor` to print a full dependency readiness report.
 
 If no mode is provided, the app uses `default_capture_mode` from config.
 
@@ -160,11 +214,11 @@ Interactive mode provides a small menu to:
 Bubble Tea TUI (Go):
 
 ```bash
-cd cmd/screeny-tui
+cd cmd/kiekje-tui
 go mod tidy
-go build -o ../../bin/screeny-tui .
+go build -o ../../bin/kiekje-tui .
 cd ../..
-./bin/screeny-tui
+./bin/kiekje-tui
 ```
 
 Controls:
@@ -174,12 +228,12 @@ Controls:
 - `q` to quit
 
 Notes:
-- TUI resolves `capture-app` using `APP_BIN`, `PATH`, `./target/release/capture-app`, then `./target/debug/capture-app`.
+- TUI resolves `kiekje` using `APP_BIN`, `PATH`, `./target/release/kiekje`, then `./target/debug/kiekje`.
 - If not found, it attempts `cargo build --release` automatically.
 
 Tray autostart and Hyprland shortcut setup:
 
-- Open `capture-app --launcher`.
+- Open `kiekje --launcher`.
 - Enable `Start Tray on Login` to create the autostart desktop entry.
 - Use the `Record` buttons under `Hyprland Shortcuts` to assign per-mode shortcuts.
 - Click `Install Hyprland Include`, then add the shown `source = ...` line to your Hyprland config once if needed.
@@ -191,15 +245,15 @@ In `~/.config/hypr/hyprland.conf`:
 
 ```ini
 # Region capture + editor
-bind = SUPER SHIFT, S, exec, capture-app region
+bind = SUPER SHIFT, S, exec, kiekje region
 
 # Fullscreen capture
-bind = SUPER SHIFT, F, exec, capture-app fullscreen
+bind = SUPER SHIFT, F, exec, kiekje fullscreen
 ```
 
 ## Config
 
-Path: `~/.config/screeny/config.json`
+Path: `~/.config/kiekje/config.json`
 
 Default config shape:
 
@@ -217,7 +271,7 @@ Default config shape:
   "shortcut_region": "SUPER SHIFT, S",
   "shortcut_fullscreen": "SUPER SHIFT, F",
   "shortcut_window": "SUPER SHIFT, W",
-  "filename_template": "screeny-{timestamp}-{mode}.png"
+  "filename_template": "kiekje-{timestamp}-{mode}.png"
 }
 ```
 

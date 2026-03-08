@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Kiekje
+Comment=Wayland screenshot tool with annotation and tray controls
+Exec=kiekje --launcher
+Terminal=false
+Categories=Graphics;Utility;
+Icon=camera-photo
+Keywords=screenshot;wayland;annotation;capture;

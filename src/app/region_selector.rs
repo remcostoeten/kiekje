@@ -44,7 +44,7 @@ pub fn choose_region_or_fullscreen(png_data: &[u8]) -> Result<SelectionChoice> {
     let result = Rc::new(RefCell::new(None::<SelectionChoice>));
 
     let app = adw::Application::builder()
-        .application_id("com.screeny.capture.region-selector")
+        .application_id("com.kiekje.capture.region-selector")
         .build();
 
     app.connect_activate({

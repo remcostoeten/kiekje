@@ -17,7 +17,7 @@ const LAUNCHER_CAPTURE_STARTUP_DELAY_MS: u64 = 350;
 const TRAY_CAPTURE_STARTUP_DELAY_MS: u64 = 350;
 
 pub fn init_tray() {
-    // The tray is started explicitly via `capture-app --tray`.
+    // The tray is started explicitly via `kiekje --tray`.
 }
 
 pub fn run_tray(settings: Settings) -> Result<()> {
@@ -26,7 +26,7 @@ pub fn run_tray(settings: Settings) -> Result<()> {
         settings.tray_autostart = enabled;
     }
 
-    let tray = ScreenyTray {
+    let tray = KiekjeTray {
         settings,
         status_line: "Ready".to_string(),
     };
@@ -43,7 +43,7 @@ pub fn run_tray(settings: Settings) -> Result<()> {
 
 pub fn run_launcher(settings: Settings) -> Result<()> {
     let app = adw::Application::builder()
-        .application_id("com.screeny.capture.launcher")
+        .application_id("com.kiekje.capture.launcher")
         .build();
 
     app.connect_activate(move |app| {
@@ -53,13 +53,13 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         }
         let current_exe = Rc::new(current_exe_or_default());
         let hyprland_source = integration::hyprland_source_line()
-            .unwrap_or_else(|_| "source = ~/.config/hypr/screeny-shortcuts.conf".to_string());
+            .unwrap_or_else(|_| "source = ~/.config/hypr/kiekje-shortcuts.conf".to_string());
         let autostart_path = integration::tray_autostart_path()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|_| "~/.config/autostart/screeny-tray.desktop".to_string());
+            .unwrap_or_else(|_| "~/.config/autostart/kiekje-tray.desktop".to_string());
         let hyprland_path = integration::hyprland_include_path()
             .map(|path| path.display().to_string())
-            .unwrap_or_else(|_| "~/.config/hypr/screeny-shortcuts.conf".to_string());
+            .unwrap_or_else(|_| "~/.config/hypr/kiekje-shortcuts.conf".to_string());
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 16);
         root.set_margin_top(24);
@@ -67,7 +67,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         root.set_margin_start(24);
         root.set_margin_end(24);
 
-        let title = gtk::Label::new(Some("Screeny Launcher"));
+        let title = gtk::Label::new(Some("Kiekje Launcher"));
         title.add_css_class("title-2");
         title.set_xalign(0.0);
 
@@ -504,7 +504,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
-            .title("Screeny Launcher")
+            .title("Kiekje Launcher")
             .default_width(860)
             .default_height(780)
             .content(&shell)
@@ -582,7 +582,7 @@ pub fn show_feedback_window(title: &str, body: &str) {
     let title = title.to_string();
     let body = body.to_string();
     let app = adw::Application::builder()
-        .application_id("com.screeny.capture.feedback")
+        .application_id("com.kiekje.capture.feedback")
         .build();
 
     app.connect_activate(move |app| {
@@ -623,12 +623,12 @@ pub fn show_feedback_window(title: &str, body: &str) {
     app.run_with_args(&args);
 }
 
-struct ScreenyTray {
+struct KiekjeTray {
     settings: Settings,
     status_line: String,
 }
 
-impl ScreenyTray {
+impl KiekjeTray {
     fn spawn_launcher(&mut self) {
         match spawn_launcher_process() {
             Ok(()) => self.status_line = "Launcher opened".to_string(),
@@ -681,15 +681,15 @@ impl ScreenyTray {
     }
 }
 
-impl ksni::Tray for ScreenyTray {
+impl ksni::Tray for KiekjeTray {
     const MENU_ON_ACTIVATE: bool = true;
 
     fn id(&self) -> String {
-        "screeny-tray".into()
+        "kiekje-tray".into()
     }
 
     fn title(&self) -> String {
-        "Screeny".into()
+        "Kiekje".into()
     }
 
     fn icon_name(&self) -> String {
@@ -698,7 +698,7 @@ impl ksni::Tray for ScreenyTray {
 
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
-            title: "Screeny".into(),
+            title: "Kiekje".into(),
             description: self.status_line.clone(),
             ..Default::default()
         }
@@ -719,22 +719,20 @@ impl ksni::Tray for ScreenyTray {
         vec![
             StandardItem {
                 label: "Open Launcher".into(),
-                activate: Box::new(|tray: &mut ScreenyTray| tray.spawn_launcher()),
+                activate: Box::new(|tray: &mut KiekjeTray| tray.spawn_launcher()),
                 ..Default::default()
             }
             .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "Capture Region".into(),
-                activate: Box::new(|tray: &mut ScreenyTray| {
-                    tray.start_capture(CaptureMode::Region)
-                }),
+                activate: Box::new(|tray: &mut KiekjeTray| tray.start_capture(CaptureMode::Region)),
                 ..Default::default()
             }
             .into(),
             StandardItem {
                 label: "Capture Fullscreen".into(),
-                activate: Box::new(|tray: &mut ScreenyTray| {
+                activate: Box::new(|tray: &mut KiekjeTray| {
                     tray.start_capture(CaptureMode::Fullscreen)
                 }),
                 ..Default::default()
@@ -742,9 +740,7 @@ impl ksni::Tray for ScreenyTray {
             .into(),
             StandardItem {
                 label: "Capture Window".into(),
-                activate: Box::new(|tray: &mut ScreenyTray| {
-                    tray.start_capture(CaptureMode::Window)
-                }),
+                activate: Box::new(|tray: &mut KiekjeTray| tray.start_capture(CaptureMode::Window)),
                 ..Default::default()
             }
             .into(),
@@ -752,7 +748,7 @@ impl ksni::Tray for ScreenyTray {
             CheckmarkItem {
                 label: "Copy to Clipboard".into(),
                 checked: self.settings.copy_to_clipboard,
-                activate: Box::new(|tray: &mut ScreenyTray| {
+                activate: Box::new(|tray: &mut KiekjeTray| {
                     tray.settings.copy_to_clipboard = !tray.settings.copy_to_clipboard;
                     tray.persist_settings("Updated clipboard copy.");
                 }),
@@ -762,7 +758,7 @@ impl ksni::Tray for ScreenyTray {
             CheckmarkItem {
                 label: "Open Editor".into(),
                 checked: self.settings.open_editor,
-                activate: Box::new(|tray: &mut ScreenyTray| {
+                activate: Box::new(|tray: &mut KiekjeTray| {
                     tray.settings.open_editor = !tray.settings.open_editor;
                     tray.persist_settings("Updated editor launch behavior.");
                 }),
@@ -772,7 +768,7 @@ impl ksni::Tray for ScreenyTray {
             CheckmarkItem {
                 label: "Auto Save".into(),
                 checked: self.settings.auto_save,
-                activate: Box::new(|tray: &mut ScreenyTray| {
+                activate: Box::new(|tray: &mut KiekjeTray| {
                     tray.settings.auto_save = !tray.settings.auto_save;
                     tray.persist_settings("Updated auto-save behavior.");
                 }),
@@ -782,7 +778,7 @@ impl ksni::Tray for ScreenyTray {
             CheckmarkItem {
                 label: "Start Tray on Login".into(),
                 checked: self.settings.tray_autostart,
-                activate: Box::new(|tray: &mut ScreenyTray| {
+                activate: Box::new(|tray: &mut KiekjeTray| {
                     tray.set_tray_autostart(!tray.settings.tray_autostart);
                 }),
                 ..Default::default()
@@ -792,7 +788,7 @@ impl ksni::Tray for ScreenyTray {
                 label: "Delay Preset".into(),
                 submenu: vec![RadioGroup {
                     selected: delay_selected,
-                    select: Box::new(|tray: &mut ScreenyTray, index| {
+                    select: Box::new(|tray: &mut KiekjeTray, index| {
                         tray.settings.delay_ms = delay_value(index);
                         tray.persist_settings(format!(
                             "Delay preset set to {}.",
@@ -826,7 +822,7 @@ impl ksni::Tray for ScreenyTray {
                 label: "Default Mode".into(),
                 submenu: vec![RadioGroup {
                     selected: default_mode_selected,
-                    select: Box::new(|tray: &mut ScreenyTray, index| {
+                    select: Box::new(|tray: &mut KiekjeTray, index| {
                         tray.settings.default_capture_mode = match index {
                             1 => CaptureMode::Fullscreen,
                             2 => CaptureMode::Window,
@@ -858,8 +854,8 @@ impl ksni::Tray for ScreenyTray {
             .into(),
             StandardItem {
                 label: "Show Doctor Report".into(),
-                activate: Box::new(|tray: &mut ScreenyTray| {
-                    show_feedback_window("Screeny Doctor", &diagnostics::doctor_report());
+                activate: Box::new(|tray: &mut KiekjeTray| {
+                    show_feedback_window("Kiekje Doctor", &diagnostics::doctor_report());
                     tray.status_line = "Doctor report opened".into();
                 }),
                 ..Default::default()
@@ -900,7 +896,7 @@ fn spawn_launcher_process() -> Result<()> {
     Command::new(exe)
         .arg("--launcher")
         .spawn()
-        .context("failed to launch Screeny launcher")?;
+        .context("failed to launch Kiekje launcher")?;
     Ok(())
 }
 
@@ -954,7 +950,7 @@ fn delay_value(index: usize) -> u64 {
 }
 
 fn current_exe_or_default() -> PathBuf {
-    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("capture-app"))
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kiekje"))
 }
 
 fn build_shortcut_row(

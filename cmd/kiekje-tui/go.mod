@@ -1,4 +1,4 @@
-module screeny-tui
+module kiekje-tui
 
 go 1.22
 

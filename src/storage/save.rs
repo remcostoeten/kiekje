@@ -58,7 +58,7 @@ mod tests {
     fn substitutes_timestamp_and_mode_tokens() {
         let settings = Settings {
             default_save_location: PathBuf::from("/tmp/shots"),
-            filename_template: "screeny-{timestamp}-{mode}.png".to_string(),
+            filename_template: "kiekje-{timestamp}-{mode}.png".to_string(),
             ..Settings::default()
         };
 
@@ -66,7 +66,7 @@ mod tests {
             render_path_with_timestamp(&settings, CaptureMode::Window, "2026-03-06_13-00-00");
         assert_eq!(
             path,
-            PathBuf::from("/tmp/shots/screeny-2026-03-06_13-00-00-window.png")
+            PathBuf::from("/tmp/shots/kiekje-2026-03-06_13-00-00-window.png")
         );
     }
 
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn saves_to_explicit_path() {
-        let base = std::env::temp_dir().join(format!("screeny-test-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("kiekje-test-{}", std::process::id()));
         let path = base.join("nested").join("image.png");
         let png = [1_u8, 2, 3];
 

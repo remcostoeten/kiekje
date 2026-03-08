@@ -73,7 +73,7 @@ pub(crate) fn doctor_report_with_path(path: Option<std::ffi::OsString>) -> Strin
     ];
 
     let mut out = String::new();
-    out.push_str("Screeny Doctor Report\n");
+    out.push_str("Kiekje Doctor Report\n");
     out.push_str("====================\n");
 
     for (tool, purpose) in checks {
@@ -103,7 +103,7 @@ fn capture_requirements(mode: CaptureMode, settings: &Settings) -> Vec<Requireme
         CaptureMode::Window => requirements.push(Requirement {
             tool: "hyprctl",
             required_for: "window capture mode (Hyprland active window)",
-            workaround: Some("use `capture-app fullscreen` or `capture-app region`"),
+            workaround: Some("use `kiekje fullscreen` or `kiekje region`"),
         }),
     }
 

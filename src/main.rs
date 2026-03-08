@@ -22,11 +22,7 @@ enum CliMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "capture-app",
-    version,
-    about = "Wayland-first screenshot utility"
-)]
+#[command(name = "kiekje", version, about = "Wayland-first screenshot utility")]
 struct Cli {
     #[arg(value_enum)]
     mode: Option<CliMode>,
@@ -122,7 +118,7 @@ fn run_capture(mode: CaptureMode, settings: &Settings) -> Result<()> {
 fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
     loop {
         println!();
-        println!("capture-app interactive");
+        println!("kiekje interactive");
         println!("1) Capture region");
         println!("2) Capture fullscreen");
         println!("3) Capture window (active Hyprland window)");
@@ -376,11 +372,11 @@ fn attempt_dependency_install(missing: &diagnostics::MissingDependenciesError) -
 }
 
 fn render_error(err: &anyhow::Error) {
-    eprintln!("Screeny Error");
+    eprintln!("Kiekje Error");
     eprintln!("============");
 
     if let Some(missing) = err.downcast_ref::<diagnostics::MissingDependenciesError>() {
-        eprintln!("Code: SCREENY-E001");
+        eprintln!("Code: KIEKJE-E001");
         eprintln!("Missing required dependencies:");
         for item in &missing.items {
             eprintln!("  - {} ({})", item.tool, item.required_for);
@@ -392,7 +388,7 @@ fn render_error(err: &anyhow::Error) {
             }
         }
         eprintln!();
-        eprintln!("Alternative: run `capture-app --doctor` for full environment diagnostics.");
+        eprintln!("Alternative: run `kiekje --doctor` for full environment diagnostics.");
         app::show_feedback_window(
             "Missing Dependencies",
             &format_missing_dependencies(missing),
@@ -401,7 +397,7 @@ fn render_error(err: &anyhow::Error) {
     }
 
     if err.to_string().contains("capture canceled") {
-        eprintln!("Code: SCREENY-E002");
+        eprintln!("Code: KIEKJE-E002");
         eprintln!("Capture canceled.");
         app::show_feedback_window(
             "Capture Canceled",
@@ -410,13 +406,13 @@ fn render_error(err: &anyhow::Error) {
         return;
     }
 
-    eprintln!("Code: SCREENY-E999");
+    eprintln!("Code: KIEKJE-E999");
     eprintln!("{err:#}");
     app::show_feedback_window("Capture Failed", &format!("{err:#}"));
 }
 
 fn format_missing_dependencies(missing: &diagnostics::MissingDependenciesError) -> String {
-    let mut body = String::from("Screeny cannot continue because required tools are missing.\n\n");
+    let mut body = String::from("Kiekje cannot continue because required tools are missing.\n\n");
     for item in &missing.items {
         body.push_str(&format!("- {} ({})\n", item.tool, item.required_for));
         if let Some(cmd) = &item.install_command {
@@ -426,6 +422,6 @@ fn format_missing_dependencies(missing: &diagnostics::MissingDependenciesError) 
             body.push_str(&format!("  Option: {}\n", workaround));
         }
     }
-    body.push_str("\nRun `capture-app --doctor` for the full readiness report.");
+    body.push_str("\nRun `kiekje --doctor` for the full readiness report.");
     body
 }

@@ -14,7 +14,7 @@ use std::rc::Rc;
 
 pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode) -> Result<()> {
     let app = adw::Application::builder()
-        .application_id("com.screeny.capture")
+        .application_id("com.kiekje.capture")
         .build();
 
     app.connect_activate(move |app| {
@@ -58,7 +58,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
 
         let recapture_buttons: Rc<RefCell<Vec<(CaptureMode, gtk::ToggleButton)>>> =
             Rc::new(RefCell::new(Vec::new()));
-        let shell_title = gtk::Label::new(Some("Screeny Editor"));
+        let shell_title = gtk::Label::new(Some("Kiekje Editor"));
         shell_title.add_css_class("title-3");
         shell_title.set_xalign(0.0);
 
@@ -502,7 +502,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
-            .title("Screeny")
+            .title("Kiekje")
             .default_width((image_width + 420).max(1100))
             .default_height((image_height + 140).max(760))
             .content(&shell)
@@ -765,7 +765,7 @@ fn show_startup_error_window(app: &adw::Application, details: &str) {
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title("Screeny Error")
+        .title("Kiekje Error")
         .default_width(560)
         .default_height(220)
         .content(&box_root)
@@ -802,7 +802,7 @@ fn prompt_save_as(
         save::suggested_save_path(&cfg, current_mode)
             .file_name()
             .and_then(|x| x.to_str())
-            .unwrap_or("screeny.png"),
+            .unwrap_or("kiekje.png"),
     );
     let folder = gtk::gio::File::for_path(&cfg.default_save_location);
     let _ = dialog.set_current_folder(Some(&folder));
