@@ -13,6 +13,7 @@ pub enum CaptureMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub delay_ms: u64,
     pub default_save_location: PathBuf,
@@ -22,6 +23,10 @@ pub struct Settings {
     pub open_editor: bool,
     pub default_capture_mode: CaptureMode,
     pub auto_save: bool,
+    pub tray_autostart: bool,
+    pub shortcut_region: String,
+    pub shortcut_fullscreen: String,
+    pub shortcut_window: String,
     pub filename_template: String,
 }
 
@@ -40,6 +45,10 @@ impl Default for Settings {
             open_editor: true,
             default_capture_mode: CaptureMode::Region,
             auto_save: false,
+            tray_autostart: false,
+            shortcut_region: "SUPER SHIFT, S".to_string(),
+            shortcut_fullscreen: "SUPER SHIFT, F".to_string(),
+            shortcut_window: "SUPER SHIFT, W".to_string(),
             filename_template: "screeny-{timestamp}-{mode}.png".to_string(),
         }
     }
@@ -156,5 +165,28 @@ mod tests {
                 .contains("HOME and XDG_CONFIG_HOME are not set"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn deserializes_missing_new_fields_from_defaults() {
+        let settings: super::Settings = serde_json::from_str(
+            r#"{
+                "delay_ms": 0,
+                "default_save_location": "/tmp/shots",
+                "copy_to_clipboard": true,
+                "close_after_copy": false,
+                "open_after_save": false,
+                "open_editor": true,
+                "default_capture_mode": "region",
+                "auto_save": false,
+                "filename_template": "screeny-{timestamp}-{mode}.png"
+            }"#,
+        )
+        .unwrap();
+
+        assert!(!settings.tray_autostart);
+        assert_eq!(settings.shortcut_region, "SUPER SHIFT, S");
+        assert_eq!(settings.shortcut_fullscreen, "SUPER SHIFT, F");
+        assert_eq!(settings.shortcut_window, "SUPER SHIFT, W");
     }
 }

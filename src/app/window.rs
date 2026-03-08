@@ -282,7 +282,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             save_btn.connect_clicked(move |_| {
                 if let Ok(png) = c.render_png() {
                     let cfg = s.borrow();
-                    if let Ok(path) = save::save_capture(&png, &cfg, cfg.default_capture_mode) {
+                    if let Ok(path) = save::save_capture(&png, &cfg, current_mode) {
                         c.mark_saved();
                         let _ = maybe_open_saved_path(&path, &cfg, &status_label);
                         status_label
@@ -515,7 +515,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             let status_label = status_label.clone();
             let window = window.clone();
             save_as_btn.connect_clicked(move |_| {
-                prompt_save_as(&window, &c, &s, &status_label);
+                prompt_save_as(&window, &c, &s, &status_label, current_mode);
             });
         }
         {
@@ -734,7 +734,8 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         window.present();
     });
 
-    app.run();
+    let args: [&str; 0] = [];
+    app.run_with_args(&args);
     Ok(())
 }
 
@@ -786,6 +787,7 @@ fn prompt_save_as(
     canvas: &EditorCanvas,
     settings: &Rc<RefCell<Settings>>,
     status_label: &gtk::Label,
+    current_mode: CaptureMode,
 ) {
     let cfg = settings.borrow().clone();
     let dialog = gtk::FileChooserNative::new(
@@ -797,7 +799,7 @@ fn prompt_save_as(
     );
     dialog.set_modal(true);
     dialog.set_current_name(
-        save::suggested_save_path(&cfg, cfg.default_capture_mode)
+        save::suggested_save_path(&cfg, current_mode)
             .file_name()
             .and_then(|x| x.to_str())
             .unwrap_or("screeny.png"),

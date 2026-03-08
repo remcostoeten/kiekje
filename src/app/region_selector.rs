@@ -220,7 +220,8 @@ pub fn choose_region_or_fullscreen(png_data: &[u8]) -> Result<SelectionChoice> {
         }
     });
 
-    app.run();
+    let args: [&str; 0] = [];
+    app.run_with_args(&args);
     let selection = result
         .borrow_mut()
         .take()

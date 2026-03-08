@@ -26,9 +26,15 @@ type settings struct {
 	DelayMS            uint64      `json:"delay_ms"`
 	DefaultSavePath    string      `json:"default_save_location"`
 	CopyToClipboard    bool        `json:"copy_to_clipboard"`
+	CloseAfterCopy     bool        `json:"close_after_copy"`
+	OpenAfterSave      bool        `json:"open_after_save"`
 	OpenEditor         bool        `json:"open_editor"`
 	DefaultCaptureMode captureMode `json:"default_capture_mode"`
 	AutoSave           bool        `json:"auto_save"`
+	TrayAutostart      bool        `json:"tray_autostart"`
+	ShortcutRegion     string      `json:"shortcut_region"`
+	ShortcutFullscreen string      `json:"shortcut_fullscreen"`
+	ShortcutWindow     string      `json:"shortcut_window"`
 	FilenameTemplate   string      `json:"filename_template"`
 }
 
@@ -608,6 +614,15 @@ func loadOrCreateSettings(path string) (settings, error) {
 	if s.DefaultSavePath == "" {
 		s.DefaultSavePath = defaultSettings().DefaultSavePath
 	}
+	if s.ShortcutRegion == "" {
+		s.ShortcutRegion = defaultSettings().ShortcutRegion
+	}
+	if s.ShortcutFullscreen == "" {
+		s.ShortcutFullscreen = defaultSettings().ShortcutFullscreen
+	}
+	if s.ShortcutWindow == "" {
+		s.ShortcutWindow = defaultSettings().ShortcutWindow
+	}
 	if s.FilenameTemplate == "" {
 		s.FilenameTemplate = defaultSettings().FilenameTemplate
 	}
@@ -635,9 +650,15 @@ func defaultSettings() settings {
 		DelayMS:            0,
 		DefaultSavePath:    filepath.Join(home, "Pictures", "Screenshots"),
 		CopyToClipboard:    true,
+		CloseAfterCopy:     false,
+		OpenAfterSave:      false,
 		OpenEditor:         true,
 		DefaultCaptureMode: modeRegion,
 		AutoSave:           false,
+		TrayAutostart:      false,
+		ShortcutRegion:     "SUPER SHIFT, S",
+		ShortcutFullscreen: "SUPER SHIFT, F",
+		ShortcutWindow:     "SUPER SHIFT, W",
 		FilenameTemplate:   "screeny-{timestamp}-{mode}.png",
 	}
 }

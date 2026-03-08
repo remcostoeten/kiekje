@@ -1,4 +1,5 @@
 use crate::diagnostics;
+use crate::platform::linux::integration;
 use crate::settings::config::{CaptureMode, Settings};
 use anyhow::{Context, Result};
 use gtk::prelude::*;
@@ -7,15 +8,24 @@ use ksni::blocking::TrayMethods;
 use ksni::menu::{CheckmarkItem, MenuItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use libadwaita as adw;
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 use std::time::Duration;
+
+const LAUNCHER_CAPTURE_STARTUP_DELAY_MS: u64 = 350;
+const TRAY_CAPTURE_STARTUP_DELAY_MS: u64 = 350;
 
 pub fn init_tray() {
     // The tray is started explicitly via `capture-app --tray`.
 }
 
 pub fn run_tray(settings: Settings) -> Result<()> {
+    let mut settings = settings;
+    if let Ok(enabled) = integration::tray_autostart_enabled() {
+        settings.tray_autostart = enabled;
+    }
+
     let tray = ScreenyTray {
         settings,
         status_line: "Ready".to_string(),
@@ -38,6 +48,18 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
 
     app.connect_activate(move |app| {
         let settings = Rc::new(RefCell::new(settings.clone()));
+        if let Ok(enabled) = integration::tray_autostart_enabled() {
+            settings.borrow_mut().tray_autostart = enabled;
+        }
+        let current_exe = Rc::new(current_exe_or_default());
+        let hyprland_source = integration::hyprland_source_line()
+            .unwrap_or_else(|_| "source = ~/.config/hypr/screeny-shortcuts.conf".to_string());
+        let autostart_path = integration::tray_autostart_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "~/.config/autostart/screeny-tray.desktop".to_string());
+        let hyprland_path = integration::hyprland_include_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "~/.config/hypr/screeny-shortcuts.conf".to_string());
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 16);
         root.set_margin_top(24);
@@ -86,6 +108,8 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         editor_toggle.set_active(settings.borrow().open_editor);
         let autosave_toggle = gtk::CheckButton::with_label("Auto Save");
         autosave_toggle.set_active(settings.borrow().auto_save);
+        let tray_autostart_toggle = gtk::CheckButton::with_label("Start Tray on Login");
+        tray_autostart_toggle.set_active(settings.borrow().tray_autostart);
 
         let default_mode_label = gtk::Label::new(Some(&format!(
             "Default mode: {}",
@@ -119,6 +143,72 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         delay_row.append(&delay_5_btn);
         delay_row.append(&delay_10_btn);
 
+        let integration_title = gtk::Label::new(Some("Desktop Integration"));
+        integration_title.add_css_class("heading");
+        integration_title.set_xalign(0.0);
+
+        let autostart_label = gtk::Label::new(Some(&format!(
+            "Tray autostart file: {autostart_path}"
+        )));
+        autostart_label.set_xalign(0.0);
+        autostart_label.set_wrap(true);
+        autostart_label.set_selectable(true);
+        autostart_label.add_css_class("dim-label");
+
+        let shortcuts_title = gtk::Label::new(Some("Hyprland Shortcuts"));
+        shortcuts_title.add_css_class("heading");
+        shortcuts_title.set_xalign(0.0);
+
+        let shortcuts_hint = gtk::Label::new(Some(
+            "Record shortcuts below, then install the generated Hyprland include and reload Hyprland. This is compositor-specific and does not create a universal Wayland hotkey daemon.",
+        ));
+        shortcuts_hint.set_xalign(0.0);
+        shortcuts_hint.set_wrap(true);
+        shortcuts_hint.add_css_class("dim-label");
+
+        let source_label = gtk::Label::new(Some(&format!(
+            "Generated include: {hyprland_path}\nAdd this to your Hyprland config once: {hyprland_source}"
+        )));
+        source_label.set_xalign(0.0);
+        source_label.set_wrap(true);
+        source_label.set_selectable(true);
+
+        let (region_shortcut_row, region_shortcut_entry, region_record_btn, region_clear_btn) =
+            build_shortcut_row("Region", shortcut_for_mode(&settings.borrow(), CaptureMode::Region));
+        let (
+            fullscreen_shortcut_row,
+            fullscreen_shortcut_entry,
+            fullscreen_record_btn,
+            fullscreen_clear_btn,
+        ) = build_shortcut_row(
+            "Fullscreen",
+            shortcut_for_mode(&settings.borrow(), CaptureMode::Fullscreen),
+        );
+        let (window_shortcut_row, window_shortcut_entry, window_record_btn, window_clear_btn) =
+            build_shortcut_row("Window", shortcut_for_mode(&settings.borrow(), CaptureMode::Window));
+
+        let shortcuts_preview = gtk::TextView::new();
+        shortcuts_preview.set_editable(false);
+        shortcuts_preview.set_cursor_visible(false);
+        shortcuts_preview.set_monospace(true);
+        let shortcuts_buffer = shortcuts_preview.buffer();
+        shortcuts_buffer.set_text(&shortcut_preview(
+            &settings.borrow(),
+            current_exe.as_ref(),
+            &hyprland_source,
+        ));
+        let shortcuts_scroll = gtk::ScrolledWindow::new();
+        shortcuts_scroll.set_min_content_height(160);
+        shortcuts_scroll.set_child(Some(&shortcuts_preview));
+
+        let shortcuts_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let copy_shortcuts_btn = gtk::Button::with_label("Copy Hyprland Snippet");
+        let install_shortcuts_btn = gtk::Button::with_label("Install Hyprland Include");
+        let reload_hyprland_btn = gtk::Button::with_label("Reload Hyprland");
+        shortcuts_actions.append(&copy_shortcuts_btn);
+        shortcuts_actions.append(&install_shortcuts_btn);
+        shortcuts_actions.append(&reload_hyprland_btn);
+
         let doctor_title = gtk::Label::new(Some("Doctor"));
         doctor_title.add_css_class("heading");
         doctor_title.set_xalign(0.0);
@@ -135,16 +225,34 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
 
         {
             let status_label = status_label.clone();
-            region_btn.connect_clicked(move |_| match spawn_capture_process(CaptureMode::Region) {
-                Ok(()) => status_label.set_text("Started region capture from the launcher."),
-                Err(err) => status_label.set_text(&format!("Failed to start region capture: {err}")),
+            let app = app.clone();
+            region_btn.connect_clicked(move |_| {
+                match spawn_capture_process(
+                    CaptureMode::Region,
+                    Some(LAUNCHER_CAPTURE_STARTUP_DELAY_MS),
+                ) {
+                    Ok(()) => {
+                        status_label.set_text("Started region capture from the launcher.");
+                        app.quit();
+                    }
+                    Err(err) => {
+                        status_label.set_text(&format!("Failed to start region capture: {err}"))
+                    }
+                }
             });
         }
         {
             let status_label = status_label.clone();
+            let app = app.clone();
             fullscreen_btn.connect_clicked(move |_| {
-                match spawn_capture_process(CaptureMode::Fullscreen) {
-                    Ok(()) => status_label.set_text("Started fullscreen capture from the launcher."),
+                match spawn_capture_process(
+                    CaptureMode::Fullscreen,
+                    Some(LAUNCHER_CAPTURE_STARTUP_DELAY_MS),
+                ) {
+                    Ok(()) => {
+                        status_label.set_text("Started fullscreen capture from the launcher.");
+                        app.quit();
+                    }
                     Err(err) => status_label
                         .set_text(&format!("Failed to start fullscreen capture: {err}")),
                 }
@@ -152,9 +260,20 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         }
         {
             let status_label = status_label.clone();
-            window_btn.connect_clicked(move |_| match spawn_capture_process(CaptureMode::Window) {
-                Ok(()) => status_label.set_text("Started window capture from the launcher."),
-                Err(err) => status_label.set_text(&format!("Failed to start window capture: {err}")),
+            let app = app.clone();
+            window_btn.connect_clicked(move |_| {
+                match spawn_capture_process(
+                    CaptureMode::Window,
+                    Some(LAUNCHER_CAPTURE_STARTUP_DELAY_MS),
+                ) {
+                    Ok(()) => {
+                        status_label.set_text("Started window capture from the launcher.");
+                        app.quit();
+                    }
+                    Err(err) => {
+                        status_label.set_text(&format!("Failed to start window capture: {err}"))
+                    }
+                }
             });
         }
 
@@ -179,6 +298,44 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
             |cfg, active| cfg.auto_save = active,
             "Updated auto-save setting.",
         );
+        {
+            let settings = Rc::clone(&settings);
+            let status_label = status_label.clone();
+            let current_exe = Rc::clone(&current_exe);
+            tray_autostart_toggle.connect_toggled(move |toggle| {
+                let enabled = toggle.is_active();
+                let mut guard = settings.borrow_mut();
+                let result = if enabled {
+                    integration::write_tray_autostart_entry(current_exe.as_ref())
+                        .context("failed to enable tray autostart")
+                } else {
+                    integration::remove_tray_autostart_entry()
+                        .context("failed to disable tray autostart")
+                        .map(|()| current_exe.as_ref().to_path_buf())
+                };
+
+                match result {
+                    Ok(_) => {
+                        guard.tray_autostart = enabled;
+                        match guard.save() {
+                            Ok(()) => status_label.set_text(if enabled {
+                                "Tray autostart enabled."
+                            } else {
+                                "Tray autostart disabled."
+                            }),
+                            Err(err) => {
+                                status_label.set_text(&format!(
+                                    "Autostart changed but settings save failed: {err}"
+                                ));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        status_label.set_text(&format!("Failed to update autostart: {err}"));
+                    }
+                }
+            });
+        }
 
         for (button, mode) in [
             (default_region_btn, CaptureMode::Region),
@@ -243,6 +400,70 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                 status_label.set_text("Doctor report refreshed.");
             });
         }
+        connect_clear_shortcut(
+            Rc::clone(&settings),
+            CaptureMode::Region,
+            region_shortcut_entry.clone(),
+            region_clear_btn,
+            shortcuts_buffer.clone(),
+            status_label.clone(),
+            Rc::clone(&current_exe),
+        );
+        connect_clear_shortcut(
+            Rc::clone(&settings),
+            CaptureMode::Fullscreen,
+            fullscreen_shortcut_entry.clone(),
+            fullscreen_clear_btn,
+            shortcuts_buffer.clone(),
+            status_label.clone(),
+            Rc::clone(&current_exe),
+        );
+        connect_clear_shortcut(
+            Rc::clone(&settings),
+            CaptureMode::Window,
+            window_shortcut_entry.clone(),
+            window_clear_btn,
+            shortcuts_buffer.clone(),
+            status_label.clone(),
+            Rc::clone(&current_exe),
+        );
+        {
+            let settings = Rc::clone(&settings);
+            let current_exe = Rc::clone(&current_exe);
+            let status_label = status_label.clone();
+            copy_shortcuts_btn.connect_clicked(move |_| {
+                let snippet = shortcut_preview(&settings.borrow(), current_exe.as_ref(), &hyprland_source);
+                if let Some(display) = gtk::gdk::Display::default() {
+                    display.clipboard().set_text(&snippet);
+                    status_label.set_text("Copied Hyprland shortcut snippet to the clipboard.");
+                } else {
+                    status_label.set_text("Clipboard unavailable for shortcut snippet copy.");
+                }
+            });
+        }
+        {
+            let settings = Rc::clone(&settings);
+            let current_exe = Rc::clone(&current_exe);
+            let status_label = status_label.clone();
+            install_shortcuts_btn.connect_clicked(move |_| {
+                match integration::write_hyprland_bindings(&settings.borrow(), current_exe.as_ref()) {
+                    Ok(path) => status_label.set_text(&format!(
+                        "Wrote Hyprland shortcut include to {}. Reload Hyprland to apply.",
+                        path.display()
+                    )),
+                    Err(err) => status_label.set_text(&format!(
+                        "Failed to install Hyprland shortcut include: {err}"
+                    )),
+                }
+            });
+        }
+        {
+            let status_label = status_label.clone();
+            reload_hyprland_btn.connect_clicked(move |_| match reload_hyprland() {
+                Ok(()) => status_label.set_text("Reloaded Hyprland config."),
+                Err(err) => status_label.set_text(&format!("Failed to reload Hyprland: {err}")),
+            });
+        }
 
         root.append(&title);
         root.append(&subtitle);
@@ -259,23 +480,97 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         root.append(&delay_text_label);
         root.append(&delay_row);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        root.append(&integration_title);
+        root.append(&tray_autostart_toggle);
+        root.append(&autostart_label);
+        root.append(&shortcuts_title);
+        root.append(&shortcuts_hint);
+        root.append(&source_label);
+        root.append(&region_shortcut_row);
+        root.append(&fullscreen_shortcut_row);
+        root.append(&window_shortcut_row);
+        root.append(&shortcuts_actions);
+        root.append(&shortcuts_scroll);
+        root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&doctor_title);
         root.append(&doctor_btn);
         root.append(&doctor_scroll);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&status_label);
 
+        let shell = gtk::ScrolledWindow::new();
+        shell.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
+        shell.set_child(Some(&root));
+
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("Screeny Launcher")
-            .default_width(720)
-            .default_height(620)
-            .content(&root)
+            .default_width(860)
+            .default_height(780)
+            .content(&shell)
             .build();
+        {
+            let launcher_window = window.clone();
+            let status_label = status_label.clone();
+            let settings = Rc::clone(&settings);
+            let shortcuts_buffer = shortcuts_buffer.clone();
+            let current_exe = Rc::clone(&current_exe);
+            let region_entry = region_shortcut_entry.clone();
+            region_record_btn.connect_clicked(move |_| {
+                open_shortcut_recorder(
+                    &launcher_window,
+                    CaptureMode::Region,
+                    Rc::clone(&settings),
+                    region_entry.clone(),
+                    shortcuts_buffer.clone(),
+                    status_label.clone(),
+                    Rc::clone(&current_exe),
+                );
+            });
+        }
+        {
+            let launcher_window = window.clone();
+            let status_label = status_label.clone();
+            let settings = Rc::clone(&settings);
+            let shortcuts_buffer = shortcuts_buffer.clone();
+            let current_exe = Rc::clone(&current_exe);
+            let fullscreen_entry = fullscreen_shortcut_entry.clone();
+            fullscreen_record_btn.connect_clicked(move |_| {
+                open_shortcut_recorder(
+                    &launcher_window,
+                    CaptureMode::Fullscreen,
+                    Rc::clone(&settings),
+                    fullscreen_entry.clone(),
+                    shortcuts_buffer.clone(),
+                    status_label.clone(),
+                    Rc::clone(&current_exe),
+                );
+            });
+        }
+        {
+            let launcher_window = window.clone();
+            let status_label = status_label.clone();
+            let settings = Rc::clone(&settings);
+            let shortcuts_buffer = shortcuts_buffer.clone();
+            let current_exe = Rc::clone(&current_exe);
+            let window_entry = window_shortcut_entry.clone();
+            window_record_btn.connect_clicked(move |_| {
+                open_shortcut_recorder(
+                    &launcher_window,
+                    CaptureMode::Window,
+                    Rc::clone(&settings),
+                    window_entry.clone(),
+                    shortcuts_buffer.clone(),
+                    status_label.clone(),
+                    Rc::clone(&current_exe),
+                );
+            });
+        }
         window.present();
     });
 
-    app.run();
+    let args: [&str; 0] = [];
+    app.run_with_args(&args);
     Ok(())
 }
 
@@ -324,7 +619,8 @@ pub fn show_feedback_window(title: &str, body: &str) {
         window.present();
     });
 
-    app.run();
+    let args: [&str; 0] = [];
+    app.run_with_args(&args);
 }
 
 struct ScreenyTray {
@@ -341,11 +637,34 @@ impl ScreenyTray {
     }
 
     fn start_capture(&mut self, mode: CaptureMode) {
-        match spawn_capture_process(mode) {
+        match spawn_capture_process(mode, Some(TRAY_CAPTURE_STARTUP_DELAY_MS)) {
             Ok(()) => {
                 self.status_line = format!("Started {} capture", capture_mode_label(mode));
             }
             Err(err) => self.report_error("Failed to start capture", err),
+        }
+    }
+
+    fn set_tray_autostart(&mut self, enabled: bool) {
+        let result = if enabled {
+            integration::write_tray_autostart_entry(&current_exe_or_default())
+                .context("failed to enable tray autostart")
+        } else {
+            integration::remove_tray_autostart_entry()
+                .context("failed to disable tray autostart")
+                .map(|()| current_exe_or_default())
+        };
+
+        match result {
+            Ok(_) => {
+                self.settings.tray_autostart = enabled;
+                self.persist_settings(if enabled {
+                    "Tray autostart enabled."
+                } else {
+                    "Tray autostart disabled."
+                });
+            }
+            Err(err) => self.report_error("Failed to update tray autostart", err),
         }
     }
 
@@ -456,6 +775,15 @@ impl ksni::Tray for ScreenyTray {
                 activate: Box::new(|tray: &mut ScreenyTray| {
                     tray.settings.auto_save = !tray.settings.auto_save;
                     tray.persist_settings("Updated auto-save behavior.");
+                }),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Start Tray on Login".into(),
+                checked: self.settings.tray_autostart,
+                activate: Box::new(|tray: &mut ScreenyTray| {
+                    tray.set_tray_autostart(!tray.settings.tray_autostart);
                 }),
                 ..Default::default()
             }
@@ -576,10 +904,14 @@ fn spawn_launcher_process() -> Result<()> {
     Ok(())
 }
 
-fn spawn_capture_process(mode: CaptureMode) -> Result<()> {
+fn spawn_capture_process(mode: CaptureMode, startup_delay_ms: Option<u64>) -> Result<()> {
     let exe = std::env::current_exe().context("failed to resolve current executable")?;
-    Command::new(exe)
-        .arg(capture_mode_label(mode))
+    let mut command = Command::new(exe);
+    command.arg(capture_mode_label(mode));
+    if let Some(delay_ms) = startup_delay_ms.filter(|delay| *delay > 0) {
+        command.arg("--startup-delay-ms").arg(delay_ms.to_string());
+    }
+    command
         .spawn()
         .with_context(|| format!("failed to spawn {} capture", capture_mode_label(mode)))?;
     Ok(())
@@ -619,4 +951,281 @@ fn delay_value(index: usize) -> u64 {
         3 => 10_000,
         _ => 0,
     }
+}
+
+fn current_exe_or_default() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("capture-app"))
+}
+
+fn build_shortcut_row(
+    label: &str,
+    value: &str,
+) -> (gtk::Box, gtk::Entry, gtk::Button, gtk::Button) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let label_widget = gtk::Label::new(Some(label));
+    label_widget.set_xalign(0.0);
+    label_widget.set_width_chars(11);
+
+    let entry = gtk::Entry::new();
+    entry.set_editable(false);
+    entry.set_hexpand(true);
+    entry.set_text(value);
+    entry.set_placeholder_text(Some("No shortcut assigned"));
+
+    let record_btn = gtk::Button::with_label("Record");
+    record_btn.set_tooltip_text(Some("Press a key combination to assign this shortcut."));
+    let clear_btn = gtk::Button::with_label("Clear");
+    clear_btn.set_tooltip_text(Some("Remove this shortcut assignment."));
+
+    row.append(&label_widget);
+    row.append(&entry);
+    row.append(&record_btn);
+    row.append(&clear_btn);
+
+    (row, entry, record_btn, clear_btn)
+}
+
+fn connect_clear_shortcut(
+    settings: Rc<RefCell<Settings>>,
+    mode: CaptureMode,
+    entry: gtk::Entry,
+    button: gtk::Button,
+    shortcuts_buffer: gtk::TextBuffer,
+    status_label: gtk::Label,
+    current_exe: Rc<PathBuf>,
+) {
+    button.connect_clicked(move |_| {
+        let mut guard = settings.borrow_mut();
+        set_shortcut_for_mode(&mut guard, mode, String::new());
+        match guard.save() {
+            Ok(()) => {
+                entry.set_text("");
+                shortcuts_buffer.set_text(&shortcut_preview(
+                    &guard,
+                    current_exe.as_ref(),
+                    &integration::hyprland_source_line().unwrap_or_default(),
+                ));
+                status_label.set_text(&format!(
+                    "Cleared the {} shortcut.",
+                    capture_mode_label(mode)
+                ));
+            }
+            Err(err) => {
+                status_label.set_text(&format!("Failed to clear shortcut: {err}"));
+            }
+        }
+    });
+}
+
+fn open_shortcut_recorder(
+    parent: &adw::ApplicationWindow,
+    mode: CaptureMode,
+    settings: Rc<RefCell<Settings>>,
+    entry: gtk::Entry,
+    shortcuts_buffer: gtk::TextBuffer,
+    status_label: gtk::Label,
+    current_exe: Rc<PathBuf>,
+) {
+    let dialog = gtk::Window::builder()
+        .title(format!("Record {} Shortcut", capture_mode_label(mode)))
+        .transient_for(parent)
+        .modal(true)
+        .default_width(420)
+        .default_height(140)
+        .build();
+
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    root.set_margin_top(18);
+    root.set_margin_bottom(18);
+    root.set_margin_start(18);
+    root.set_margin_end(18);
+
+    let title = gtk::Label::new(Some(&format!(
+        "Press the shortcut to use for {} capture.",
+        capture_mode_label(mode)
+    )));
+    title.set_xalign(0.0);
+    title.add_css_class("title-4");
+
+    let body = gtk::Label::new(Some(
+        "Use modifier keys like Super, Ctrl, Alt, or Shift. Press Backspace to clear, or Escape to cancel.",
+    ));
+    body.set_xalign(0.0);
+    body.set_wrap(true);
+
+    root.append(&title);
+    root.append(&body);
+    dialog.set_child(Some(&root));
+
+    let key = gtk::EventControllerKey::new();
+    let dialog_clone = dialog.clone();
+    key.connect_key_pressed(move |_, key, _, state| {
+        if key == gtk::gdk::Key::Escape && state.is_empty() {
+            status_label.set_text("Shortcut recording canceled.");
+            dialog_clone.close();
+            return gtk::glib::Propagation::Stop;
+        }
+
+        if key == gtk::gdk::Key::BackSpace && state.is_empty() {
+            let mut guard = settings.borrow_mut();
+            set_shortcut_for_mode(&mut guard, mode, String::new());
+            match guard.save() {
+                Ok(()) => {
+                    entry.set_text("");
+                    shortcuts_buffer.set_text(&shortcut_preview(
+                        &guard,
+                        current_exe.as_ref(),
+                        &integration::hyprland_source_line().unwrap_or_default(),
+                    ));
+                    status_label.set_text(&format!(
+                        "Cleared the {} shortcut.",
+                        capture_mode_label(mode)
+                    ));
+                }
+                Err(err) => {
+                    status_label.set_text(&format!("Failed to clear shortcut: {err}"));
+                }
+            }
+            dialog_clone.close();
+            return gtk::glib::Propagation::Stop;
+        }
+
+        let Some(shortcut) = shortcut_from_key(key, state) else {
+            return gtk::glib::Propagation::Stop;
+        };
+
+        let mut guard = settings.borrow_mut();
+        set_shortcut_for_mode(&mut guard, mode, shortcut.clone());
+        match guard.save() {
+            Ok(()) => {
+                entry.set_text(&shortcut);
+                shortcuts_buffer.set_text(&shortcut_preview(
+                    &guard,
+                    current_exe.as_ref(),
+                    &integration::hyprland_source_line().unwrap_or_default(),
+                ));
+                status_label.set_text(&format!(
+                    "Assigned {} shortcut: {}",
+                    capture_mode_label(mode),
+                    shortcut
+                ));
+            }
+            Err(err) => {
+                status_label.set_text(&format!("Failed to save shortcut: {err}"));
+            }
+        }
+        dialog_clone.close();
+        gtk::glib::Propagation::Stop
+    });
+    dialog.add_controller(key);
+    dialog.present();
+}
+
+fn shortcut_preview(settings: &Settings, current_exe: &Path, hyprland_source: &str) -> String {
+    let mut body = String::new();
+    body.push_str(&format!("{hyprland_source}\n\n"));
+    body.push_str(&integration::hyprland_bindings(settings, current_exe));
+    body
+}
+
+fn shortcut_for_mode(settings: &Settings, mode: CaptureMode) -> &str {
+    match mode {
+        CaptureMode::Region => &settings.shortcut_region,
+        CaptureMode::Fullscreen => &settings.shortcut_fullscreen,
+        CaptureMode::Window => &settings.shortcut_window,
+    }
+}
+
+fn set_shortcut_for_mode(settings: &mut Settings, mode: CaptureMode, shortcut: String) {
+    match mode {
+        CaptureMode::Region => settings.shortcut_region = shortcut,
+        CaptureMode::Fullscreen => settings.shortcut_fullscreen = shortcut,
+        CaptureMode::Window => settings.shortcut_window = shortcut,
+    }
+}
+
+fn shortcut_from_key(key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> Option<String> {
+    use gtk::gdk::Key;
+
+    match key {
+        Key::Shift_L
+        | Key::Shift_R
+        | Key::Control_L
+        | Key::Control_R
+        | Key::Alt_L
+        | Key::Alt_R
+        | Key::Meta_L
+        | Key::Meta_R
+        | Key::Super_L
+        | Key::Super_R
+        | Key::Hyper_L
+        | Key::Hyper_R => return None,
+        _ => {}
+    }
+
+    let mut modifiers = Vec::new();
+    if state.contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+        modifiers.push("CTRL");
+    }
+    if state.contains(gtk::gdk::ModifierType::ALT_MASK) {
+        modifiers.push("ALT");
+    }
+    if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+        modifiers.push("SHIFT");
+    }
+    if state.contains(gtk::gdk::ModifierType::SUPER_MASK) {
+        modifiers.push("SUPER");
+    }
+
+    let key_name = hyprland_key_name(key)?;
+    if modifiers.is_empty() {
+        Some(format!(", {key_name}"))
+    } else {
+        Some(format!("{}, {key_name}", modifiers.join(" ")))
+    }
+}
+
+fn hyprland_key_name(key: gtk::gdk::Key) -> Option<String> {
+    use gtk::gdk::Key;
+
+    let name = match key {
+        Key::Print => "PRINT".to_string(),
+        Key::Return => "RETURN".to_string(),
+        Key::space => "SPACE".to_string(),
+        Key::Tab => "TAB".to_string(),
+        Key::Left => "LEFT".to_string(),
+        Key::Right => "RIGHT".to_string(),
+        Key::Up => "UP".to_string(),
+        Key::Down => "DOWN".to_string(),
+        Key::Page_Up => "PAGEUP".to_string(),
+        Key::Page_Down => "PAGEDOWN".to_string(),
+        Key::Home => "HOME".to_string(),
+        Key::End => "END".to_string(),
+        Key::Insert => "INSERT".to_string(),
+        Key::Delete => "DELETE".to_string(),
+        _ => {
+            if let Some(ch) = key.to_unicode() {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_uppercase().to_string()
+                } else {
+                    return None;
+                }
+            } else {
+                let raw = key.name()?;
+                raw.as_str().replace(['_', '-'], "").to_ascii_uppercase()
+            }
+        }
+    };
+
+    Some(name)
+}
+
+fn reload_hyprland() -> Result<()> {
+    Command::new("hyprctl")
+        .arg("reload")
+        .status()
+        .context("failed to execute `hyprctl reload`")?
+        .success()
+        .then_some(())
+        .context("`hyprctl reload` returned a non-zero status")
 }

@@ -1,6 +1,27 @@
-# screeny (`capture-app`)
+# Kiekje
 
-Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal GTK4/libadwaita annotation editor.
+[![Version](https://img.shields.io/badge/version-0.0.1-black)](https://github.com/remcostoeten/kiekje)
+[![Platform](https://img.shields.io/badge/platform-Linux%20Wayland-black)](https://github.com/remcostoeten/kiekje)
+[![Desktop](https://img.shields.io/badge/desktop-Hyprland%20friendly-black)](https://github.com/remcostoeten/kiekje)
+[![License](https://img.shields.io/badge/license-MIT-black)](./LICENSE)
+[![Rust](https://img.shields.io/badge/built%20with-Rust-black)](https://www.rust-lang.org/)
+
+**Kiekje** *(noun)*  
+/ˈkik.jə/ — *Dutch slang, “a quick snapshot or photo.”*
+
+Kiekje is a fast Wayland screenshot tool for Linux with annotation, tray controls, save automation, and Hyprland-friendly shortcut workflows.
+
+Current binary name: `capture-app`
+
+## Feature List
+
+- Region, fullscreen, and active-window capture
+- GTK4/libadwaita annotation editor with rectangle, arrow, pen, text, and highlight tools
+- Tray icon with capture actions, delay presets, and shared toggles
+- Launcher with tray autostart and Hyprland shortcut setup
+- Clipboard copy, auto-save, filename templates, and default save folder support
+- Save As, undo/redo, selection handles, color presets, and annotation sizing
+- Dependency doctor and recovery-oriented error handling
 
 ## Features (MVP)
 
@@ -51,6 +72,11 @@ Fast Wayland-first screenshot utility for Linux (Hyprland-first), with a minimal
   - `capture-app --tray`
   - `capture-app --doctor`
   - `capture-app --interactive` (menu-driven)
+- Desktop integration:
+  - StatusNotifier tray icon via `capture-app --tray`
+  - launcher toggle to start the tray on login
+  - recordable Hyprland shortcut assignments for region/fullscreen/window capture
+  - generated Hyprland include file plus reload action from the launcher
 
 ## Requirements
 
@@ -119,6 +145,7 @@ capture-app --interactive
   - show install hints when manual installation is required
 - GUI launcher (`capture-app --launcher`) exposes the same core capture actions, delay presets, and shared settings in a single GTK window.
 - Tray mode (`capture-app --tray`) adds a persistent StatusNotifier item with capture actions, delay presets, toggles, and a doctor shortcut.
+- Launcher desktop integration controls can write `~/.config/autostart/screeny-tray.desktop` and generate `~/.config/hypr/screeny-shortcuts.conf`.
 - Use `capture-app --doctor` to print a full dependency readiness report.
 
 If no mode is provided, the app uses `default_capture_mode` from config.
@@ -150,6 +177,14 @@ Notes:
 - TUI resolves `capture-app` using `APP_BIN`, `PATH`, `./target/release/capture-app`, then `./target/debug/capture-app`.
 - If not found, it attempts `cargo build --release` automatically.
 
+Tray autostart and Hyprland shortcut setup:
+
+- Open `capture-app --launcher`.
+- Enable `Start Tray on Login` to create the autostart desktop entry.
+- Use the `Record` buttons under `Hyprland Shortcuts` to assign per-mode shortcuts.
+- Click `Install Hyprland Include`, then add the shown `source = ...` line to your Hyprland config once if needed.
+- Click `Reload Hyprland` to apply the updated shortcut include immediately.
+
 ## Hyprland Keybind Example
 
 In `~/.config/hypr/hyprland.conf`:
@@ -178,6 +213,10 @@ Default config shape:
   "open_editor": true,
   "default_capture_mode": "region",
   "auto_save": false,
+  "tray_autostart": false,
+  "shortcut_region": "SUPER SHIFT, S",
+  "shortcut_fullscreen": "SUPER SHIFT, F",
+  "shortcut_window": "SUPER SHIFT, W",
   "filename_template": "screeny-{timestamp}-{mode}.png"
 }
 ```

@@ -38,6 +38,8 @@ struct Cli {
     tray: bool,
     #[arg(long, help = "Check system dependencies and print readiness report")]
     doctor: bool,
+    #[arg(long, hide = true)]
+    startup_delay_ms: Option<u64>,
 }
 
 fn main() {
@@ -50,6 +52,10 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
     let mut settings = Settings::load_or_default()?;
+
+    if let Some(delay_ms) = cli.startup_delay_ms.filter(|delay| *delay > 0) {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+    }
 
     if cli.doctor {
         println!("{}", diagnostics::doctor_report());
@@ -239,6 +245,10 @@ fn print_settings(settings: &Settings) {
         capture_mode_label(settings.default_capture_mode)
     );
     println!("auto_save: {}", settings.auto_save);
+    println!("tray_autostart: {}", settings.tray_autostart);
+    println!("shortcut_region: {}", settings.shortcut_region);
+    println!("shortcut_fullscreen: {}", settings.shortcut_fullscreen);
+    println!("shortcut_window: {}", settings.shortcut_window);
     println!("filename_template: {}", settings.filename_template);
 }
 

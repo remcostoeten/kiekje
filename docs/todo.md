@@ -28,7 +28,7 @@ Status legend:
 - `[x]` Add unsaved-changes warning on close.
 - `[x]` Add selection and resize handles for existing annotations.
 - `[x]` Copy the annotated result back to clipboard on demand or after save.
-- `[ ]` Add capture delay presets to the GUI/tray.
+- `[x]` Add capture delay presets to the GUI/tray.
 - `[~]` Make tray and CLI expose the same settings consistently.
   Current state: tray and launcher now expose capture modes, delay presets, default mode, and the main clipboard/editor/auto-save toggles.
   Missing: folder selection and secondary export toggles still live only in the editor shell.
@@ -49,7 +49,9 @@ Status legend:
 - `[ ]` Desktop notifications for save/copy completion.
 - `[ ]` Optional cursor include/exclude toggle when backend supports it.
 - `[ ]` Better compositor support beyond Hyprland-specific window capture.
-- `[ ]` Shortcut setup examples for Hyprland, Sway, and GNOME.
+- `[~]` Shortcut setup for Hyprland, Sway, and GNOME.
+  Current state: launcher can record per-mode shortcuts and generate/install a Hyprland include file.
+  Missing: Sway and GNOME workflows are still undocumented and unimplemented.
 
 ## Post-release backlog
 
