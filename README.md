@@ -13,6 +13,16 @@ Kiekje is a fast Wayland screenshot tool for Linux with annotation, tray control
 
 Current binary names: `kiekje` and `kiekje-tui`
 
+## Status and planning docs
+
+Use the status hub for current product state, Linux support boundaries, and
+overhaul planning.
+
+- [Project status hub](./docs/status/README.md)
+- [Current work tracker](./docs/status/current-status.md)
+- [Pre-Tauri scope](./docs/status/overhaul/pre-tauri-scope.md)
+- [Tauri implementation plan](./docs/status/overhaul/tauri-implementation.md)
+
 ## Feature List
 
 - Region, fullscreen, and active-window capture
@@ -145,7 +155,8 @@ install -Dm755 ../../kiekje-tui ~/.local/bin/kiekje-tui
 
 Desktop launcher:
 
-- `scripts/install.sh` also installs [share/applications/kiekje.desktop](/home/remcostoeten/projects/screeny/share/applications/kiekje.desktop).
+- `scripts/install.sh` also installs
+  [share/applications/kiekje.desktop](./share/applications/kiekje.desktop).
 - If `~/.local/bin` is not in `PATH`, add it before using the desktop entry.
 - Tagged GitHub releases now publish a `kiekje-linux-x86_64.tar.gz` bundle with `install.sh` and `uninstall.sh` included.
 - Installers check for `grim`, `wl-copy`, and `hyprctl`, print exact guidance, and support `--install-deps` for core packages on `pacman`, `apt-get`, `dnf`, and `zypper`.
