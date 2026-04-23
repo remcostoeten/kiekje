@@ -1,11 +1,12 @@
-use super::CaptureResult;
-use crate::platform::linux::{grim, hyprctl};
+use super::{CaptureBackend, CaptureResult};
 use anyhow::{Context, Result};
 
-pub fn capture() -> Result<CaptureResult> {
-    let geometry = hyprctl::active_window_geometry()
+pub fn capture(backend: &dyn CaptureBackend) -> Result<CaptureResult> {
+    let geometry = backend
+        .active_window_geometry()
         .context("failed to resolve active window geometry from Hyprland")?;
-    let png_data =
-        grim::capture_region(&geometry).context("grim failed to capture active window region")?;
+    let png_data = backend
+        .capture_region(&geometry)
+        .context("grim failed to capture active window region")?;
     Ok(CaptureResult { png_data })
 }

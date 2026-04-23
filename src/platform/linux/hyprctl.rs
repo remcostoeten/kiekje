@@ -8,22 +8,35 @@ struct ActiveWindow {
     size: Option<(i32, i32)>,
 }
 
-pub fn active_window_geometry() -> Result<String> {
-    let output = Command::new("hyprctl")
-        .arg("activewindow")
-        .arg("-j")
-        .output()
-        .context("failed to execute hyprctl activewindow -j")?;
+pub trait ActiveWindowGeometrySource {
+    fn active_window_geometry(&self) -> Result<String>;
+}
 
-    if !output.status.success() {
-        bail!(
-            "hyprctl activewindow failed (status {}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HyprctlCli;
+
+impl ActiveWindowGeometrySource for HyprctlCli {
+    fn active_window_geometry(&self) -> Result<String> {
+        let output = Command::new("hyprctl")
+            .arg("activewindow")
+            .arg("-j")
+            .output()
+            .context("failed to execute hyprctl activewindow -j")?;
+
+        if !output.status.success() {
+            bail!(
+                "hyprctl activewindow failed (status {}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        parse_active_window_geometry_from_json(&output.stdout)
     }
+}
 
-    parse_active_window_geometry_from_json(&output.stdout)
+pub fn active_window_geometry() -> Result<String> {
+    HyprctlCli.active_window_geometry()
 }
 
 pub(crate) fn parse_active_window_geometry_from_json(raw: &[u8]) -> Result<String> {
