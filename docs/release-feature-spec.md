@@ -1,6 +1,10 @@
 # Kiekje release feature spec
 
-See also: [docs/todo.md](/home/remcostoeten/projects/screeny/docs/todo.md) for the actionable backlog with current status.
+See also:
+
+- [todo.md](todo.md) for the actionable release backlog
+- [status/README.md](status/README.md) for the broader project status and
+  overhaul planning set
 
 ## Goal
 

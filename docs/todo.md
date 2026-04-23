@@ -2,6 +2,10 @@
 
 This is the actionable backlog derived from the release spec.
 
+Use [status/README.md](status/README.md) for the broader status hub and
+[status/current-status.md](status/current-status.md) for the live cross-cutting
+work tracker.
+
 Status legend:
 - `[x]` done
 - `[ ]` not started
