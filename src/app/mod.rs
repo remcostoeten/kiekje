@@ -3,19 +3,19 @@ pub mod tray;
 pub mod window;
 
 use crate::capture::CaptureResult;
+use crate::services::app::AppResult;
 use crate::settings::config::{CaptureMode, Settings};
-use anyhow::Result;
 
-pub fn run_editor(capture: CaptureResult, settings: Settings, mode: CaptureMode) -> Result<()> {
+pub fn run_editor(capture: CaptureResult, settings: Settings, mode: CaptureMode) -> AppResult<()> {
     tray::init_tray();
     window::run(capture, settings, mode)
 }
 
-pub fn run_launcher(settings: Settings) -> Result<()> {
+pub fn run_launcher(settings: Settings) -> AppResult<()> {
     tray::run_launcher(settings)
 }
 
-pub fn run_tray(settings: Settings) -> Result<()> {
+pub fn run_tray(settings: Settings) -> AppResult<()> {
     tray::run_tray(settings)
 }
 

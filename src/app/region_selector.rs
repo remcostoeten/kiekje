@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use crate::services::app::{AppError, AppResult};
 use gdk_pixbuf::PixbufLoader;
 use gtk::prelude::*;
 use gtk4 as gtk;
@@ -26,17 +26,17 @@ struct DragState {
     current: Option<(f64, f64)>,
 }
 
-pub fn choose_region_or_fullscreen(png_data: &[u8]) -> Result<SelectionChoice> {
+pub fn choose_region_or_fullscreen(png_data: &[u8]) -> AppResult<SelectionChoice> {
     let loader = PixbufLoader::new();
-    loader
-        .write(png_data)
-        .context("failed to load screenshot preview into GTK")?;
-    loader
-        .close()
-        .context("failed to finalize screenshot preview for GTK")?;
-    let pixbuf = loader
-        .pixbuf()
-        .ok_or_else(|| anyhow!("failed to decode screenshot preview"))?;
+    loader.write(png_data).map_err(|err| AppError::Capture {
+        details: format!("failed to load screenshot preview into GTK: {err}"),
+    })?;
+    loader.close().map_err(|err| AppError::Capture {
+        details: format!("failed to finalize screenshot preview for GTK: {err}"),
+    })?;
+    let pixbuf = loader.pixbuf().ok_or_else(|| AppError::Capture {
+        details: "failed to decode screenshot preview".to_string(),
+    })?;
 
     let image_width = pixbuf.width() as u32;
     let image_height = pixbuf.height() as u32;
@@ -222,11 +222,8 @@ pub fn choose_region_or_fullscreen(png_data: &[u8]) -> Result<SelectionChoice> {
 
     let args: [&str; 0] = [];
     app.run_with_args(&args);
-    let selection = result
-        .borrow_mut()
-        .take()
-        .ok_or_else(|| anyhow!("capture canceled"));
-    selection
+    let selection = result.borrow_mut().take();
+    selection.ok_or(AppError::CaptureCanceled)
 }
 
 fn selection_rect(state: DragState) -> Option<(f64, f64, f64, f64)> {

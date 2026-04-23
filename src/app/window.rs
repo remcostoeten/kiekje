@@ -1,17 +1,17 @@
 use crate::capture::CaptureResult;
 use crate::editor::canvas::EditorCanvas;
 use crate::editor::tools::{Tool, ToolKind};
+use crate::services::app::{AppError, AppResult};
 use crate::services::{export, settings as settings_service};
 use crate::settings::config::{CaptureMode, Settings};
 use adw::prelude::*;
-use anyhow::Result;
 use gtk4 as gtk;
 use libadwaita as adw;
 use std::cell::{Cell, RefCell};
 use std::process::Command;
 use std::rc::Rc;
 
-pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode) -> Result<()> {
+pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode) -> AppResult<()> {
     let app = adw::Application::builder()
         .application_id("com.kiekje.capture")
         .build();
@@ -912,20 +912,23 @@ fn copy_annotated_image(
     }
 }
 
-fn relaunch_capture(mode: CaptureMode, settings: &Rc<RefCell<Settings>>) -> Result<()> {
+fn relaunch_capture(mode: CaptureMode, settings: &Rc<RefCell<Settings>>) -> AppResult<()> {
     {
         let mut guard = settings.borrow_mut();
         guard.default_capture_mode = mode;
         settings_service::save(&guard)?;
     }
 
-    let exe = std::env::current_exe()?;
+    let exe = std::env::current_exe().map_err(|err| AppError::launch(err.into()))?;
     let arg = match mode {
         CaptureMode::Region => "region",
         CaptureMode::Fullscreen => "fullscreen",
         CaptureMode::Window => "window",
     };
-    Command::new(exe).arg(arg).spawn()?;
+    Command::new(exe)
+        .arg(arg)
+        .spawn()
+        .map_err(|err| AppError::launch(err.into()))?;
     Ok(())
 }
 

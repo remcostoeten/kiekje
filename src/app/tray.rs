@@ -1,7 +1,7 @@
 use crate::platform::linux::integration;
+use crate::services::app::{AppError, AppResult};
 use crate::services::{diagnostics as diagnostics_service, settings as settings_service};
 use crate::settings::config::{CaptureMode, Settings};
-use anyhow::{Context, Result};
 use gtk::prelude::*;
 use gtk4 as gtk;
 use ksni::blocking::TrayMethods;
@@ -20,7 +20,7 @@ pub fn init_tray() {
     // The tray is started explicitly via `kiekje --tray`.
 }
 
-pub fn run_tray(settings: Settings) -> Result<()> {
+pub fn run_tray(settings: Settings) -> AppResult<()> {
     let mut settings = settings;
     if let Ok(enabled) = integration::tray_autostart_enabled() {
         settings.tray_autostart = enabled;
@@ -34,14 +34,16 @@ pub fn run_tray(settings: Settings) -> Result<()> {
     let _handle = tray
         .assume_sni_available(true)
         .spawn()
-        .context("failed to start tray service")?;
+        .map_err(|err| AppError::Launch {
+            details: format!("failed to start tray service: {err}"),
+        })?;
 
     loop {
         std::thread::sleep(Duration::from_secs(60));
     }
 }
 
-pub fn run_launcher(settings: Settings) -> Result<()> {
+pub fn run_launcher(settings: Settings) -> AppResult<()> {
     let app = adw::Application::builder()
         .application_id("com.kiekje.capture.launcher")
         .build();
@@ -222,7 +224,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                         app.quit();
                     }
                     Err(err) => {
-                        status_label.set_text(&format!("Failed to start region capture: {err}"))
+                        set_status_error(&status_label, "Failed to start region capture", &err)
                     }
                 }
             });
@@ -239,8 +241,9 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                         status_label.set_text("Started fullscreen capture from the launcher.");
                         app.quit();
                     }
-                    Err(err) => status_label
-                        .set_text(&format!("Failed to start fullscreen capture: {err}")),
+                    Err(err) => {
+                        set_status_error(&status_label, "Failed to start fullscreen capture", &err)
+                    }
                 }
             });
         }
@@ -257,7 +260,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                         app.quit();
                     }
                     Err(err) => {
-                        status_label.set_text(&format!("Failed to start window capture: {err}"))
+                        set_status_error(&status_label, "Failed to start window capture", &err)
                     }
                 }
             });
@@ -292,11 +295,16 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                 let enabled = toggle.is_active();
                 let mut guard = settings.borrow_mut();
                 let result = if enabled {
-                    integration::write_tray_autostart_entry(current_exe.as_ref())
-                        .context("failed to enable tray autostart")
+                    integration::write_tray_autostart_entry(current_exe.as_ref()).map_err(|err| {
+                        AppError::Launch {
+                            details: format!("failed to enable tray autostart: {err:#}"),
+                        }
+                    })
                 } else {
                     integration::remove_tray_autostart_entry()
-                        .context("failed to disable tray autostart")
+                        .map_err(|err| AppError::Launch {
+                            details: format!("failed to disable tray autostart: {err:#}"),
+                        })
                         .map(|()| current_exe.as_ref().to_path_buf())
                 };
 
@@ -309,15 +317,15 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                             } else {
                                 "Tray autostart disabled."
                             }),
-                            Err(err) => {
-                                status_label.set_text(&format!(
-                                    "Autostart changed but settings save failed: {err}"
-                                ));
-                            }
+                            Err(err) => set_status_error(
+                                &status_label,
+                                "Autostart changed but settings save failed",
+                                &err,
+                            ),
                         }
                     }
                     Err(err) => {
-                        status_label.set_text(&format!("Failed to update autostart: {err}"));
+                        set_status_error(&status_label, "Failed to update autostart", &err)
                     }
                 }
             });
@@ -460,7 +468,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
             let status_label = status_label.clone();
             reload_hyprland_btn.connect_clicked(move |_| match reload_hyprland() {
                 Ok(()) => status_label.set_text("Reloaded Hyprland config."),
-                Err(err) => status_label.set_text(&format!("Failed to reload Hyprland: {err}")),
+                Err(err) => set_status_error(&status_label, "Failed to reload Hyprland", &err),
             });
         }
 
@@ -664,11 +672,16 @@ impl KiekjeTray {
 
     fn set_tray_autostart(&mut self, enabled: bool) {
         let result = if enabled {
-            integration::write_tray_autostart_entry(&current_exe_or_default())
-                .context("failed to enable tray autostart")
+            integration::write_tray_autostart_entry(&current_exe_or_default()).map_err(|err| {
+                AppError::Launch {
+                    details: format!("failed to enable tray autostart: {err:#}"),
+                }
+            })
         } else {
             integration::remove_tray_autostart_entry()
-                .context("failed to disable tray autostart")
+                .map_err(|err| AppError::Launch {
+                    details: format!("failed to disable tray autostart: {err:#}"),
+                })
                 .map(|()| current_exe_or_default())
         };
 
@@ -692,9 +705,9 @@ impl KiekjeTray {
         }
     }
 
-    fn report_error(&mut self, title: &str, err: impl std::fmt::Display) {
-        self.status_line = format!("{title}: {err}");
-        show_feedback_window(title, &err.to_string());
+    fn report_error(&mut self, title: &str, err: AppError) {
+        self.status_line = format!("{title}: {}", app_error_summary(&err));
+        show_feedback_window(err.title(), &err.feedback_body());
     }
 }
 
@@ -908,26 +921,48 @@ fn connect_toggle_setting<F>(
     });
 }
 
-fn spawn_launcher_process() -> Result<()> {
-    let exe = std::env::current_exe().context("failed to resolve current executable")?;
+fn spawn_launcher_process() -> AppResult<()> {
+    let exe = std::env::current_exe().map_err(|err| AppError::Launch {
+        details: format!("failed to resolve current executable: {err}"),
+    })?;
     Command::new(exe)
         .arg("--launcher")
         .spawn()
-        .context("failed to launch Kiekje launcher")?;
+        .map_err(|err| AppError::Launch {
+            details: format!("failed to launch Kiekje launcher: {err}"),
+        })?;
     Ok(())
 }
 
-fn spawn_capture_process(mode: CaptureMode, startup_delay_ms: Option<u64>) -> Result<()> {
-    let exe = std::env::current_exe().context("failed to resolve current executable")?;
+fn spawn_capture_process(mode: CaptureMode, startup_delay_ms: Option<u64>) -> AppResult<()> {
+    let exe = std::env::current_exe().map_err(|err| AppError::Launch {
+        details: format!("failed to resolve current executable: {err}"),
+    })?;
     let mut command = Command::new(exe);
     command.arg(capture_mode_label(mode));
     if let Some(delay_ms) = startup_delay_ms.filter(|delay| *delay > 0) {
         command.arg("--startup-delay-ms").arg(delay_ms.to_string());
     }
-    command
-        .spawn()
-        .with_context(|| format!("failed to spawn {} capture", capture_mode_label(mode)))?;
+    command.spawn().map_err(|err| AppError::Launch {
+        details: format!(
+            "failed to spawn {} capture: {err}",
+            capture_mode_label(mode)
+        ),
+    })?;
     Ok(())
+}
+
+fn app_error_summary(err: &AppError) -> String {
+    let details = err.details().trim();
+    if details.is_empty() {
+        err.title().to_string()
+    } else {
+        format!("{}: {details}", err.title())
+    }
+}
+
+fn set_status_error(status_label: &gtk::Label, prefix: &str, err: &AppError) {
+    status_label.set_text(&format!("{prefix}: {}", app_error_summary(err)));
 }
 
 fn capture_mode_label(mode: CaptureMode) -> &'static str {
@@ -1247,12 +1282,19 @@ fn hyprland_key_name(key: gtk::gdk::Key) -> Option<String> {
     Some(name)
 }
 
-fn reload_hyprland() -> Result<()> {
-    Command::new("hyprctl")
+fn reload_hyprland() -> AppResult<()> {
+    let status = Command::new("hyprctl")
         .arg("reload")
         .status()
-        .context("failed to execute `hyprctl reload`")?
-        .success()
-        .then_some(())
-        .context("`hyprctl reload` returned a non-zero status")
+        .map_err(|err| AppError::Launch {
+            details: format!("failed to execute `hyprctl reload`: {err}"),
+        })?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(AppError::Launch {
+            details: "`hyprctl reload` returned a non-zero status".to_string(),
+        })
+    }
 }
