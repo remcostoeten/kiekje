@@ -1,3 +1,4 @@
+pub mod backend;
 pub mod grim;
 pub mod hyprctl;
 pub mod integration;
