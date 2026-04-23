@@ -1,9 +1,8 @@
 use crate::capture::CaptureResult;
-use crate::clipboard;
 use crate::editor::canvas::EditorCanvas;
 use crate::editor::tools::{Tool, ToolKind};
+use crate::services::{export, settings as settings_service};
 use crate::settings::config::{CaptureMode, Settings};
-use crate::storage::save;
 use adw::prelude::*;
 use anyhow::Result;
 use gtk4 as gtk;
@@ -282,9 +281,9 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             save_btn.connect_clicked(move |_| {
                 if let Ok(png) = c.render_png() {
                     let cfg = s.borrow();
-                    if let Ok(path) = save::save_capture(&png, &cfg, current_mode) {
+                    if let Ok(path) = export::save_capture(&png, &cfg, current_mode) {
                         c.mark_saved();
-                        let _ = maybe_open_saved_path(&path, &cfg, &status_label);
+                        let _ = export::maybe_open_saved_path(&path, &cfg);
                         status_label
                             .set_text(&format!("Saved annotated image to {}.", path.display()));
                         eprintln!("Saved annotated image: {}", path.display());
@@ -310,7 +309,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             close_after_copy_toggle.connect_toggled(move |toggle| {
                 let mut guard = s.borrow_mut();
                 guard.close_after_copy = toggle.is_active();
-                let _ = guard.save();
+                let _ = settings_service::save(&guard);
             });
         }
         {
@@ -318,7 +317,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             open_after_save_toggle.connect_toggled(move |toggle| {
                 let mut guard = s.borrow_mut();
                 guard.open_after_save = toggle.is_active();
-                let _ = guard.save();
+                let _ = settings_service::save(&guard);
             });
         }
         {
@@ -798,12 +797,7 @@ fn prompt_save_as(
         Some("Cancel"),
     );
     dialog.set_modal(true);
-    dialog.set_current_name(
-        save::suggested_save_path(&cfg, current_mode)
-            .file_name()
-            .and_then(|x| x.to_str())
-            .unwrap_or("kiekje.png"),
-    );
+    dialog.set_current_name(&export::suggested_save_filename(&cfg, current_mode));
     let folder = gtk::gio::File::for_path(&cfg.default_save_location);
     let _ = dialog.set_current_folder(Some(&folder));
 
@@ -816,12 +810,12 @@ fn prompt_save_as(
                 if let Some(path) = file.path() {
                     match canvas
                         .render_png()
-                        .and_then(|png| save::save_capture_to_path(&png, &path))
+                        .and_then(|png| export::save_capture_to_path(&png, &path))
                     {
                         Ok(()) => {
                             canvas.mark_saved();
                             let cfg = settings.borrow();
-                            let _ = maybe_open_saved_path(&path, &cfg, &status_label);
+                            let _ = export::maybe_open_saved_path(&path, &cfg);
                             status_label
                                 .set_text(&format!("Saved annotated image to {}.", path.display()));
                         }
@@ -866,7 +860,7 @@ fn prompt_default_folder(
                 if let Some(path) = file.path() {
                     let mut guard = settings.borrow_mut();
                     guard.default_save_location = path.clone();
-                    match guard.save() {
+                    match settings_service::save(&guard) {
                         Ok(()) => {
                             folder_label.set_text(&format!(
                                 "Default save folder: {}",
@@ -897,7 +891,7 @@ fn copy_annotated_image(
     app: &adw::Application,
 ) {
     match canvas.render_png().and_then(|png| {
-        clipboard::copy_png(&png)?;
+        export::copy_png(&png)?;
         Ok(png)
     }) {
         Ok(_) => {
@@ -912,29 +906,11 @@ fn copy_annotated_image(
     }
 }
 
-fn maybe_open_saved_path(
-    path: &std::path::Path,
-    settings: &Settings,
-    status_label: &gtk::Label,
-) -> Result<()> {
-    if !settings.open_after_save {
-        return Ok(());
-    }
-
-    match Command::new("xdg-open").arg(path).spawn() {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            status_label.set_text(&format!("Saved, but opening failed: {err}"));
-            Err(err.into())
-        }
-    }
-}
-
 fn relaunch_capture(mode: CaptureMode, settings: &Rc<RefCell<Settings>>) -> Result<()> {
     {
         let mut guard = settings.borrow_mut();
         guard.default_capture_mode = mode;
-        guard.save()?;
+        settings_service::save(&guard)?;
     }
 
     let exe = std::env::current_exe()?;
