@@ -3,9 +3,9 @@
 use crate::capture as capture_backend;
 use crate::capture::CaptureResult;
 use crate::image::processing;
+use crate::services::app::{AppError, AppResult};
 use crate::services::{diagnostics, export};
 use crate::settings::config::{CaptureMode, Settings};
-use anyhow::Result;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -21,14 +21,14 @@ pub struct CaptureExecution {
 }
 
 /// Runs the full capture workflow for one capture mode.
-pub fn run(mode: CaptureMode, settings: &Settings) -> Result<CaptureExecution> {
+pub fn run(mode: CaptureMode, settings: &Settings) -> AppResult<CaptureExecution> {
     run_with_hooks(
         mode,
         settings,
         diagnostics::check_capture_requirements,
         thread::sleep,
-        capture_backend::capture,
-        processing::validate_png,
+        |capture_mode| capture_backend::capture(capture_mode).map_err(AppError::from_capture),
+        |png_data| processing::validate_png(png_data).map_err(AppError::from_capture),
         export::copy_png,
         export::save_capture,
     )
@@ -43,14 +43,14 @@ fn run_with_hooks<Req, Sleep, Capture, Validate, Copy, Save>(
     validate_png: Validate,
     copy_png: Copy,
     save_capture: Save,
-) -> Result<CaptureExecution>
+) -> AppResult<CaptureExecution>
 where
-    Req: Fn(CaptureMode, &Settings) -> Result<()>,
+    Req: Fn(CaptureMode, &Settings) -> AppResult<()>,
     Sleep: Fn(Duration),
-    Capture: Fn(CaptureMode) -> Result<CaptureResult>,
-    Validate: Fn(&[u8]) -> Result<()>,
-    Copy: Fn(&[u8]) -> Result<()>,
-    Save: Fn(&[u8], &Settings, CaptureMode) -> Result<PathBuf>,
+    Capture: Fn(CaptureMode) -> AppResult<CaptureResult>,
+    Validate: Fn(&[u8]) -> AppResult<()>,
+    Copy: Fn(&[u8]) -> AppResult<()>,
+    Save: Fn(&[u8], &Settings, CaptureMode) -> AppResult<PathBuf>,
 {
     check_requirements(mode, settings)?;
 
@@ -86,8 +86,8 @@ where
 mod tests {
     use super::run_with_hooks;
     use crate::capture::CaptureResult;
+    use crate::services::app::AppError;
     use crate::settings::config::{CaptureMode, Settings};
-    use anyhow::anyhow;
     use std::cell::RefCell;
     use std::path::PathBuf;
     use std::time::Duration;
@@ -184,7 +184,11 @@ mod tests {
         let result = run_with_hooks(
             CaptureMode::Window,
             &settings,
-            |_mode, _settings| Err(anyhow!("preflight failed")),
+            |_mode, _settings| {
+                Err(AppError::Diagnostics {
+                    details: "preflight failed".to_string(),
+                })
+            },
             |_duration| panic!("sleep should not be called"),
             |_mode| panic!("capture should not be called"),
             |_png| panic!("validate should not be called"),
@@ -194,7 +198,7 @@ mod tests {
 
         match result {
             Ok(_) => panic!("expected preflight failure"),
-            Err(err) => assert!(err.to_string().contains("preflight failed")),
+            Err(err) => assert_eq!(err.code(), "KIEKJE-E105"),
         }
     }
 }

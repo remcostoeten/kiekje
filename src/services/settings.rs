@@ -1,8 +1,8 @@
 //! Reusable settings service for UI shells and command surfaces.
 
-use anyhow::Result;
 use std::path::PathBuf;
 
+use crate::services::app::{AppError, AppResult};
 use crate::settings::config::{self, Settings};
 
 /// Stateless access point for persisted application settings.
@@ -10,18 +10,18 @@ use crate::settings::config::{self, Settings};
 pub struct SettingsService;
 
 /// Loads persisted settings, or returns defaults when no config exists.
-pub fn load_or_default() -> Result<Settings> {
+pub fn load_or_default() -> AppResult<Settings> {
     SettingsService::load_or_default()
 }
 
 /// Persists the provided settings using the current config backend.
-pub fn save(settings: &Settings) -> Result<()> {
+pub fn save(settings: &Settings) -> AppResult<()> {
     SettingsService::save(settings)
 }
 
 /// Returns the resolved config file path for the current environment.
 #[allow(dead_code)]
-pub fn config_path() -> Result<PathBuf> {
+pub fn config_path() -> AppResult<PathBuf> {
     SettingsService::config_path()
 }
 
@@ -36,19 +36,19 @@ impl SettingsService {
     ///
     /// Invalid config files are handled by the underlying backend, which backs
     /// them up and restores default settings.
-    pub fn load_or_default() -> Result<Settings> {
-        Settings::load_or_default()
+    pub fn load_or_default() -> AppResult<Settings> {
+        Settings::load_or_default().map_err(AppError::settings)
     }
 
     /// Persists the provided settings using the current config backend.
-    pub fn save(settings: &Settings) -> Result<()> {
-        settings.save()
+    pub fn save(settings: &Settings) -> AppResult<()> {
+        settings.save().map_err(AppError::settings)
     }
 
     /// Returns the resolved config file path for the current environment.
     #[allow(dead_code)]
-    pub fn config_path() -> Result<PathBuf> {
-        config::config_path()
+    pub fn config_path() -> AppResult<PathBuf> {
+        config::config_path().map_err(AppError::settings)
     }
 
     /// Returns the default settings used when no persisted config exists.

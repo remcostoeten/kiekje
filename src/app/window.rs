@@ -808,17 +808,21 @@ fn prompt_save_as(
         if response == gtk::ResponseType::Accept {
             if let Some(file) = dialog.file() {
                 if let Some(path) = file.path() {
-                    match canvas
-                        .render_png()
-                        .and_then(|png| export::save_capture_to_path(&png, &path))
-                    {
-                        Ok(()) => {
-                            canvas.mark_saved();
-                            let cfg = settings.borrow();
-                            let _ = export::maybe_open_saved_path(&path, &cfg);
-                            status_label
-                                .set_text(&format!("Saved annotated image to {}.", path.display()));
-                        }
+                    match canvas.render_png() {
+                        Ok(png) => match export::save_capture_to_path(&png, &path) {
+                            Ok(()) => {
+                                canvas.mark_saved();
+                                let cfg = settings.borrow();
+                                let _ = export::maybe_open_saved_path(&path, &cfg);
+                                status_label.set_text(&format!(
+                                    "Saved annotated image to {}.",
+                                    path.display()
+                                ));
+                            }
+                            Err(err) => {
+                                status_label.set_text(&format!("Save As failed: {err}"));
+                            }
+                        },
                         Err(err) => {
                             status_label.set_text(&format!("Save As failed: {err}"));
                         }
@@ -890,16 +894,18 @@ fn copy_annotated_image(
     status_label: &gtk::Label,
     app: &adw::Application,
 ) {
-    match canvas.render_png().and_then(|png| {
-        export::copy_png(&png)?;
-        Ok(png)
-    }) {
-        Ok(_) => {
-            status_label.set_text("Copied annotated image to clipboard.");
-            if settings.borrow().close_after_copy {
-                app.quit();
+    match canvas.render_png() {
+        Ok(png) => match export::copy_png(&png) {
+            Ok(()) => {
+                status_label.set_text("Copied annotated image to clipboard.");
+                if settings.borrow().close_after_copy {
+                    app.quit();
+                }
             }
-        }
+            Err(err) => {
+                status_label.set_text(&format!("Copy failed: {err}"));
+            }
+        },
         Err(err) => {
             status_label.set_text(&format!("Copy failed: {err}"));
         }

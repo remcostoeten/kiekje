@@ -1,16 +1,16 @@
 use crate::clipboard;
+use crate::services::app::{AppError, AppResult};
 use crate::settings::config::{CaptureMode, Settings};
 use crate::storage::save;
-use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub fn save_capture(png_data: &[u8], settings: &Settings, mode: CaptureMode) -> Result<PathBuf> {
-    save::save_capture(png_data, settings, mode)
+pub fn save_capture(png_data: &[u8], settings: &Settings, mode: CaptureMode) -> AppResult<PathBuf> {
+    save::save_capture(png_data, settings, mode).map_err(AppError::save)
 }
 
-pub fn save_capture_to_path(png_data: &[u8], path: &Path) -> Result<()> {
-    save::save_capture_to_path(png_data, path)
+pub fn save_capture_to_path(png_data: &[u8], path: &Path) -> AppResult<()> {
+    save::save_capture_to_path(png_data, path).map_err(AppError::save)
 }
 
 pub fn suggested_save_filename(settings: &Settings, mode: CaptureMode) -> String {
@@ -21,18 +21,18 @@ pub fn suggested_save_filename(settings: &Settings, mode: CaptureMode) -> String
         .to_string()
 }
 
-pub fn copy_png(png_data: &[u8]) -> Result<()> {
-    clipboard::copy_png(png_data)
+pub fn copy_png(png_data: &[u8]) -> AppResult<()> {
+    clipboard::copy_png(png_data).map_err(AppError::clipboard)
 }
 
-pub fn maybe_open_saved_path(path: &Path, settings: &Settings) -> Result<()> {
+pub fn maybe_open_saved_path(path: &Path, settings: &Settings) -> AppResult<()> {
     if !settings.open_after_save {
         return Ok(());
     }
 
     match Command::new("xdg-open").arg(path).spawn() {
         Ok(_) => Ok(()),
-        Err(err) => Err(err.into()),
+        Err(err) => Err(AppError::launch(err.into())),
     }
 }
 
