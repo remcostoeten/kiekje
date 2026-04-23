@@ -1,5 +1,5 @@
-use crate::diagnostics;
 use crate::platform::linux::integration;
+use crate::services::{diagnostics as diagnostics_service, settings as settings_service};
 use crate::settings::config::{CaptureMode, Settings};
 use anyhow::{Context, Result};
 use gtk::prelude::*;
@@ -85,10 +85,6 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         status_label.set_wrap(true);
         status_label.set_selectable(true);
 
-        let capture_title = gtk::Label::new(Some("Capture"));
-        capture_title.add_css_class("heading");
-        capture_title.set_xalign(0.0);
-
         let capture_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let region_btn = gtk::Button::with_label("Region");
         let fullscreen_btn = gtk::Button::with_label("Fullscreen");
@@ -97,10 +93,6 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         capture_row.append(&region_btn);
         capture_row.append(&fullscreen_btn);
         capture_row.append(&window_btn);
-
-        let settings_title = gtk::Label::new(Some("Shared Settings"));
-        settings_title.add_css_class("heading");
-        settings_title.set_xalign(0.0);
 
         let copy_toggle = gtk::CheckButton::with_label("Copy to Clipboard");
         copy_toggle.set_active(settings.borrow().copy_to_clipboard);
@@ -143,10 +135,6 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         delay_row.append(&delay_5_btn);
         delay_row.append(&delay_10_btn);
 
-        let integration_title = gtk::Label::new(Some("Desktop Integration"));
-        integration_title.add_css_class("heading");
-        integration_title.set_xalign(0.0);
-
         let autostart_label = gtk::Label::new(Some(&format!(
             "Tray autostart file: {autostart_path}"
         )));
@@ -154,10 +142,6 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         autostart_label.set_wrap(true);
         autostart_label.set_selectable(true);
         autostart_label.add_css_class("dim-label");
-
-        let shortcuts_title = gtk::Label::new(Some("Hyprland Shortcuts"));
-        shortcuts_title.add_css_class("heading");
-        shortcuts_title.set_xalign(0.0);
 
         let shortcuts_hint = gtk::Label::new(Some(
             "Record shortcuts below, then install the generated Hyprland include and reload Hyprland. This is compositor-specific and does not create a universal Wayland hotkey daemon.",
@@ -209,16 +193,18 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
         shortcuts_actions.append(&install_shortcuts_btn);
         shortcuts_actions.append(&reload_hyprland_btn);
 
-        let doctor_title = gtk::Label::new(Some("Doctor"));
-        doctor_title.add_css_class("heading");
-        doctor_title.set_xalign(0.0);
-
+        let doctor_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let doctor_btn = gtk::Button::with_label("Refresh Doctor Report");
+        let repair_portals_btn = gtk::Button::with_label("Repair Portal Services");
+        doctor_actions.append(&doctor_btn);
+        doctor_actions.append(&repair_portals_btn);
         let doctor_view = gtk::TextView::new();
         doctor_view.set_editable(false);
         doctor_view.set_cursor_visible(false);
         doctor_view.set_monospace(true);
-        doctor_view.buffer().set_text(&diagnostics::doctor_report());
+        doctor_view
+            .buffer()
+            .set_text(&diagnostics_service::doctor_report());
         let doctor_scroll = gtk::ScrolledWindow::new();
         doctor_scroll.set_min_content_height(180);
         doctor_scroll.set_child(Some(&doctor_view));
@@ -317,7 +303,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
                 match result {
                     Ok(_) => {
                         guard.tray_autostart = enabled;
-                        match guard.save() {
+                        match settings_service::save(&guard) {
                             Ok(()) => status_label.set_text(if enabled {
                                 "Tray autostart enabled."
                             } else {
@@ -348,7 +334,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
             button.connect_clicked(move |_| {
                 let mut guard = settings.borrow_mut();
                 guard.default_capture_mode = mode;
-                match guard.save() {
+                match settings_service::save(&guard) {
                     Ok(()) => {
                         default_mode_label
                             .set_text(&format!("Default mode: {}", capture_mode_label(mode)));
@@ -376,7 +362,7 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
             button.connect_clicked(move |_| {
                 let mut guard = settings.borrow_mut();
                 guard.delay_ms = delay_ms;
-                match guard.save() {
+                match settings_service::save(&guard) {
                     Ok(()) => {
                         delay_text_label
                             .set_text(&format!("Delay preset: {}", delay_label(delay_ms)));
@@ -396,8 +382,21 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
             let doctor_view = doctor_view.clone();
             let status_label = status_label.clone();
             doctor_btn.connect_clicked(move |_| {
-                doctor_view.buffer().set_text(&diagnostics::doctor_report());
+                doctor_view
+                    .buffer()
+                    .set_text(&diagnostics_service::doctor_report());
                 status_label.set_text("Doctor report refreshed.");
+            });
+        }
+        {
+            let doctor_view = doctor_view.clone();
+            let status_label = status_label.clone();
+            repair_portals_btn.connect_clicked(move |_| {
+                let result = diagnostics_service::repair_portals();
+                doctor_view
+                    .buffer()
+                    .set_text(&diagnostics_service::doctor_report());
+                status_label.set_text(&result.message);
             });
         }
         connect_clear_shortcut(
@@ -465,36 +464,54 @@ pub fn run_launcher(settings: Settings) -> Result<()> {
             });
         }
 
+        let capture_section = build_section("Capture", vec![capture_row.clone().upcast()]);
+        let settings_section = build_section(
+            "Shared Settings",
+            vec![
+                copy_toggle.clone().upcast(),
+                editor_toggle.clone().upcast(),
+                autosave_toggle.clone().upcast(),
+                default_mode_label.clone().upcast(),
+                default_mode_row.clone().upcast(),
+                delay_text_label.clone().upcast(),
+                delay_row.clone().upcast(),
+            ],
+        );
+        let integration_section = build_section(
+            "Desktop Integration",
+            vec![
+                tray_autostart_toggle.clone().upcast(),
+                autostart_label.clone().upcast(),
+            ],
+        );
+        let shortcuts_section = build_section(
+            "Hyprland Shortcuts",
+            vec![
+                shortcuts_hint.clone().upcast(),
+                source_label.clone().upcast(),
+                region_shortcut_row.clone().upcast(),
+                fullscreen_shortcut_row.clone().upcast(),
+                window_shortcut_row.clone().upcast(),
+                shortcuts_actions.clone().upcast(),
+                shortcuts_scroll.clone().upcast(),
+            ],
+        );
+        let doctor_section = build_section(
+            "Doctor",
+            vec![doctor_actions.clone().upcast(), doctor_scroll.clone().upcast()],
+        );
+
         root.append(&title);
         root.append(&subtitle);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        root.append(&capture_title);
-        root.append(&capture_row);
+        root.append(&capture_section);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        root.append(&settings_title);
-        root.append(&copy_toggle);
-        root.append(&editor_toggle);
-        root.append(&autosave_toggle);
-        root.append(&default_mode_label);
-        root.append(&default_mode_row);
-        root.append(&delay_text_label);
-        root.append(&delay_row);
+        root.append(&settings_section);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        root.append(&integration_title);
-        root.append(&tray_autostart_toggle);
-        root.append(&autostart_label);
-        root.append(&shortcuts_title);
-        root.append(&shortcuts_hint);
-        root.append(&source_label);
-        root.append(&region_shortcut_row);
-        root.append(&fullscreen_shortcut_row);
-        root.append(&window_shortcut_row);
-        root.append(&shortcuts_actions);
-        root.append(&shortcuts_scroll);
+        root.append(&integration_section);
+        root.append(&shortcuts_section);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        root.append(&doctor_title);
-        root.append(&doctor_btn);
-        root.append(&doctor_scroll);
+        root.append(&doctor_section);
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(&status_label);
 
@@ -669,7 +686,7 @@ impl KiekjeTray {
     }
 
     fn persist_settings(&mut self, success_message: impl Into<String>) {
-        match self.settings.save() {
+        match settings_service::save(&self.settings) {
             Ok(()) => self.status_line = success_message.into(),
             Err(err) => self.report_error("Failed to save tray settings", err),
         }
@@ -855,7 +872,7 @@ impl ksni::Tray for KiekjeTray {
             StandardItem {
                 label: "Show Doctor Report".into(),
                 activate: Box::new(|tray: &mut KiekjeTray| {
-                    show_feedback_window("Kiekje Doctor", &diagnostics::doctor_report());
+                    show_feedback_window("Kiekje Doctor", &diagnostics_service::doctor_report());
                     tray.status_line = "Doctor report opened".into();
                 }),
                 ..Default::default()
@@ -884,7 +901,7 @@ fn connect_toggle_setting<F>(
     toggle.connect_toggled(move |toggle| {
         let mut guard = settings.borrow_mut();
         update(&mut guard, toggle.is_active());
-        match guard.save() {
+        match settings_service::save(&guard) {
             Ok(()) => status_label.set_text(success_message),
             Err(err) => status_label.set_text(&format!("Failed to save settings: {err}")),
         }
@@ -953,6 +970,20 @@ fn current_exe_or_default() -> PathBuf {
     std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kiekje"))
 }
 
+fn build_section(title: &str, children: Vec<gtk::Widget>) -> gtk::Box {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let title_label = gtk::Label::new(Some(title));
+    title_label.add_css_class("heading");
+    title_label.set_xalign(0.0);
+    section.append(&title_label);
+
+    for child in children {
+        section.append(&child);
+    }
+
+    section
+}
+
 fn build_shortcut_row(
     label: &str,
     value: &str,
@@ -993,7 +1024,7 @@ fn connect_clear_shortcut(
     button.connect_clicked(move |_| {
         let mut guard = settings.borrow_mut();
         set_shortcut_for_mode(&mut guard, mode, String::new());
-        match guard.save() {
+        match settings_service::save(&guard) {
             Ok(()) => {
                 entry.set_text("");
                 shortcuts_buffer.set_text(&shortcut_preview(
@@ -1065,7 +1096,7 @@ fn open_shortcut_recorder(
         if key == gtk::gdk::Key::BackSpace && state.is_empty() {
             let mut guard = settings.borrow_mut();
             set_shortcut_for_mode(&mut guard, mode, String::new());
-            match guard.save() {
+            match settings_service::save(&guard) {
                 Ok(()) => {
                     entry.set_text("");
                     shortcuts_buffer.set_text(&shortcut_preview(
@@ -1092,7 +1123,7 @@ fn open_shortcut_recorder(
 
         let mut guard = settings.borrow_mut();
         set_shortcut_for_mode(&mut guard, mode, shortcut.clone());
-        match guard.save() {
+        match settings_service::save(&guard) {
             Ok(()) => {
                 entry.set_text(&shortcut);
                 shortcuts_buffer.set_text(&shortcut_preview(

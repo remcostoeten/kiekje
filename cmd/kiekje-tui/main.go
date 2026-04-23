@@ -85,13 +85,18 @@ type featureItem struct {
 }
 
 var (
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	headerStyle = lipgloss.NewStyle().Bold(true)
-	normalStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
-	hintStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	cursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+	titleStyle        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	headerStyle       = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	subtitleStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	normalStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	selectedStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	selectedMarkerSty = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	okStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	errStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	hintStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	panelStyle        = lipgloss.NewStyle().Padding(0, 1)
+	dividerStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	inputStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 )
 
 func main() {
@@ -122,7 +127,6 @@ func main() {
 			"Capture",
 			"Dev / Release",
 			"Settings",
-			"Build kiekje",
 			"Show settings",
 			"Quit",
 		},
@@ -207,11 +211,8 @@ func updateMainMenu(m model, key string) (tea.Model, tea.Cmd) {
 			m.current = settingsMenu
 			m.cursor = 0
 		case 3:
-			m.status = "Running cargo build --release..."
-			return m, runRepoCommandCmd(m.repoRoot, "cargo", "build", "--release")
-		case 4:
 			m.status = formatSettings(m.settings)
-		case 5:
+		case 4:
 			return m, tea.Quit
 		}
 	}
@@ -446,6 +447,8 @@ func updateSettingsMenu(m model, key string) (tea.Model, tea.Cmd) {
 
 func updateDelayInput(m model, key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "q", "ctrl+c":
+		return m, tea.Quit
 	case "esc", "b":
 		m.current = settingsMenu
 		m.input = ""
@@ -482,6 +485,8 @@ func updateDelayInput(m model, key string) (tea.Model, tea.Cmd) {
 
 func updateModeInput(m model, key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "q", "ctrl+c":
+		return m, tea.Quit
 	case "esc", "b":
 		m.current = settingsMenu
 		m.input = ""
@@ -522,6 +527,8 @@ func updateModeInput(m model, key string) (tea.Model, tea.Cmd) {
 
 func updateTagInput(m model, key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "q", "ctrl+c":
+		return m, tea.Quit
 	case "esc", "b":
 		m.current = devMenu
 		m.input = ""
@@ -555,6 +562,8 @@ func updateTagInput(m model, key string) (tea.Model, tea.Cmd) {
 
 func updateFeatureInput(m model, key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "q", "ctrl+c":
+		return m, tea.Quit
 	case "esc", "b":
 		m.current = featureMenu
 		m.input = ""
@@ -593,6 +602,8 @@ func updateFeatureInput(m model, key string) (tea.Model, tea.Cmd) {
 
 func updateReleaseTagInput(m model, key string) (tea.Model, tea.Cmd) {
 	switch key {
+	case "q", "ctrl+c":
+		return m, tea.Quit
 	case "esc", "b":
 		m.current = devMenu
 		m.input = ""
@@ -625,95 +636,86 @@ func updateReleaseTagInput(m model, key string) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("kiekje-tui"))
-	b.WriteString("\n")
-	b.WriteString(hintStyle.Render("j/k or arrows to move, Enter to select, b/Esc back, q quit"))
-	b.WriteString("\n\n")
-
 	switch m.current {
 	case mainMenu:
-		b.WriteString(headerStyle.Render("Main Menu"))
-		b.WriteString("\n")
-		b.WriteString(renderMenu(m.mainItems, m.cursor))
+		return renderPage("Main Menu", "j/k or arrows to move, Enter to select, b/Esc back, q quit", renderMenu(m.mainItems, m.cursor), m.status)
 	case captureMenu:
-		b.WriteString(headerStyle.Render("Capture"))
-		b.WriteString("\n")
-		b.WriteString(renderMenu(m.captureItems, m.cursor))
+		return renderPage("Capture", "j/k or arrows to move, Enter to run a capture, b/Esc back, q quit", renderMenu(m.captureItems, m.cursor), m.status)
 	case devMenu:
-		b.WriteString(headerStyle.Render("Dev / Release"))
-		b.WriteString("\n")
-		b.WriteString(renderMenu(devItems(), m.cursor))
+		return renderPage("Dev / Release", "j/k or arrows to move, Enter to run a task, b/Esc back, q quit", renderMenu(devItems(), m.cursor), m.status)
 	case featureMenu:
-		b.WriteString(headerStyle.Render("Feature List"))
-		b.WriteString("\n")
-		b.WriteString(normalStyle.Render("Enter/Space toggle, d delete, a new item via menu, b back"))
-		b.WriteString("\n\n")
-		b.WriteString(renderMenu(featureMenuItems(m.features), m.cursor))
+		return renderPage("Feature List", "Enter/Space toggles, d deletes, Add feature opens input, b back", renderMenu(featureMenuItems(m.features), m.cursor), m.status)
 	case settingsMenu:
-		b.WriteString(headerStyle.Render("Settings"))
-		b.WriteString("\n")
-		b.WriteString(renderMenu(settingsItems(m.settings), m.cursor))
+		return renderPage("Settings", "j/k or arrows to move, Enter to change a setting, b/Esc back, q quit", renderMenu(settingsItems(m.settings), m.cursor), m.status)
 	case inputDelayMenu:
-		b.WriteString(headerStyle.Render("Set Delay (ms)"))
-		b.WriteString("\n")
-		b.WriteString(normalStyle.Render("Type number and press Enter. b/Esc to cancel."))
-		b.WriteString("\n\n")
-		b.WriteString("> " + m.input)
+		return renderInputPage("Set Delay (ms)", "Type a number and press Enter. b/Esc/q cancels.", m.input, m.status)
 	case inputModeMenu:
-		b.WriteString(headerStyle.Render("Set Default Mode"))
-		b.WriteString("\n")
-		b.WriteString(normalStyle.Render("Type: region | fullscreen | window, then Enter."))
-		b.WriteString("\n\n")
-		b.WriteString("> " + m.input)
+		return renderInputPage("Set Default Mode", "Type region, fullscreen, or window, then Enter. b/Esc/q cancels.", m.input, m.status)
 	case inputTagMenu:
-		b.WriteString(headerStyle.Render("Create Git Tag"))
-		b.WriteString("\n")
-		b.WriteString(normalStyle.Render("Type a tag like v0.0.1 and press Enter."))
-		b.WriteString("\n\n")
-		b.WriteString("> " + m.input)
+		return renderInputPage("Create Git Tag", "Type a tag like v0.0.1 and press Enter. b/Esc/q cancels.", m.input, m.status)
 	case inputFeatureMenu:
-		b.WriteString(headerStyle.Render("Add Feature"))
-		b.WriteString("\n")
-		b.WriteString(normalStyle.Render("Type a feature or release-note bullet and press Enter."))
-		b.WriteString("\n\n")
-		b.WriteString("> " + m.input)
+		return renderInputPage("Add Feature", "Type a feature or release-note bullet and press Enter. b/Esc/q cancels.", m.input, m.status)
 	case inputReleaseTagMenu:
-		b.WriteString(headerStyle.Render("Create GitHub Release"))
-		b.WriteString("\n")
-		b.WriteString(normalStyle.Render("Type a tag like v0.0.1. Notes come from the feature list."))
-		b.WriteString("\n\n")
-		b.WriteString("> " + m.input)
+		return renderInputPage("Create GitHub Release", "Type a tag like v0.0.1. Notes come from the feature list. b/Esc/q cancels.", m.input, m.status)
 	}
-
-	if m.status != "" {
-		b.WriteString("\n\n")
-		if strings.HasPrefix(strings.ToLower(m.status), "error") || strings.Contains(strings.ToLower(m.status), "failed") {
-			b.WriteString(errStyle.Render(m.status))
-		} else {
-			b.WriteString(okStyle.Render(m.status))
-		}
-	}
-
-	return b.String()
+	return renderPage("Main Menu", "j/k or arrows to move, Enter to select, b/Esc back, q quit", renderMenu(m.mainItems, m.cursor), m.status)
 }
 
 func renderMenu(items []string, cursor int) string {
 	var b strings.Builder
+	if len(items) == 0 {
+		b.WriteString(subtitleStyle.Render("(empty)"))
+		b.WriteString("\n")
+		return b.String()
+	}
 	for i, item := range items {
 		prefix := "  "
+		itemStyle := normalStyle
 		if i == cursor {
-			prefix = cursorStyle.Render("> ")
+			prefix = selectedMarkerSty.Render("> ")
+			itemStyle = selectedStyle
 		}
-		line := fmt.Sprintf("%s%s", prefix, item)
-		if i == cursor {
-			b.WriteString(cursorStyle.Render(line))
-		} else {
-			b.WriteString(normalStyle.Render(line))
-		}
+		line := prefix + itemStyle.Render(item)
+		b.WriteString(line)
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+func renderPage(title, subtitle, body, status string) string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("kiekje-tui"))
+	b.WriteString("\n")
+	b.WriteString(headerStyle.Render(title))
+	if subtitle != "" {
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render(subtitle))
+	}
+	b.WriteString("\n")
+	b.WriteString(dividerStyle.Render(strings.Repeat("-", 44)))
+	b.WriteString("\n\n")
+	b.WriteString(panelStyle.Render(body))
+	if status != "" {
+		b.WriteString("\n\n")
+		b.WriteString(renderStatus(status))
+	}
+	return b.String()
+}
+
+func renderInputPage(title, subtitle, value, status string) string {
+	return renderPage(title, subtitle, renderField("> "+value)+"\n", status)
+}
+
+func renderField(text string) string {
+	return inputStyle.Render(text)
+}
+
+func renderStatus(status string) string {
+	lowered := strings.ToLower(status)
+	if strings.HasPrefix(lowered, "error") || strings.Contains(lowered, "failed") {
+		return errStyle.Render(status)
+	}
+	return okStyle.Render(status)
 }
 
 func settingsItems(s settings) []string {

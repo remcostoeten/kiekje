@@ -5,11 +5,21 @@ mod diagnostics;
 mod editor;
 mod image;
 mod platform;
+mod services;
 mod settings;
 mod storage;
 
+pub const AUTHOR: &str = "Remco Stoeten";
+pub const AUTHOR_GITHUB: &str = "github.com/remcostoeten";
+pub const REPO_GITHUB: &str = "github.com/remcostoeten/kiekje";
+
+const VERSION_STRING: &str = "\u{1B}[1m0.0.1\u{1B}[0m\nRemco Stoeten\ngithub.com/remcostoeten\ngithub.com/remcostoeten/kiekje";
+
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
+use services::{
+    capture as capture_service, diagnostics as diagnostics_service, settings as settings_service,
+};
 use settings::config::{CaptureMode, Settings};
 use std::io::{self, Write};
 use std::process::Command;
@@ -22,7 +32,11 @@ enum CliMode {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "kiekje", version, about = "Wayland-first screenshot utility")]
+#[command(
+    name = "kiekje",
+    long_version = VERSION_STRING,
+    about = "Wayland-first screenshot utility"
+)]
 struct Cli {
     #[arg(value_enum)]
     mode: Option<CliMode>,
@@ -47,32 +61,34 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    let mut settings = Settings::load_or_default()?;
+    let mut settings = settings_service::load_or_default()?;
 
     if let Some(delay_ms) = cli.startup_delay_ms.filter(|delay| *delay > 0) {
         std::thread::sleep(std::time::Duration::from_millis(delay_ms));
     }
 
     if cli.doctor {
-        println!("{}", diagnostics::doctor_report());
+        println!("{}", diagnostics_service::doctor_report());
         return Ok(());
     }
 
     if cli.interactive {
         run_interactive_menu(&mut settings)?;
-        settings.save()?;
+        settings_service::save(&settings)?;
         return Ok(());
     }
 
     if cli.launcher {
+        maybe_warn_about_portals(true, false, settings.default_capture_mode, &settings);
         app::run_launcher(settings.clone())?;
-        settings.save()?;
+        settings_service::save(&settings)?;
         return Ok(());
     }
 
     if cli.tray {
+        maybe_warn_about_portals(false, true, settings.default_capture_mode, &settings);
         app::run_tray(settings.clone())?;
-        settings.save()?;
+        settings_service::save(&settings)?;
         return Ok(());
     }
 
@@ -83,33 +99,40 @@ fn run() -> Result<()> {
         None => settings.default_capture_mode,
     };
 
+    maybe_warn_about_portals(false, false, mode, &settings);
     run_capture(mode, &settings)?;
 
-    settings.save()?;
+    settings_service::save(&settings)?;
     Ok(())
 }
 
+fn maybe_warn_about_portals(launcher: bool, tray: bool, mode: CaptureMode, settings: &Settings) {
+    if !uses_gtk(launcher, tray, mode, settings) {
+        return;
+    }
+
+    if let Some(warning) = diagnostics_service::portal_startup_warning() {
+        eprintln!("Kiekje Notice");
+        eprintln!("=============");
+        eprintln!("{warning}");
+        eprintln!("Run `kiekje --doctor` for details.");
+        eprintln!();
+    }
+}
+
+fn uses_gtk(launcher: bool, tray: bool, mode: CaptureMode, settings: &Settings) -> bool {
+    launcher || tray || settings.open_editor || matches!(mode, CaptureMode::Region)
+}
+
 fn run_capture(mode: CaptureMode, settings: &Settings) -> Result<()> {
-    diagnostics::check_capture_requirements(mode, settings)?;
+    let execution = capture_service::run(mode, settings)?;
 
-    if settings.delay_ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(settings.delay_ms));
-    }
-
-    let capture = capture::capture(mode)?;
-    image::processing::validate_png(&capture.png_data)?;
-
-    if settings.copy_to_clipboard {
-        clipboard::copy_png(&capture.png_data)?;
-    }
-
-    if settings.auto_save {
-        let path = storage::save::save_capture(&capture.png_data, settings, mode)?;
+    if let Some(path) = execution.saved_path.as_ref() {
         eprintln!("Saved: {}", path.display());
     }
 
     if settings.open_editor {
-        app::run_editor(capture, settings.clone(), mode)?;
+        app::run_editor(execution.capture, settings.clone(), execution.mode)?;
     }
 
     Ok(())
@@ -254,7 +277,7 @@ fn run_capture_with_recovery(mode: CaptureMode, settings: &mut Settings) -> Resu
         match run_capture(current_mode, settings) {
             Ok(()) => return Ok(()),
             Err(err) => {
-                if let Some(missing) = err.downcast_ref::<diagnostics::MissingDependenciesError>() {
+                if let Some(missing) = diagnostics_service::missing_dependencies(&err) {
                     let retry = prompt_dependency_recovery(missing, &mut current_mode, settings)?;
                     if retry {
                         continue;
@@ -268,7 +291,7 @@ fn run_capture_with_recovery(mode: CaptureMode, settings: &mut Settings) -> Resu
 }
 
 fn prompt_dependency_recovery(
-    missing: &diagnostics::MissingDependenciesError,
+    missing: &diagnostics_service::MissingDependenciesError,
     mode: &mut CaptureMode,
     settings: &mut Settings,
 ) -> Result<bool> {
@@ -330,14 +353,16 @@ fn prompt_dependency_recovery(
                     return Ok(true);
                 }
             }
-            "d" => println!("{}", diagnostics::doctor_report()),
+            "d" => println!("{}", diagnostics_service::doctor_report()),
             "b" | "q" | "back" | "quit" => return Ok(false),
             _ => println!("Unknown option: {}", choice),
         }
     }
 }
 
-fn attempt_dependency_install(missing: &diagnostics::MissingDependenciesError) -> Result<()> {
+fn attempt_dependency_install(
+    missing: &diagnostics_service::MissingDependenciesError,
+) -> Result<()> {
     let mut commands = Vec::<String>::new();
     for item in &missing.items {
         if let Some(cmd) = &item.install_command {
@@ -375,7 +400,7 @@ fn render_error(err: &anyhow::Error) {
     eprintln!("Kiekje Error");
     eprintln!("============");
 
-    if let Some(missing) = err.downcast_ref::<diagnostics::MissingDependenciesError>() {
+    if let Some(missing) = diagnostics_service::missing_dependencies(err) {
         eprintln!("Code: KIEKJE-E001");
         eprintln!("Missing required dependencies:");
         for item in &missing.items {
@@ -411,7 +436,7 @@ fn render_error(err: &anyhow::Error) {
     app::show_feedback_window("Capture Failed", &format!("{err:#}"));
 }
 
-fn format_missing_dependencies(missing: &diagnostics::MissingDependenciesError) -> String {
+fn format_missing_dependencies(missing: &diagnostics_service::MissingDependenciesError) -> String {
     let mut body = String::from("Kiekje cannot continue because required tools are missing.\n\n");
     for item in &missing.items {
         body.push_str(&format!("- {} ({})\n", item.tool, item.required_for));
