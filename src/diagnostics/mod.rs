@@ -29,6 +29,106 @@ impl Display for MissingDependenciesError {
 
 impl std::error::Error for MissingDependenciesError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxSessionDetails {
+    pub session_type: Option<String>,
+    pub current_desktop: Option<String>,
+    pub desktop_session: Option<String>,
+    pub wayland_display: Option<String>,
+    pub hyprland_instance_signature: bool,
+}
+
+impl LinuxSessionDetails {
+    fn detect() -> Self {
+        Self {
+            session_type: env::var("XDG_SESSION_TYPE").ok(),
+            current_desktop: env::var("XDG_CURRENT_DESKTOP").ok(),
+            desktop_session: env::var("DESKTOP_SESSION").ok(),
+            wayland_display: env::var("WAYLAND_DISPLAY").ok(),
+            hyprland_instance_signature: env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+        }
+    }
+
+    fn is_wayland(&self) -> bool {
+        self.session_type
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("wayland"))
+            || self.wayland_display.is_some()
+    }
+
+    pub fn compositor_label(&self) -> Option<String> {
+        if self.hyprland_instance_signature {
+            return Some("Hyprland".to_string());
+        }
+
+        self.current_desktop
+            .as_deref()
+            .and_then(parse_compositor_name)
+            .or_else(|| {
+                self.desktop_session
+                    .as_deref()
+                    .and_then(parse_compositor_name)
+            })
+    }
+
+    pub fn session_summary(&self) -> String {
+        let session = self.session_type.as_deref().unwrap_or("unknown");
+        let display = self.wayland_display.as_deref().unwrap_or("unset");
+        format!("{session} (WAYLAND_DISPLAY={display})")
+    }
+
+    fn supports_active_window_capture(&self) -> bool {
+        self.is_wayland()
+            && self
+                .compositor_label()
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case("Hyprland"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsupportedEnvironmentReason {
+    NonWaylandSession,
+    ActiveWindowCaptureRequiresHyprland,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedEnvironmentError {
+    pub mode: CaptureMode,
+    pub reason: UnsupportedEnvironmentReason,
+    pub environment: LinuxSessionDetails,
+    pub workaround: Option<String>,
+}
+
+impl UnsupportedEnvironmentError {
+    pub fn mode_label(&self) -> &'static str {
+        match self.mode {
+            CaptureMode::Region => "region",
+            CaptureMode::Fullscreen => "fullscreen",
+            CaptureMode::Window => "window",
+        }
+    }
+
+    pub fn reason_label(&self) -> &'static str {
+        match self.reason {
+            UnsupportedEnvironmentReason::NonWaylandSession => {
+                "grim-based capture requires an active Wayland session"
+            }
+            UnsupportedEnvironmentReason::ActiveWindowCaptureRequiresHyprland => {
+                "active-window capture currently requires Hyprland"
+            }
+        }
+    }
+}
+
+impl Display for UnsupportedEnvironmentError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "unsupported Linux capture environment")
+    }
+}
+
+impl std::error::Error for UnsupportedEnvironmentError {}
+
 #[derive(Debug, Clone)]
 struct Requirement {
     tool: &'static str,
@@ -37,14 +137,38 @@ struct Requirement {
 }
 
 pub fn check_capture_requirements(mode: CaptureMode, settings: &Settings) -> Result<()> {
-    check_capture_requirements_with_path(mode, settings, env::var_os("PATH"))
+    check_capture_requirements_with_path_and_session(
+        mode,
+        settings,
+        env::var_os("PATH"),
+        LinuxSessionDetails::detect(),
+    )
 }
 
+#[allow(dead_code)]
 pub(crate) fn check_capture_requirements_with_path(
     mode: CaptureMode,
     settings: &Settings,
     path: Option<std::ffi::OsString>,
 ) -> Result<()> {
+    check_capture_requirements_with_path_and_session(
+        mode,
+        settings,
+        path,
+        LinuxSessionDetails::detect(),
+    )
+}
+
+pub(crate) fn check_capture_requirements_with_path_and_session(
+    mode: CaptureMode,
+    settings: &Settings,
+    path: Option<std::ffi::OsString>,
+    session: LinuxSessionDetails,
+) -> Result<()> {
+    if let Some(err) = capture_environment_error(mode, &session) {
+        return Err(err.into());
+    }
+
     let requirements = capture_requirements(mode, settings);
     let mut missing = Vec::new();
 
@@ -67,7 +191,8 @@ pub(crate) fn check_capture_requirements_with_path(
 }
 
 pub fn doctor_report() -> String {
-    let plain = doctor_report_with_path(env::var_os("PATH"));
+    let plain =
+        doctor_report_with_path_and_session(env::var_os("PATH"), LinuxSessionDetails::detect());
     if doctor_colors_enabled() {
         colorize_doctor_report(&plain)
     } else {
@@ -137,7 +262,15 @@ pub fn repair_portals() -> PortalRepairResult {
     repair_portals_with_path(env::var_os("PATH"))
 }
 
+#[allow(dead_code)]
 pub(crate) fn doctor_report_with_path(path: Option<std::ffi::OsString>) -> String {
+    doctor_report_with_path_and_session(path, LinuxSessionDetails::detect())
+}
+
+pub(crate) fn doctor_report_with_path_and_session(
+    path: Option<std::ffi::OsString>,
+    session: LinuxSessionDetails,
+) -> String {
     let checks = [
         ("grim", "capture backend"),
         ("wl-copy", "clipboard copy"),
@@ -160,11 +293,43 @@ pub(crate) fn doctor_report_with_path(path: Option<std::ffi::OsString>) -> Strin
     }
 
     out.push('\n');
+    out.push_str("Linux Session Report\n");
+    out.push_str("--------------------\n");
+    append_session_report(&mut out, &session);
+
+    out.push('\n');
     out.push_str("Desktop Portal Report\n");
     out.push_str("---------------------\n");
     append_portal_report(&mut out, path);
 
     out
+}
+
+fn append_session_report(out: &mut String, session: &LinuxSessionDetails) {
+    if session.is_wayland() {
+        out.push_str("[OK]   session     - Wayland session detected\n");
+    } else {
+        out.push_str("[MISS] session     - Wayland session not detected; grim-based capture is unavailable\n");
+    }
+
+    let compositor = session
+        .compositor_label()
+        .unwrap_or_else(|| "unknown".to_string());
+    out.push_str(&format!(
+        "[{}] compositor  - {}\n",
+        if session.supports_active_window_capture() {
+            "OK"
+        } else {
+            "WARN"
+        },
+        compositor
+    ));
+
+    if session.supports_active_window_capture() {
+        out.push_str("[OK]   window mode  - active-window capture is supported\n");
+    } else {
+        out.push_str("[WARN] window mode  - active-window capture currently requires Hyprland\n");
+    }
 }
 
 fn append_portal_report(out: &mut String, path: Option<std::ffi::OsString>) {
@@ -554,6 +719,31 @@ fn install_gtk_portal_hint() -> Option<String> {
     Some(format!("install the `{package}` backend"))
 }
 
+fn capture_environment_error(
+    mode: CaptureMode,
+    session: &LinuxSessionDetails,
+) -> Option<UnsupportedEnvironmentError> {
+    if !session.is_wayland() {
+        return Some(UnsupportedEnvironmentError {
+            mode,
+            reason: UnsupportedEnvironmentReason::NonWaylandSession,
+            environment: session.clone(),
+            workaround: Some("run Kiekje inside a Wayland session".to_string()),
+        });
+    }
+
+    if matches!(mode, CaptureMode::Window) && !session.supports_active_window_capture() {
+        return Some(UnsupportedEnvironmentError {
+            mode,
+            reason: UnsupportedEnvironmentReason::ActiveWindowCaptureRequiresHyprland,
+            environment: session.clone(),
+            workaround: Some("use `kiekje fullscreen` or `kiekje region`".to_string()),
+        });
+    }
+
+    None
+}
+
 fn capture_requirements(mode: CaptureMode, settings: &Settings) -> Vec<Requirement> {
     let mut requirements = vec![Requirement {
         tool: "grim",
@@ -580,6 +770,22 @@ fn capture_requirements(mode: CaptureMode, settings: &Settings) -> Vec<Requireme
     }
 
     requirements
+}
+
+fn parse_compositor_name(value: &str) -> Option<String> {
+    value
+        .split(':')
+        .map(str::trim)
+        .find(|segment| !segment.is_empty())
+        .map(normalize_compositor_name)
+}
+
+fn normalize_compositor_name(value: &str) -> String {
+    if value.eq_ignore_ascii_case("hyprland") {
+        "Hyprland".to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn is_available_with_path(tool: &str, path: Option<std::ffi::OsString>) -> bool {
@@ -649,8 +855,9 @@ fn map_package(tool: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_capture_requirements_with_path, doctor_report_with_path, missing_portal_interfaces,
-        plan_portal_repair, PortalInterface, PortalState,
+        check_capture_requirements_with_path_and_session, doctor_report_with_path_and_session,
+        missing_portal_interfaces, plan_portal_repair, LinuxSessionDetails, PortalInterface,
+        PortalState, UnsupportedEnvironmentError,
     };
     use crate::settings::config::{CaptureMode, Settings};
 
@@ -661,9 +868,19 @@ mod tests {
             ..Settings::default()
         };
 
-        let err =
-            check_capture_requirements_with_path(CaptureMode::Window, &settings, Some("".into()))
-                .unwrap_err();
+        let err = check_capture_requirements_with_path_and_session(
+            CaptureMode::Window,
+            &settings,
+            Some("".into()),
+            LinuxSessionDetails {
+                session_type: Some("wayland".to_string()),
+                current_desktop: Some("Hyprland".to_string()),
+                desktop_session: Some("hyprland".to_string()),
+                wayland_display: Some("wayland-1".to_string()),
+                hyprland_instance_signature: true,
+            },
+        )
+        .unwrap_err();
         let missing = err
             .downcast_ref::<super::MissingDependenciesError>()
             .expect("expected MissingDependenciesError");
@@ -677,10 +894,22 @@ mod tests {
 
     #[test]
     fn doctor_report_marks_missing_when_path_is_empty() {
-        let report = doctor_report_with_path(Some("".into()));
+        let report = doctor_report_with_path_and_session(
+            Some("".into()),
+            LinuxSessionDetails {
+                session_type: Some("wayland".to_string()),
+                current_desktop: Some("Hyprland".to_string()),
+                desktop_session: Some("hyprland".to_string()),
+                wayland_display: Some("wayland-1".to_string()),
+                hyprland_instance_signature: true,
+            },
+        );
+        assert!(report.contains("Linux Session Report"));
         assert!(report.contains("[MISS] grim"));
         assert!(report.contains("[MISS] wl-copy"));
         assert!(report.contains("[MISS] hyprctl"));
+        assert!(report.contains("[OK]   session"));
+        assert!(report.contains("[OK]   window mode"));
         assert!(report.contains("Desktop Portal Report"));
         assert!(report.contains("[WARN] introspect"));
     }
@@ -700,5 +929,61 @@ mod tests {
     fn repair_plan_is_empty_without_systemctl_in_path() {
         let plan = plan_portal_repair(Some("".into()), &PortalState::Available(String::new()));
         assert!(plan.services.is_empty());
+    }
+
+    #[test]
+    fn rejects_x11_sessions_before_tool_checks() {
+        let err = check_capture_requirements_with_path_and_session(
+            CaptureMode::Region,
+            &Settings::default(),
+            Some("".into()),
+            LinuxSessionDetails {
+                session_type: Some("x11".to_string()),
+                current_desktop: None,
+                desktop_session: None,
+                wayland_display: None,
+                hyprland_instance_signature: false,
+            },
+        )
+        .unwrap_err();
+
+        let unsupported = err
+            .downcast_ref::<UnsupportedEnvironmentError>()
+            .expect("expected UnsupportedEnvironmentError");
+        assert_eq!(unsupported.mode, CaptureMode::Region);
+        assert_eq!(
+            unsupported.reason_label(),
+            "grim-based capture requires an active Wayland session"
+        );
+    }
+
+    #[test]
+    fn rejects_window_mode_on_non_hyprland_wayland() {
+        let err = check_capture_requirements_with_path_and_session(
+            CaptureMode::Window,
+            &Settings::default(),
+            Some("".into()),
+            LinuxSessionDetails {
+                session_type: Some("wayland".to_string()),
+                current_desktop: Some("GNOME".to_string()),
+                desktop_session: Some("gnome".to_string()),
+                wayland_display: Some("wayland-1".to_string()),
+                hyprland_instance_signature: false,
+            },
+        )
+        .unwrap_err();
+
+        let unsupported = err
+            .downcast_ref::<UnsupportedEnvironmentError>()
+            .expect("expected UnsupportedEnvironmentError");
+        assert_eq!(unsupported.mode, CaptureMode::Window);
+        assert_eq!(
+            unsupported.reason_label(),
+            "active-window capture currently requires Hyprland"
+        );
+        assert_eq!(
+            unsupported.environment.compositor_label().as_deref(),
+            Some("GNOME")
+        );
     }
 }

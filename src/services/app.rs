@@ -1,4 +1,6 @@
-use crate::diagnostics::{MissingDependenciesError, PortalRepairResult};
+use crate::diagnostics::{
+    MissingDependenciesError, PortalRepairResult, UnsupportedEnvironmentError,
+};
 use std::error::Error as StdError;
 use std::fmt::{self, Display, Formatter};
 
@@ -7,6 +9,7 @@ pub type AppResult<T> = std::result::Result<T, AppError>;
 #[derive(Debug)]
 pub enum AppError {
     MissingDependencies(MissingDependenciesError),
+    UnsupportedEnvironment(UnsupportedEnvironmentError),
     CaptureCanceled,
     Settings { details: String },
     Clipboard { details: String },
@@ -28,7 +31,8 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             Self::MissingDependencies(_) => "KIEKJE-E001",
-            Self::CaptureCanceled => "KIEKJE-E002",
+            Self::UnsupportedEnvironment(_) => "KIEKJE-E002",
+            Self::CaptureCanceled => "KIEKJE-E003",
             Self::Settings { .. } => "KIEKJE-E101",
             Self::Clipboard { .. } => "KIEKJE-E102",
             Self::Save { .. } => "KIEKJE-E103",
@@ -42,6 +46,7 @@ impl AppError {
     pub fn title(&self) -> &'static str {
         match self {
             Self::MissingDependencies(_) => "Missing Dependencies",
+            Self::UnsupportedEnvironment(_) => "Unsupported Environment",
             Self::CaptureCanceled => "Capture Canceled",
             Self::Settings { .. } => "Settings Error",
             Self::Clipboard { .. } => "Clipboard Error",
@@ -56,6 +61,7 @@ impl AppError {
     pub fn details(&self) -> &str {
         match self {
             Self::MissingDependencies(_) => "",
+            Self::UnsupportedEnvironment(_) => "",
             Self::CaptureCanceled => "",
             Self::Settings { details }
             | Self::Clipboard { details }
@@ -70,6 +76,7 @@ impl AppError {
     pub fn feedback_body(&self) -> String {
         match self {
             Self::MissingDependencies(missing) => format_missing_dependencies(missing),
+            Self::UnsupportedEnvironment(details) => format_unsupported_environment(details),
             Self::CaptureCanceled => {
                 "The capture was canceled before a screenshot was produced.".to_string()
             }
@@ -82,6 +89,9 @@ impl AppError {
             return Self::MissingDependencies(MissingDependenciesError {
                 items: missing.items.clone(),
             });
+        }
+        if let Some(unsupported) = err.downcast_ref::<UnsupportedEnvironmentError>() {
+            return Self::UnsupportedEnvironment(unsupported.clone());
         }
         if err.to_string().contains("capture canceled") {
             return Self::CaptureCanceled;
@@ -115,6 +125,9 @@ impl AppError {
                 items: missing.items.clone(),
             });
         }
+        if let Some(unsupported) = err.downcast_ref::<UnsupportedEnvironmentError>() {
+            return Self::UnsupportedEnvironment(unsupported.clone());
+        }
         Self::Diagnostics {
             details: format!("{err:#}"),
         }
@@ -137,6 +150,7 @@ impl Display for AppError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingDependencies(_) => write!(f, "missing required dependencies"),
+            Self::UnsupportedEnvironment(_) => write!(f, "unsupported capture environment"),
             Self::CaptureCanceled => write!(f, "capture canceled"),
             _ => write!(f, "{}", self.title()),
         }
@@ -171,6 +185,27 @@ fn format_missing_dependencies(missing: &MissingDependenciesError) -> String {
         }
     }
     body.push_str("\nRun `kiekje --doctor` for the full readiness report.");
+    body
+}
+
+fn format_unsupported_environment(details: &UnsupportedEnvironmentError) -> String {
+    let mut body = String::from("Kiekje cannot run this capture mode in the current session.\n\n");
+    body.push_str(&format!("Mode: {}\n", details.mode_label()));
+    body.push_str(&format!("Reason: {}\n", details.reason_label()));
+    body.push_str(&format!(
+        "Detected session: {}\n",
+        details.environment.session_summary()
+    ));
+
+    if let Some(compositor) = details.environment.compositor_label() {
+        body.push_str(&format!("Detected compositor: {compositor}\n"));
+    }
+
+    if let Some(workaround) = &details.workaround {
+        body.push_str(&format!("Option: {workaround}\n"));
+    }
+
+    body.push_str("\nRun `kiekje --doctor` for the full environment report.");
     body
 }
 
