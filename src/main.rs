@@ -9,13 +9,13 @@ mod services;
 mod settings;
 mod storage;
 
+use services::app::{AppError, AppResult};
 pub const AUTHOR: &str = "Remco Stoeten";
 pub const AUTHOR_GITHUB: &str = "github.com/remcostoeten";
 pub const REPO_GITHUB: &str = "github.com/remcostoeten/kiekje";
 
 const VERSION_STRING: &str = "\u{1B}[1m0.0.1\u{1B}[0m\nRemco Stoeten\ngithub.com/remcostoeten\ngithub.com/remcostoeten/kiekje";
 
-use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use services::{
     capture as capture_service, diagnostics as diagnostics_service, settings as settings_service,
@@ -59,7 +59,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<()> {
+fn run() -> AppResult<()> {
     let cli = Cli::parse();
     let mut settings = settings_service::load_or_default()?;
 
@@ -124,7 +124,7 @@ fn uses_gtk(launcher: bool, tray: bool, mode: CaptureMode, settings: &Settings) 
     launcher || tray || settings.open_editor || matches!(mode, CaptureMode::Region)
 }
 
-fn run_capture(mode: CaptureMode, settings: &Settings) -> Result<()> {
+fn run_capture(mode: CaptureMode, settings: &Settings) -> AppResult<()> {
     let execution = capture_service::run(mode, settings)?;
 
     if let Some(path) = execution.saved_path.as_ref() {
@@ -138,7 +138,7 @@ fn run_capture(mode: CaptureMode, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
+fn run_interactive_menu(settings: &mut Settings) -> AppResult<()> {
     loop {
         println!();
         println!("kiekje interactive");
@@ -227,7 +227,7 @@ fn run_interactive_menu(settings: &mut Settings) -> Result<()> {
     }
 }
 
-fn read_line_trimmed() -> Result<String> {
+fn read_line_trimmed() -> AppResult<String> {
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
     Ok(line.trim().to_string())
@@ -271,7 +271,7 @@ fn print_settings(settings: &Settings) {
     println!("filename_template: {}", settings.filename_template);
 }
 
-fn run_capture_with_recovery(mode: CaptureMode, settings: &mut Settings) -> Result<()> {
+fn run_capture_with_recovery(mode: CaptureMode, settings: &mut Settings) -> AppResult<()> {
     let mut current_mode = mode;
     loop {
         match run_capture(current_mode, settings) {
@@ -294,7 +294,7 @@ fn prompt_dependency_recovery(
     missing: &diagnostics_service::MissingDependenciesError,
     mode: &mut CaptureMode,
     settings: &mut Settings,
-) -> Result<bool> {
+) -> AppResult<bool> {
     println!();
     println!("Capture cannot continue due to missing dependencies.");
     for item in &missing.items {
@@ -362,7 +362,7 @@ fn prompt_dependency_recovery(
 
 fn attempt_dependency_install(
     missing: &diagnostics_service::MissingDependenciesError,
-) -> Result<()> {
+) -> AppResult<()> {
     let mut commands = Vec::<String>::new();
     for item in &missing.items {
         if let Some(cmd) = &item.install_command {
@@ -396,12 +396,12 @@ fn attempt_dependency_install(
     Ok(())
 }
 
-fn render_error(err: &anyhow::Error) {
+fn render_error(err: &AppError) {
     eprintln!("Kiekje Error");
     eprintln!("============");
+    eprintln!("Code: {}", err.code());
 
     if let Some(missing) = diagnostics_service::missing_dependencies(err) {
-        eprintln!("Code: KIEKJE-E001");
         eprintln!("Missing required dependencies:");
         for item in &missing.items {
             eprintln!("  - {} ({})", item.tool, item.required_for);
@@ -414,39 +414,19 @@ fn render_error(err: &anyhow::Error) {
         }
         eprintln!();
         eprintln!("Alternative: run `kiekje --doctor` for full environment diagnostics.");
-        app::show_feedback_window(
-            "Missing Dependencies",
-            &format_missing_dependencies(missing),
-        );
+        app::show_feedback_window(err.title(), &err.feedback_body());
         return;
     }
 
-    if err.to_string().contains("capture canceled") {
-        eprintln!("Code: KIEKJE-E002");
-        eprintln!("Capture canceled.");
-        app::show_feedback_window(
-            "Capture Canceled",
-            "The capture was canceled before a screenshot was produced.",
-        );
-        return;
-    }
-
-    eprintln!("Code: KIEKJE-E999");
-    eprintln!("{err:#}");
-    app::show_feedback_window("Capture Failed", &format!("{err:#}"));
-}
-
-fn format_missing_dependencies(missing: &diagnostics_service::MissingDependenciesError) -> String {
-    let mut body = String::from("Kiekje cannot continue because required tools are missing.\n\n");
-    for item in &missing.items {
-        body.push_str(&format!("- {} ({})\n", item.tool, item.required_for));
-        if let Some(cmd) = &item.install_command {
-            body.push_str(&format!("  Install: {}\n", cmd));
-        }
-        if let Some(workaround) = &item.workaround {
-            body.push_str(&format!("  Option: {}\n", workaround));
+    match err {
+        AppError::CaptureCanceled => eprintln!("Capture canceled."),
+        _ => {
+            eprintln!("{}", err.title());
+            if !err.details().is_empty() {
+                eprintln!("{}", err.details());
+            }
         }
     }
-    body.push_str("\nRun `kiekje --doctor` for the full readiness report.");
-    body
+
+    app::show_feedback_window(err.title(), &err.feedback_body());
 }

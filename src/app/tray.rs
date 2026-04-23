@@ -692,9 +692,9 @@ impl KiekjeTray {
         }
     }
 
-    fn report_error(&mut self, title: &str, err: anyhow::Error) {
+    fn report_error(&mut self, title: &str, err: impl std::fmt::Display) {
         self.status_line = format!("{title}: {err}");
-        show_feedback_window(title, &format!("{err:#}"));
+        show_feedback_window(title, &err.to_string());
     }
 }
 
