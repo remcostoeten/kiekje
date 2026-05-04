@@ -257,6 +257,7 @@ fn print_settings(settings: &Settings) {
     );
     println!("copy_to_clipboard: {}", settings.copy_to_clipboard);
     println!("close_after_copy: {}", settings.close_after_copy);
+    println!("close_after_save: {}", settings.close_after_save);
     println!("open_after_save: {}", settings.open_after_save);
     println!("open_editor: {}", settings.open_editor);
     println!(

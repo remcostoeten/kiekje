@@ -129,10 +129,6 @@ pub struct PortalRepairResult {
     pub message: String,
 }
 
-pub fn auto_repair_portals() -> PortalRepairResult {
-    repair_portals_with_path(env::var_os("PATH"))
-}
-
 pub fn repair_portals() -> PortalRepairResult {
     repair_portals_with_path(env::var_os("PATH"))
 }
@@ -217,11 +213,11 @@ fn colorize_doctor_report(report: &str) -> String {
         let colored = if line == "Kiekje Doctor Report" || line == "Desktop Portal Report" {
             format!("\x1b[1;36m{line}\x1b[0m")
         } else if line.starts_with("[OK]") {
-            format!("\x1b[32m{}\x1b[0m", line.replacen("[OK]", "[OK]", 1))
+            format!("\x1b[32m{line}\x1b[0m")
         } else if line.starts_with("[MISS]") {
-            format!("\x1b[33m{}\x1b[0m", line.replacen("[MISS]", "[MISS]", 1))
+            format!("\x1b[33m{line}\x1b[0m")
         } else if line.starts_with("[WARN]") {
-            format!("\x1b[35m{}\x1b[0m", line.replacen("[WARN]", "[WARN]", 1))
+            format!("\x1b[35m{line}\x1b[0m")
         } else if line.trim_start().starts_with("Install:")
             || line.trim_start().starts_with("Hint:")
         {

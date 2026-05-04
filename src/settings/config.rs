@@ -22,6 +22,7 @@ pub struct Settings {
     pub default_save_location: PathBuf,
     pub copy_to_clipboard: bool,
     pub close_after_copy: bool,
+    pub close_after_save: bool,
     pub open_after_save: bool,
     pub open_editor: bool,
     pub default_capture_mode: CaptureMode,
@@ -44,6 +45,7 @@ impl Default for Settings {
             default_save_location: home.join("Pictures").join("Screenshots"),
             copy_to_clipboard: true,
             close_after_copy: false,
+            close_after_save: false,
             open_after_save: false,
             open_editor: true,
             default_capture_mode: CaptureMode::Region,
@@ -252,7 +254,6 @@ mod tests {
                 "default_save_location": "/tmp/shots",
                 "copy_to_clipboard": true,
                 "close_after_copy": false,
-                "open_after_save": false,
                 "open_editor": true,
                 "default_capture_mode": "region",
                 "auto_save": false,
@@ -262,6 +263,8 @@ mod tests {
         .unwrap();
 
         assert!(!settings.tray_autostart);
+        assert!(!settings.close_after_save);
+        assert!(!settings.open_after_save);
         assert_eq!(settings.shortcut_region, "SUPER SHIFT, S");
         assert_eq!(settings.shortcut_fullscreen, "SUPER SHIFT, F");
         assert_eq!(settings.shortcut_window, "SUPER SHIFT, W");

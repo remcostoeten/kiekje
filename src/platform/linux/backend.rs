@@ -1,14 +1,7 @@
-#![allow(dead_code)]
-
 use super::grim::{GrimCli, ScreenshotTool};
 use super::hyprctl::{ActiveWindowGeometrySource, HyprctlCli};
+use crate::platform::capture::CaptureBackend;
 use anyhow::Result;
-
-pub trait LinuxCaptureBackend {
-    fn capture_fullscreen(&self) -> Result<Vec<u8>>;
-    fn capture_region(&self, geometry: &str) -> Result<Vec<u8>>;
-    fn active_window_geometry(&self) -> Result<String>;
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct GrimHyprlandBackend<S = GrimCli, W = HyprctlCli> {
@@ -25,7 +18,11 @@ impl<S, W> GrimHyprlandBackend<S, W> {
     }
 }
 
-impl<S, W> LinuxCaptureBackend for GrimHyprlandBackend<S, W>
+pub fn current_backend() -> GrimHyprlandBackend {
+    GrimHyprlandBackend::new(GrimCli, HyprctlCli)
+}
+
+impl<S, W> CaptureBackend for GrimHyprlandBackend<S, W>
 where
     S: ScreenshotTool,
     W: ActiveWindowGeometrySource,
@@ -45,7 +42,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{GrimHyprlandBackend, LinuxCaptureBackend};
+    use super::GrimHyprlandBackend;
+    use crate::platform::capture::CaptureBackend;
     use crate::platform::linux::grim::ScreenshotTool;
     use crate::platform::linux::hyprctl::ActiveWindowGeometrySource;
     use anyhow::Result;

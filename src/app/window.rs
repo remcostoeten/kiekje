@@ -234,6 +234,10 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         close_after_copy_toggle.set_active(settings.borrow().close_after_copy);
         close_after_copy_toggle
             .set_tooltip_text(Some("Close the editor immediately after Ctrl+C or Copy."));
+        let close_after_save_toggle = gtk::CheckButton::with_label("Close After Save");
+        close_after_save_toggle.set_active(settings.borrow().close_after_save);
+        close_after_save_toggle
+            .set_tooltip_text(Some("Close the editor immediately after Save or Save As."));
         let open_after_save_toggle = gtk::CheckButton::with_label("Open After Save");
         open_after_save_toggle.set_active(settings.borrow().open_after_save);
         open_after_save_toggle
@@ -278,15 +282,20 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             let c = canvas.clone();
             let s = Rc::clone(&settings);
             let status_label = status_label.clone();
+            let app = app.clone();
             save_btn.connect_clicked(move |_| {
                 if let Ok(png) = c.render_png() {
                     let cfg = s.borrow();
                     if let Ok(path) = export::save_capture(&png, &cfg, current_mode) {
+                        let close_after_save = cfg.close_after_save;
                         c.mark_saved();
                         let _ = export::maybe_open_saved_path(&path, &cfg);
                         status_label
                             .set_text(&format!("Saved annotated image to {}.", path.display()));
                         eprintln!("Saved annotated image: {}", path.display());
+                        if close_after_save {
+                            app.quit();
+                        }
                     } else {
                         status_label.set_text("Saving failed. Check the terminal for details.");
                     }
@@ -309,6 +318,14 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             close_after_copy_toggle.connect_toggled(move |toggle| {
                 let mut guard = s.borrow_mut();
                 guard.close_after_copy = toggle.is_active();
+                let _ = settings_service::save(&guard);
+            });
+        }
+        {
+            let s = Rc::clone(&settings);
+            close_after_save_toggle.connect_toggled(move |toggle| {
+                let mut guard = s.borrow_mut();
+                guard.close_after_save = toggle.is_active();
                 let _ = settings_service::save(&guard);
             });
         }
@@ -491,6 +508,7 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
         inspector.append(&export_settings_title);
         inspector.append(&folder_btn);
         inspector.append(&close_after_copy_toggle);
+        inspector.append(&close_after_save_toggle);
         inspector.append(&open_after_save_toggle);
 
         shell.append(&tools_panel);
@@ -513,8 +531,9 @@ pub fn run(capture: CaptureResult, settings: Settings, current_mode: CaptureMode
             let s = Rc::clone(&settings);
             let status_label = status_label.clone();
             let window = window.clone();
+            let app = app.clone();
             save_as_btn.connect_clicked(move |_| {
-                prompt_save_as(&window, &c, &s, &status_label, current_mode);
+                prompt_save_as(&window, &c, &s, &status_label, &app, current_mode);
             });
         }
         {
@@ -786,6 +805,7 @@ fn prompt_save_as(
     canvas: &EditorCanvas,
     settings: &Rc<RefCell<Settings>>,
     status_label: &gtk::Label,
+    app: &adw::Application,
     current_mode: CaptureMode,
 ) {
     let cfg = settings.borrow().clone();
@@ -804,6 +824,7 @@ fn prompt_save_as(
     let canvas = canvas.clone();
     let settings = Rc::clone(settings);
     let status_label = status_label.clone();
+    let app = app.clone();
     dialog.run_async(move |dialog, response| {
         if response == gtk::ResponseType::Accept {
             if let Some(file) = dialog.file() {
@@ -813,11 +834,15 @@ fn prompt_save_as(
                             Ok(()) => {
                                 canvas.mark_saved();
                                 let cfg = settings.borrow();
+                                let close_after_save = cfg.close_after_save;
                                 let _ = export::maybe_open_saved_path(&path, &cfg);
                                 status_label.set_text(&format!(
                                     "Saved annotated image to {}.",
                                     path.display()
                                 ));
+                                if close_after_save {
+                                    app.quit();
+                                }
                             }
                             Err(err) => {
                                 status_label.set_text(&format!("Save As failed: {err}"));

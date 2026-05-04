@@ -34,6 +34,10 @@ pub fn run(mode: CaptureMode, settings: &Settings) -> AppResult<CaptureExecution
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "test hook injection keeps the production workflow free of trait-object plumbing"
+)]
 fn run_with_hooks<Req, Sleep, Capture, Validate, Copy, Save>(
     mode: CaptureMode,
     settings: &Settings,

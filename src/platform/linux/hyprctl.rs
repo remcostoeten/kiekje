@@ -35,6 +35,7 @@ impl ActiveWindowGeometrySource for HyprctlCli {
     }
 }
 
+#[allow(dead_code)]
 pub fn active_window_geometry() -> Result<String> {
     HyprctlCli.active_window_geometry()
 }

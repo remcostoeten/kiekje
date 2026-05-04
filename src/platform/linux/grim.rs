@@ -47,10 +47,12 @@ impl ScreenshotTool for GrimCli {
     }
 }
 
+#[allow(dead_code)]
 pub fn capture_region(geometry: &str) -> Result<Vec<u8>> {
     GrimCli.capture_region(geometry)
 }
 
+#[allow(dead_code)]
 pub fn capture_fullscreen() -> Result<Vec<u8>> {
     GrimCli.capture_fullscreen()
 }

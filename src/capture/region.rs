@@ -1,10 +1,11 @@
-use super::{CaptureBackend, CaptureResult};
+use super::CaptureResult;
 use crate::app::region_selector::{choose_region_or_fullscreen, SelectionChoice, SelectionRect};
+use crate::platform::capture::CaptureBackend;
 use anyhow::{bail, Context, Result};
 use image::{imageops, ImageFormat};
 use std::io::Cursor;
 
-pub fn capture(backend: &dyn CaptureBackend) -> Result<CaptureResult> {
+pub fn capture<B: CaptureBackend>(backend: &B) -> Result<CaptureResult> {
     let fullscreen_png = backend
         .capture_fullscreen()
         .context("grim failed to capture fullscreen for area selection")?;

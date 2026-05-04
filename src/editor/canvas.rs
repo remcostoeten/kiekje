@@ -526,16 +526,19 @@ fn cairo_surface_to_rgba_image(surface: &mut cairo::ImageSurface) -> Result<Rgba
             let g = data[offset + 1] as u16;
             let r = data[offset + 2] as u16;
             let a = data[offset + 3] as u16;
-            let pixel = if a == 0 {
-                [0, 0, 0, 0]
-            } else {
-                [
-                    ((r * 255) / a).min(255) as u8,
-                    ((g * 255) / a).min(255) as u8,
-                    ((b * 255) / a).min(255) as u8,
-                    a as u8,
-                ]
+            let unpremultiply = |channel: u16| {
+                channel
+                    .saturating_mul(255)
+                    .checked_div(a)
+                    .unwrap_or(0)
+                    .min(255) as u8
             };
+            let pixel = [
+                unpremultiply(r),
+                unpremultiply(g),
+                unpremultiply(b),
+                a as u8,
+            ];
             image.put_pixel(x, y, Rgba(pixel));
         }
     }

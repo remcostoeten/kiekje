@@ -404,7 +404,13 @@ pub fn run_launcher(settings: Settings) -> AppResult<()> {
                 doctor_view
                     .buffer()
                     .set_text(&diagnostics_service::doctor_report());
-                status_label.set_text(&result.message);
+                let status_prefix = match (result.attempted, result.repaired) {
+                    (true, true) => "Repair complete",
+                    (true, false) => "Repair attempted",
+                    (false, true) => "No repair needed",
+                    (false, false) => "Repair unavailable",
+                };
+                status_label.set_text(&format!("{status_prefix}: {}", result.message));
             });
         }
         connect_clear_shortcut(

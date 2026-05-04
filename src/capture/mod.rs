@@ -2,42 +2,24 @@ mod fullscreen;
 mod region;
 mod window;
 
-use crate::platform::linux::{grim, hyprctl};
+use crate::platform::capture::{self as platform_capture, CaptureBackend};
 use crate::settings::config::CaptureMode;
 use anyhow::Result;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CaptureResult {
     pub png_data: Vec<u8>,
 }
 
-pub trait CaptureBackend {
-    fn capture_fullscreen(&self) -> Result<Vec<u8>>;
-    fn capture_region(&self, geometry: &str) -> Result<Vec<u8>>;
-    fn active_window_geometry(&self) -> Result<String>;
-}
-
-struct LinuxCaptureBackend;
-
-impl CaptureBackend for LinuxCaptureBackend {
-    fn capture_fullscreen(&self) -> Result<Vec<u8>> {
-        grim::capture_fullscreen()
-    }
-
-    fn capture_region(&self, geometry: &str) -> Result<Vec<u8>> {
-        grim::capture_region(geometry)
-    }
-
-    fn active_window_geometry(&self) -> Result<String> {
-        hyprctl::active_window_geometry()
-    }
-}
-
 pub fn capture(mode: CaptureMode) -> Result<CaptureResult> {
-    capture_with_backend(mode, &LinuxCaptureBackend)
+    let backend = platform_capture::current_backend();
+    capture_with_backend(mode, &backend)
 }
 
-fn capture_with_backend(mode: CaptureMode, backend: &dyn CaptureBackend) -> Result<CaptureResult> {
+fn capture_with_backend<B: CaptureBackend>(
+    mode: CaptureMode,
+    backend: &B,
+) -> Result<CaptureResult> {
     match mode {
         CaptureMode::Region => region::capture(backend),
         CaptureMode::Fullscreen => fullscreen::capture(backend),
@@ -47,7 +29,8 @@ fn capture_with_backend(mode: CaptureMode, backend: &dyn CaptureBackend) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_with_backend, CaptureBackend};
+    use super::capture_with_backend;
+    use crate::platform::capture::CaptureBackend;
     use crate::settings::config::CaptureMode;
     use anyhow::{bail, Result};
     use std::cell::RefCell;
