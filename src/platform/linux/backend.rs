@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 use super::grim::{GrimCli, ScreenshotTool};
 use super::hyprctl::{ActiveWindowGeometrySource, HyprctlCli};
-use crate::platform::capture::CaptureBackend;
+use crate::capture::CaptureBackend;
 use anyhow::Result;
 
 #[derive(Debug, Clone, Default)]
@@ -43,7 +45,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::GrimHyprlandBackend;
-    use crate::platform::capture::CaptureBackend;
+use crate::capture::CaptureBackend;
     use crate::platform::linux::grim::ScreenshotTool;
     use crate::platform::linux::hyprctl::ActiveWindowGeometrySource;
     use anyhow::Result;

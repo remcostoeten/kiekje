@@ -1,8 +1,7 @@
-use super::CaptureResult;
-use crate::platform::capture::CaptureBackend;
+use super::{CaptureBackend, CaptureResult};
 use anyhow::{Context, Result};
 
-pub fn capture<B: CaptureBackend>(backend: &B) -> Result<CaptureResult> {
+pub fn capture(backend: &dyn CaptureBackend) -> Result<CaptureResult> {
     let geometry = backend
         .active_window_geometry()
         .context("failed to resolve active window geometry from Hyprland")?;
@@ -15,7 +14,7 @@ pub fn capture<B: CaptureBackend>(backend: &B) -> Result<CaptureResult> {
 #[cfg(test)]
 mod tests {
     use super::capture;
-    use crate::platform::capture::CaptureBackend;
+    use crate::capture::CaptureBackend;
     use anyhow::{anyhow, Result};
     use std::cell::RefCell;
 

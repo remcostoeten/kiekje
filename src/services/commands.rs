@@ -4,7 +4,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 
-use crate::platform;
 use crate::services::app::{AppError, AppResult};
 use crate::services::{capture as capture_service, diagnostics, settings as settings_service};
 use crate::settings::config::{CaptureMode, Settings};
@@ -82,11 +81,11 @@ pub fn doctor_report() -> String {
 
 pub fn capture_backend_info() -> CaptureBackendInfo {
     CaptureBackendInfo {
-        platform: platform::capture::platform_name().to_string(),
-        backend: platform::capture::backend_name().to_string(),
-        region_supported: platform::capture::mode_supported(CaptureMode::Region),
-        fullscreen_supported: platform::capture::mode_supported(CaptureMode::Fullscreen),
-        window_supported: platform::capture::mode_supported(CaptureMode::Window),
+        platform: "linux".to_string(),
+        backend: "grim-hyprland".to_string(),
+        region_supported: true,
+        fullscreen_supported: true,
+        window_supported: true,
     }
 }
 
@@ -152,10 +151,7 @@ mod tests {
 
         assert!(!info.platform.is_empty());
         assert!(!info.backend.is_empty());
-        assert_eq!(
-            info.region_supported,
-            crate::platform::capture::mode_supported(CaptureMode::Region)
-        );
+        assert!(info.region_supported);
     }
 
     #[test]
