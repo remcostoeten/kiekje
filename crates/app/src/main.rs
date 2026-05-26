@@ -3,9 +3,15 @@ use cheese_core::editor::EditorState;
 use cheese_core::model::{Annotation, AnnotationKind, ScreenshotImage};
 use std::env;
 use std::fs;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
 use std::io::Write;
+use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 
 #[derive(Debug, Default)]
 struct CliOptions {
@@ -15,6 +21,7 @@ struct CliOptions {
     region: Option<(u32, u32, u32, u32)>,
     self_test: bool,
     preview: bool,
+    edit: bool,
 }
 
 fn parse_args() -> CliOptions {
@@ -32,6 +39,7 @@ fn parse_args() -> CliOptions {
             "--annotate" | "-a" => opts.annotate = true,
             "--self-test" => opts.self_test = true,
             "--preview" | "-p" => opts.preview = true,
+            "--edit" | "-e" => opts.edit = true,
             "--region" | "-r" => {
                 if let Some(value) = args.next() {
                     opts.region = parse_region(&value);
@@ -73,6 +81,7 @@ fn parse_slurp_geometry(geometry: &str) -> Option<(u32, u32, u32, u32)> {
 fn capture_selection(session: SessionKind) -> (u32, u32, u32, u32) {
     if matches!(session, SessionKind::Wayland) {
         let output = Command::new("slurp")
+            .args(["-b", "000000AA", "-s", "ff550066", "-c", "ffffffcc", "-B", "111111cc"])
             .output()
             .expect("slurp should be available on this machine");
         let geometry = String::from_utf8_lossy(&output.stdout);
@@ -205,6 +214,236 @@ fn write_demo_png(output_path: &PathBuf, width: u32, height: u32) -> Result<(), 
     fs::write(output_path, bytes).map_err(|err| format!("failed to write demo image: {err}"))
 }
 
+fn editor_html(image_url: &str) -> String {
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cheese Preview</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #0d1117;
+      --panel: rgba(17, 24, 39, 0.92);
+      --line: rgba(255,255,255,0.14);
+      --accent: #ff5a5f;
+      --text: #e5e7eb;
+    }}
+    html, body {{ margin: 0; height: 100%; background: radial-gradient(circle at top, #1f2937 0, #0b1020 55%, #06070a 100%); color: var(--text); font-family: system-ui, sans-serif; }}
+    body {{ display: grid; grid-template-rows: auto 1fr; }}
+    .toolbar {{ display: flex; gap: 8px; padding: 12px; background: var(--panel); border-bottom: 1px solid var(--line); align-items: center; flex-wrap: wrap; }}
+    .toolbar button, .toolbar a {{ background: #111827; color: var(--text); border: 1px solid var(--line); padding: 8px 12px; border-radius: 10px; cursor: pointer; text-decoration: none; }}
+    .toolbar button.active {{ border-color: var(--accent); box-shadow: 0 0 0 1px rgba(255,90,95,0.25) inset; }}
+    .toolbar .spacer {{ flex: 1; }}
+    .canvas-wrap {{ display: grid; place-items: center; padding: 18px; overflow: auto; }}
+    canvas {{ background: #0b0f14; box-shadow: 0 18px 60px rgba(0,0,0,0.5); max-width: 100%; height: auto; }}
+    .hint {{ opacity: 0.7; font-size: 13px; }}
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button data-tool="select" class="active">Select</button>
+    <button data-tool="rect">Rect</button>
+    <button data-tool="arrow">Arrow</button>
+    <button data-tool="text">Text</button>
+    <button id="undo">Undo</button>
+    <button id="save">Save PNG</button>
+    <div class="spacer"></div>
+    <div class="hint">Drag to place annotations. Press Esc to clear tool. Shift keeps arrows straighter.</div>
+  </div>
+  <div class="canvas-wrap">
+    <canvas id="c"></canvas>
+  </div>
+  <script>
+    const imageUrl = {image_url:?};
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.src = imageUrl;
+    let tool = 'select';
+    const annotations = [];
+    let current = null;
+    let dragStart = null;
+
+    function resize() {{
+      canvas.width = img.naturalWidth || 1280;
+      canvas.height = img.naturalHeight || 720;
+      redraw();
+    }}
+
+    function redraw() {{
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0);
+      for (const a of annotations) drawAnnotation(a);
+      if (current) drawAnnotation(current, true);
+    }}
+
+    function drawAnnotation(a, preview=false) {{
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = preview ? 'rgba(255, 215, 0, 0.95)' : 'rgba(255, 90, 95, 0.95)';
+      ctx.fillStyle = preview ? 'rgba(255, 215, 0, 0.15)' : 'rgba(255, 90, 95, 0.15)';
+      const x = a.x, y = a.y, w = a.w, h = a.h;
+      if (a.kind === 'rect') {{
+        ctx.strokeRect(x, y, w, h);
+      }} else if (a.kind === 'arrow') {{
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y + h); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x + w, y + h, 5, 0, Math.PI * 2); ctx.fill();
+      }} else if (a.kind === 'text') {{
+        ctx.font = '20px system-ui';
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.fillText(a.text || 'Text', x, y + 20);
+      }}
+    }}
+
+    function pointerPos(evt) {{
+      const rect = canvas.getBoundingClientRect();
+      const sx = canvas.width / rect.width;
+      const sy = canvas.height / rect.height;
+      return {{ x: (evt.clientX - rect.left) * sx, y: (evt.clientY - rect.top) * sy }};
+    }}
+
+    canvas.addEventListener('pointerdown', evt => {{
+      if (tool === 'select') return;
+      dragStart = pointerPos(evt);
+      current = {{ kind: tool, x: dragStart.x, y: dragStart.y, w: 0, h: 0, text: tool === 'text' ? prompt('Text label:') || '' : '' }};
+      canvas.setPointerCapture(evt.pointerId);
+    }});
+    canvas.addEventListener('pointermove', evt => {{
+      if (!dragStart || !current || tool === 'text') return;
+      const p = pointerPos(evt);
+      current.w = p.x - dragStart.x;
+      current.h = p.y - dragStart.y;
+      redraw();
+    }});
+    canvas.addEventListener('pointerup', () => {{
+      if (!current) return;
+      annotations.push(current);
+      current = null;
+      dragStart = null;
+      redraw();
+    }});
+    document.querySelectorAll('[data-tool]').forEach(btn => {{
+      btn.addEventListener('click', () => {{
+        tool = btn.dataset.tool;
+        document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      }});
+    }});
+    document.getElementById('undo').onclick = () => {{ annotations.pop(); redraw(); }};
+    document.getElementById('save').onclick = async () => {{
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      await fetch('/save', {{ method: 'POST', headers: {{ 'Content-Type': 'image/png' }}, body: blob }});
+      alert('Saved.');
+    }};
+    window.addEventListener('keydown', evt => {{
+      if (evt.key === 'Escape') {{
+        tool = 'select';
+        document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
+        document.querySelector('[data-tool="select"]').classList.add('active');
+      }}
+    }});
+    img.onload = () => {{ resize(); }};
+    img.onerror = () => {{ resize(); }};
+  </script>
+</body>
+</html>"#,
+        image_url = image_url
+    )
+}
+
+fn handle_connection(mut stream: TcpStream, image_path: &PathBuf, output_path: &PathBuf, done: &mpsc::Sender<()>) {
+    let mut reader = match stream.try_clone() {
+        Ok(clone) => BufReader::new(clone),
+        Err(_) => return,
+    };
+    let mut first_line = String::new();
+    if reader.read_line(&mut first_line).is_err() {
+        return;
+    }
+
+    let mut content_length = 0usize;
+    loop {
+        let mut header_line = String::new();
+        if reader.read_line(&mut header_line).is_err() {
+            return;
+        }
+        if header_line == "\r\n" {
+            break;
+        }
+        let lower = header_line.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("content-length:") {
+            content_length = v.trim().parse().unwrap_or(0);
+        }
+    }
+
+    let mut body = vec![0; content_length];
+    if content_length > 0 && reader.read_exact(&mut body).is_err() {
+        return;
+    }
+
+    if first_line.starts_with("GET / ") {
+        let html = editor_html("/image.png");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            html.len(),
+            html
+        );
+        let _ = stream.write_all(response.as_bytes());
+    } else if first_line.starts_with("GET /image.png ") {
+        match fs::read(image_path) {
+            Ok(bytes) => {
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    bytes.len()
+                );
+                let _ = stream.write_all(header.as_bytes());
+                let _ = stream.write_all(&bytes);
+            }
+            Err(err) => {
+                let msg = format!("image missing: {err}");
+                let response = format!(
+                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    msg.len(),
+                    msg
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        }
+    } else if first_line.starts_with("POST /save ") {
+        if fs::write(output_path, &body).is_ok() {
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: close\r\n\r\nSaved!";
+            let _ = stream.write_all(response.as_bytes());
+            let _ = done.send(());
+            return;
+        }
+        let response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nError";
+        let _ = stream.write_all(response.as_bytes());
+    } else {
+        let response = "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot found";
+        let _ = stream.write_all(response.as_bytes());
+    }
+}
+
+fn start_preview_server(image_path: PathBuf, output_path: PathBuf) -> Result<(u16, mpsc::Receiver<()>), String> {
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|err| format!("failed to bind preview server: {err}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|err| format!("failed to read preview server address: {err}"))?
+        .port();
+    let (done_tx, done_rx) = mpsc::channel();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => handle_connection(stream, &image_path, &output_path, &done_tx),
+                Err(_) => break,
+            }
+        }
+    });
+    Ok((port, done_rx))
+}
+
 fn copy_png_to_clipboard(path: &PathBuf) -> Result<(), String> {
     let bytes = fs::read(path).map_err(|err| format!("failed to read png: {err}"))?;
     let mut child = Command::new("wl-copy")
@@ -312,7 +551,19 @@ fn main() {
         println!("copied to clipboard");
     }
 
-    if opts.preview {
-        let _ = Command::new("xdg-open").arg(&output_path).spawn();
+    if opts.edit || opts.preview {
+        match start_preview_server(capture_path.clone(), output_path.clone()) {
+            Ok((port, done_rx)) => {
+                let url = format!("http://127.0.0.1:{port}/");
+                let _ = Command::new("xdg-open").arg(&url).spawn();
+                println!("preview: {url}");
+                let _ = done_rx.recv();
+            }
+            Err(err) => {
+                eprintln!("failed to create preview editor: {err}");
+                std::process::exit(1);
+            }
+        }
     }
+
 }
