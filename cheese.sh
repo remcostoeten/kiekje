@@ -44,7 +44,12 @@ run_app() {
   if [[ ! -x "$BIN_PATH" ]]; then
     build_app
   fi
-  exec "$BIN_PATH"
+  if [[ "${CHEESE_DEBUG:-0}" == "1" ]]; then
+    exec env JSC_SIGNAL_FOR_GC=12 "$BIN_PATH"
+  fi
+  exec env JSC_SIGNAL_FOR_GC=12 "$BIN_PATH" 2> >(
+    grep -vE "Gtk-WARNING|Theme parsing error|Overriding existing handler for signal|JSC_SIGNAL_FOR_GC" >&2
+  )
 }
 
 ship_app() {
