@@ -44,6 +44,15 @@ button, code, pre, table, input {
   overflow: hidden;
 }
 
+.shell.capturing .content-grid,
+.shell.capturing .toolbar {
+  visibility: hidden;
+}
+
+.shell.capturing .mask {
+  visibility: visible;
+}
+
 .toolbar {
   display: flex;
   gap: 8px;

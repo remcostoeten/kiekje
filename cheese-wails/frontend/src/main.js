@@ -13,6 +13,7 @@ app.innerHTML = `
   <div class="shell">
     <div class="toolbar">
       <button id="capture" class="primary">Capture</button>
+      <button id="recapture" class="secondary">Re-capture</button>
       <button data-tool="select" class="active">Select</button>
       <button data-tool="rect">Rect</button>
       <button data-tool="arrow">Arrow</button>
@@ -145,6 +146,7 @@ function resizeCanvas() {
 function setCaptureMask(visible, text = 'Capture the region…') {
   mask.textContent = text;
   mask.classList.toggle('hidden', !visible);
+  document.querySelector('.shell').classList.toggle('capturing', visible);
 }
 
 function renderBinds(binds = {}) {
@@ -218,9 +220,9 @@ async function loadState() {
 function runAction(action) {
   if (!action) return;
   if (action === 'capture') {
-    startCapture();
+    startCapture(false);
   } else if (action === 'recapture') {
-    startCapture();
+    startCapture(true);
   } else if (action === 'save') {
     document.getElementById('save').click();
   } else if (action === 'undo') {
@@ -228,12 +230,19 @@ function runAction(action) {
   }
 }
 
-async function startCapture() {
-  setCaptureMask(true, 'Capture the region…');
+async function startCapture(forceRetake = false) {
+  setCaptureMask(true, forceRetake ? 'Re-capturing…' : 'Capture the region…');
   captureBtn.disabled = true;
   try {
+    window.runtime.WindowHide();
     const res = await CaptureRegion();
     if (!res || !res.data) throw new Error('No image returned');
+    if (forceRetake) {
+      annotations = [];
+      current = null;
+      dragStart = null;
+      penPoints = [];
+    }
     image = new Image();
     image.onload = () => {
       resizeCanvas();
@@ -242,10 +251,12 @@ async function startCapture() {
     image.src = `data:image/png;base64,${res.data}`;
     captureMode = false;
     captureBtn.textContent = 'Re-capture';
+    document.getElementById('recapture').textContent = 'Re-capture';
     setCaptureMask(false);
   } catch (err) {
     console.error(err);
     setCaptureMask(true, 'Capture failed');
+    window.runtime.WindowShow();
   } finally {
     captureBtn.disabled = false;
   }
@@ -305,6 +316,7 @@ canvas.addEventListener('pointerup', () => {
 });
 
 document.getElementById('capture').onclick = startCapture;
+document.getElementById('recapture').onclick = () => startCapture(true);
 document.getElementById('undo').onclick = () => {
   annotations.pop();
   redraw();
@@ -400,7 +412,7 @@ async function init() {
   await loadState();
   setCaptureMask(true, 'Capture the region…');
   redraw();
-  startCapture();
+  startCapture(false);
 }
 
 init();
