@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,8 +51,89 @@ type HyprlandSnapshot struct {
 	Waybar    WaybarInfo        `json:"waybar"`
 }
 
+type AppState struct {
+	OutputPath string            `json:"outputPath"`
+	Binds      map[string]string `json:"binds"`
+}
+
+type ShortcutBinding struct {
+	Action  string `json:"action"`
+	Key     string `json:"key"`
+	Command string `json:"command"`
+}
+
 func NewApp() *App {
 	return &App{}
+}
+
+func (a *App) stateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".cheese-wails"), nil
+}
+
+func (a *App) statePath() (string, error) {
+	dir, err := a.stateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "state.json"), nil
+}
+
+func (a *App) loadState() (AppState, error) {
+	path, err := a.statePath()
+	if err != nil {
+		return AppState{}, err
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return AppState{Binds: defaultBinds()}, nil
+		}
+		return AppState{}, err
+	}
+
+	var state AppState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return AppState{}, err
+	}
+	if state.Binds == nil {
+		state.Binds = defaultBinds()
+	}
+	return state, nil
+}
+
+func (a *App) saveState(state AppState) error {
+	dir, err := a.stateDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+
+	path, err := a.statePath()
+	if err != nil {
+		return err
+	}
+
+	payload, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, payload, 0o644)
+}
+
+func defaultBinds() map[string]string {
+	return map[string]string{
+		"capture":   "SUPER, S, exec, cheese",
+		"recapture": "SUPER, SHIFT, S, exec, cheese --edit",
+		"save":      "CTRL, S, save",
+		"undo":      "CTRL, Z, undo",
+	}
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -213,4 +295,31 @@ func (a *App) SaveImage(base64Data string, outputPath string) error {
 	}
 
 	return os.WriteFile(outputPath, bytes, 0o644)
+}
+
+func (a *App) LoadAppState() (AppState, error) {
+	return a.loadState()
+}
+
+func (a *App) UpdateBind(action string, bindLine string) (AppState, error) {
+	state, err := a.loadState()
+	if err != nil {
+		return AppState{}, err
+	}
+	if state.Binds == nil {
+		state.Binds = defaultBinds()
+	}
+	state.Binds[action] = strings.TrimSpace(bindLine)
+	if err := a.saveState(state); err != nil {
+		return AppState{}, err
+	}
+	return state, nil
+}
+
+func (a *App) ResetBinds() (AppState, error) {
+	state := AppState{Binds: defaultBinds()}
+	if err := a.saveState(state); err != nil {
+		return AppState{}, err
+	}
+	return state, nil
 }

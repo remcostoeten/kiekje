@@ -1,5 +1,11 @@
 import './style.css';
-import { CaptureRegion, SaveImage } from '../wailsjs/go/main/App';
+import {
+  CaptureRegion,
+  LoadAppState,
+  ResetBinds,
+  SaveImage,
+  UpdateBind,
+} from '../wailsjs/go/main/App';
 
 const app = document.querySelector('#app');
 
@@ -16,9 +22,56 @@ app.innerHTML = `
       <button id="save">Save PNG</button>
       <input id="output" class="output" value="/tmp/cheese-wails.png" />
     </div>
+
     <div id="mask" class="mask">Capture the region…</div>
-    <div class="workspace">
-      <canvas id="canvas"></canvas>
+
+    <div class="content-grid">
+      <section class="workspace">
+        <canvas id="canvas"></canvas>
+      </section>
+
+      <aside class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Shortcuts</p>
+            <h2>Recorder</h2>
+          </div>
+          <button id="reset-binds" class="secondary">Reset defaults</button>
+        </div>
+
+        <div class="shortcut-grid">
+          <div class="shortcut-card">
+            <span>Capture</span>
+            <strong id="bind-capture">-</strong>
+            <button data-record="capture">Record</button>
+          </div>
+          <div class="shortcut-card">
+            <span>Re-capture</span>
+            <strong id="bind-recapture">-</strong>
+            <button data-record="recapture">Record</button>
+          </div>
+          <div class="shortcut-card">
+            <span>Save</span>
+            <strong id="bind-save">-</strong>
+            <button data-record="save">Record</button>
+          </div>
+          <div class="shortcut-card">
+            <span>Undo</span>
+            <strong id="bind-undo">-</strong>
+            <button data-record="undo">Record</button>
+          </div>
+        </div>
+
+        <div class="recorder" id="recorder" tabindex="0">
+          <div class="recorder-state" id="recorder-state">Click a bind row, then press keys</div>
+          <div class="recorder-keyline" id="recorder-keys">Waiting for input</div>
+          <div class="hint">Press Enter to save the bind. Esc cancels.</div>
+        </div>
+
+        <div class="panel-foot">
+          <code id="state-path">State: ~/.cheese-wails/state.json</code>
+        </div>
+      </aside>
     </div>
   </div>
 `;
@@ -28,6 +81,16 @@ const ctx = canvas.getContext('2d');
 const mask = document.getElementById('mask');
 const captureBtn = document.getElementById('capture');
 const outputInput = document.getElementById('output');
+const recorder = document.getElementById('recorder');
+const recorderState = document.getElementById('recorder-state');
+const recorderKeys = document.getElementById('recorder-keys');
+
+const bindEls = {
+  capture: document.getElementById('bind-capture'),
+  recapture: document.getElementById('bind-recapture'),
+  save: document.getElementById('bind-save'),
+  undo: document.getElementById('bind-undo'),
+};
 
 let tool = 'select';
 let captureMode = true;
@@ -36,6 +99,10 @@ let annotations = [];
 let current = null;
 let dragStart = null;
 let penPoints = [];
+let state = { binds: {} };
+let recordingAction = null;
+let recordingMods = new Set();
+let recordingKey = '';
 
 function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -79,14 +146,52 @@ function setCaptureMask(visible, text = 'Capture the region…') {
   mask.classList.toggle('hidden', !visible);
 }
 
+function renderBinds(binds = {}) {
+  state.binds = binds;
+  bindEls.capture.textContent = binds.capture || '-';
+  bindEls.recapture.textContent = binds.recapture || '-';
+  bindEls.save.textContent = binds.save || '-';
+  bindEls.undo.textContent = binds.undo || '-';
+}
+
+function formatRecorderLine() {
+  const order = ['SUPER', 'CTRL', 'ALT', 'SHIFT'];
+  const mods = order.filter((m) => recordingMods.has(m));
+  const prefix = mods.join(' ');
+  return `bind = ${prefix}${prefix ? ', ' : ''}${recordingKey}, exec, cheese`;
+}
+
+function setRecording(action) {
+  recordingAction = action;
+  recordingMods = new Set();
+  recordingKey = '';
+  recorderState.textContent = `Recording ${action}`;
+  recorderKeys.textContent = 'Press a key combo';
+  recorder.focus();
+}
+
+async function persistRecording() {
+  if (!recordingAction || !recordingKey) return;
+  const line = formatRecorderLine();
+  const updated = await UpdateBind(recordingAction, line);
+  renderBinds(updated.binds || {});
+  recorderState.textContent = `Saved ${recordingAction}`;
+  recorderKeys.textContent = line;
+  recordingAction = null;
+}
+
+async function loadState() {
+  const loaded = await LoadAppState();
+  renderBinds(loaded.binds || {});
+  if (loaded.outputPath) outputInput.value = loaded.outputPath;
+}
+
 async function startCapture() {
   setCaptureMask(true, 'Capture the region…');
   captureBtn.disabled = true;
   try {
     const res = await CaptureRegion();
-    if (!res || !res.data) {
-      throw new Error('No image returned');
-    }
+    if (!res || !res.data) throw new Error('No image returned');
     image = new Image();
     image.onload = () => {
       resizeCanvas();
@@ -141,9 +246,8 @@ canvas.addEventListener('pointerdown', (evt) => {
 canvas.addEventListener('pointermove', (evt) => {
   if (captureMode || !dragStart || !current || tool === 'text') return;
   const p = pointerPos(evt);
-  if (tool === 'pen') {
-    penPoints.push(p);
-  } else {
+  if (tool === 'pen') penPoints.push(p);
+  else {
     current.w = p.x - dragStart.x;
     current.h = p.y - dragStart.y;
   }
@@ -174,14 +278,75 @@ document.getElementById('save').onclick = async () => {
   alert(`Saved to ${outputInput.value}`);
 };
 
+document.querySelectorAll('[data-record]').forEach((btn) => {
+  btn.addEventListener('click', () => setRecording(btn.dataset.record));
+});
+
+document.getElementById('reset-binds').onclick = async () => {
+  const defaults = await ResetBinds();
+  renderBinds(defaults.binds || {});
+};
+
+recorder.addEventListener('keydown', async (evt) => {
+  if (!recordingAction) return;
+  evt.preventDefault();
+  evt.stopPropagation();
+
+  if (evt.key === 'Escape') {
+    recordingAction = null;
+    recorderState.textContent = 'Recording cancelled';
+    recorderKeys.textContent = 'Waiting for input';
+    return;
+  }
+
+  if (evt.key === 'Enter') {
+    await persistRecording();
+    return;
+  }
+
+  if (evt.key === 'Backspace') {
+    recordingKey = '';
+    recorderKeys.textContent = 'Press a key combo';
+    return;
+  }
+
+  if (evt.key === 'Meta' || evt.key === 'Control' || evt.key === 'Alt' || evt.key === 'Shift') {
+    if (evt.key === 'Meta') recordingMods.add('SUPER');
+    if (evt.key === 'Control') recordingMods.add('CTRL');
+    if (evt.key === 'Alt') recordingMods.add('ALT');
+    if (evt.key === 'Shift') recordingMods.add('SHIFT');
+    recorderKeys.textContent = formatRecorderLine();
+    return;
+  }
+
+  recordingKey = evt.key.length === 1 ? evt.key.toUpperCase() : evt.key.toUpperCase();
+  recorderKeys.textContent = formatRecorderLine();
+});
+
 window.addEventListener('keydown', (evt) => {
+  if (recordingAction) return;
   if (evt.key === 'Escape') {
     tool = 'select';
     document.querySelectorAll('[data-tool]').forEach((b) => b.classList.remove('active'));
     document.querySelector('[data-tool="select"]').classList.add('active');
   }
+  if (evt.metaKey || evt.ctrlKey) {
+    if (evt.key.toLowerCase() === 's') {
+      evt.preventDefault();
+      document.getElementById('save').click();
+    }
+    if (evt.key.toLowerCase() === 'z') {
+      evt.preventDefault();
+      document.getElementById('undo').click();
+    }
+  }
 });
 
-setCaptureMask(true, 'Capture the region…');
-redraw();
-startCapture();
+async function init() {
+  await loadState();
+  setCaptureMask(true, 'Capture the region…');
+  redraw();
+  startCapture();
+}
+
+init();

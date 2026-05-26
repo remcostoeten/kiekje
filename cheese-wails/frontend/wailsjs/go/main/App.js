@@ -10,6 +10,18 @@ export function GetHyprlandSnapshot() {
   return window['go']['main']['App']['GetHyprlandSnapshot']();
 }
 
+export function LoadAppState() {
+  return window['go']['main']['App']['LoadAppState']();
+}
+
+export function ResetBinds() {
+  return window['go']['main']['App']['ResetBinds']();
+}
+
 export function SaveImage(arg1, arg2) {
   return window['go']['main']['App']['SaveImage'](arg1, arg2);
+}
+
+export function UpdateBind(arg1, arg2) {
+  return window['go']['main']['App']['UpdateBind'](arg1, arg2);
 }

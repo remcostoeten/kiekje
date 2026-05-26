@@ -6,4 +6,10 @@ export function CaptureRegion():Promise<main.CaptureResult>;
 
 export function GetHyprlandSnapshot():Promise<main.HyprlandSnapshot>;
 
+export function LoadAppState():Promise<main.AppState>;
+
+export function ResetBinds():Promise<main.AppState>;
+
 export function SaveImage(arg1:string,arg2:string):Promise<void>;
+
+export function UpdateBind(arg1:string,arg2:string):Promise<main.AppState>;

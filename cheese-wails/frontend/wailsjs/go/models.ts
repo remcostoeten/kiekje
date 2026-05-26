@@ -1,5 +1,19 @@
 export namespace main {
 	
+	export class AppState {
+	    outputPath: string;
+	    binds: Record<string, string>;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.outputPath = source["outputPath"];
+	        this.binds = source["binds"];
+	    }
+	}
 	export class CaptureResult {
 	    path: string;
 	    data: string;
