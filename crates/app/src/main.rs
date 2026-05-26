@@ -1,6 +1,6 @@
 use cheese_core::capture::{backend_for_current_session, SessionKind};
 use cheese_core::editor::EditorState;
-use cheese_core::model::{Annotation, AnnotationKind, ScreenshotImage};
+use cheese_core::model::{Annotation, ScreenshotImage};
 use std::env;
 use std::fs;
 use std::io::BufRead;
@@ -116,88 +116,6 @@ fn capture_png(
     }
 
     Err(format!("unsupported backend: {backend_name}"))
-}
-
-fn flatten_with_magick(
-    input_path: &PathBuf,
-    output_path: &PathBuf,
-    annotations: &[Annotation],
-) -> Result<(), String> {
-    let mut cmd = Command::new("magick");
-    cmd.arg(input_path);
-
-    for annotation in annotations {
-        match annotation.kind {
-            AnnotationKind::Rectangle | AnnotationKind::Highlight => {
-                let color = if matches!(annotation.kind, AnnotationKind::Highlight) {
-                    "rgba(255, 220, 0, 0.25)"
-                } else {
-                    "rgba(255, 64, 64, 0.85)"
-                };
-                cmd.args([
-                    "-stroke",
-                    color,
-                    "-fill",
-                    "none",
-                    "-strokewidth",
-                    &annotation.stroke_width.to_string(),
-                    "-draw",
-                    &format!(
-                        "rectangle {},{} {},{}",
-                        annotation.bounds.x,
-                        annotation.bounds.y,
-                        annotation.bounds.x + annotation.bounds.width,
-                        annotation.bounds.y + annotation.bounds.height
-                    ),
-                ]);
-            }
-            AnnotationKind::Arrow => {
-                cmd.args([
-                    "-stroke",
-                    "rgba(255, 64, 64, 0.95)",
-                    "-fill",
-                    "none",
-                    "-strokewidth",
-                    &annotation.stroke_width.to_string(),
-                    "-draw",
-                    &format!(
-                        "line {},{} {},{}",
-                        annotation.bounds.x,
-                        annotation.bounds.y,
-                        annotation.bounds.x + annotation.bounds.width,
-                        annotation.bounds.y + annotation.bounds.height
-                    ),
-                ]);
-            }
-            AnnotationKind::Text => {
-                let text = annotation.text.as_deref().unwrap_or("");
-                cmd.args([
-                    "-fill",
-                    "rgba(255, 255, 255, 0.95)",
-                    "-stroke",
-                    "rgba(0, 0, 0, 0.8)",
-                    "-strokewidth",
-                    "1",
-                    "-annotate",
-                    &format!("+{},{}", annotation.bounds.x, annotation.bounds.y),
-                    text,
-                ]);
-            }
-            AnnotationKind::Pen => {}
-        }
-    }
-
-    cmd.arg(output_path);
-
-    let status = cmd
-        .status()
-        .map_err(|err| format!("failed to run magick: {err}"))?;
-
-    if !status.success() {
-        return Err(format!("magick failed with status {status}"));
-    }
-
-    Ok(())
 }
 
 fn write_demo_png(output_path: &PathBuf, width: u32, height: u32) -> Result<(), String> {
@@ -399,6 +317,7 @@ fn handle_connection(
     output_path: Arc<PathBuf>,
     done: mpsc::Sender<()>,
     backend_name: &'static str,
+    selection: (u32, u32, u32, u32),
 ) {
     let mut reader = match stream.try_clone() {
         Ok(clone) => BufReader::new(clone),
@@ -458,8 +377,7 @@ fn handle_connection(
             }
         }
     } else if first_line.starts_with("POST /capture ") {
-        let geometry = capture_selection(if backend_name == "wayland" { SessionKind::Wayland } else { SessionKind::Unknown });
-        let (x, y, width, height) = geometry;
+        let (x, y, width, height) = selection;
         if capture_png(backend_name, x, y, width, height, &image_path).is_ok() {
             let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
             let _ = stream.write_all(response.as_bytes());
@@ -486,6 +404,7 @@ fn start_preview_server(
     image_path: PathBuf,
     output_path: PathBuf,
     backend_name: &'static str,
+    selection: (u32, u32, u32, u32),
 ) -> Result<(u16, mpsc::Receiver<()>), String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|err| format!("failed to bind preview server: {err}"))?;
     let port = listener
@@ -504,6 +423,7 @@ fn start_preview_server(
                     Arc::clone(&output_path),
                     done_tx.clone(),
                     backend_name,
+                    selection,
                 ),
                 Err(_) => break,
             }
@@ -572,7 +492,35 @@ fn main() {
             .as_secs();
         env::temp_dir().join(format!("cheese-{stamp}.png"))
     });
-    let capture_path = output_path.with_extension("capture.png");
+
+    if opts.edit || opts.preview {
+        match start_preview_server(
+            output_path.clone(),
+            output_path.clone(),
+            backend.name(),
+            (x, y, width, height),
+        ) {
+            Ok((port, done_rx)) => {
+                let url = format!("http://127.0.0.1:{port}/");
+                let _ = Command::new("xdg-open").arg(&url).spawn();
+                println!("preview: {url}");
+                let _ = done_rx.recv();
+            }
+            Err(err) => {
+                eprintln!("failed to create preview editor: {err}");
+                std::process::exit(1);
+            }
+        }
+        println!("saved: {}", output_path.display());
+        if opts.copy {
+            if let Err(err) = copy_png_to_clipboard(&output_path) {
+                eprintln!("clipboard copy failed: {err}");
+                std::process::exit(1);
+            }
+            println!("copied to clipboard");
+        }
+        return;
+    }
 
     if let Err(err) = capture_png(backend.name(), x, y, width, height, &output_path) {
         eprintln!("capture failed on {session}: {err}");
@@ -592,46 +540,15 @@ fn main() {
     }
 
     if let Some(flattened) = editor.flattened() {
-        if let Err(err) = fs::copy(&output_path, &capture_path) {
-            eprintln!("failed to prepare capture copy: {err}");
-            std::process::exit(1);
-        }
-        if let Err(err) = flatten_with_magick(&capture_path, &output_path, &editor.annotations) {
-            eprintln!("annotation flatten failed: {err}");
-            std::process::exit(1);
-        }
-        println!(
-            "captured {}x{} on {} via {}",
-            flattened.image.width,
-            flattened.image.height,
-            session,
-            backend.name()
-        );
+        let _ = flattened;
     }
-
     println!("saved: {}", output_path.display());
-
     if opts.copy {
         if let Err(err) = copy_png_to_clipboard(&output_path) {
             eprintln!("clipboard copy failed: {err}");
             std::process::exit(1);
         }
         println!("copied to clipboard");
-    }
-
-    if opts.edit || opts.preview {
-        match start_preview_server(capture_path.clone(), output_path.clone(), backend.name()) {
-            Ok((port, done_rx)) => {
-                let url = format!("http://127.0.0.1:{port}/");
-                let _ = Command::new("xdg-open").arg(&url).spawn();
-                println!("preview: {url}");
-                let _ = done_rx.recv();
-            }
-            Err(err) => {
-                eprintln!("failed to create preview editor: {err}");
-                std::process::exit(1);
-            }
-        }
     }
 
 }
