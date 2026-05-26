@@ -103,6 +103,7 @@ let state = { binds: {} };
 let recordingAction = null;
 let recordingMods = new Set();
 let recordingKey = '';
+let lastHotkeyTs = 0;
 
 function redraw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -154,6 +155,34 @@ function renderBinds(binds = {}) {
   bindEls.undo.textContent = binds.undo || '-';
 }
 
+function parseBindLine(line) {
+  if (!line) return null;
+  const raw = line.replace(/^bind\d*\s*=\s*/i, '');
+  const parts = raw.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const combo = parts[0];
+  const action = (parts[2] || parts[1] || '').toLowerCase();
+  const command = parts.slice(3).join(', ');
+  const modifiers = new Set(combo.split(/\s+/).map((item) => item.toUpperCase()).filter(Boolean));
+  const key = parts[1].toUpperCase();
+  return { modifiers, key, action, command };
+}
+
+function matchBind(line, evt) {
+  const parsed = parseBindLine(line);
+  if (!parsed) return false;
+  const mods = new Set();
+  if (evt.metaKey) mods.add('SUPER');
+  if (evt.ctrlKey) mods.add('CTRL');
+  if (evt.altKey) mods.add('ALT');
+  if (evt.shiftKey) mods.add('SHIFT');
+  if (mods.size !== parsed.modifiers.size) return false;
+  for (const mod of parsed.modifiers) {
+    if (!mods.has(mod)) return false;
+  }
+  return evt.key.toUpperCase() === parsed.key;
+}
+
 function formatRecorderLine() {
   const order = ['SUPER', 'CTRL', 'ALT', 'SHIFT'];
   const mods = order.filter((m) => recordingMods.has(m));
@@ -184,6 +213,19 @@ async function loadState() {
   const loaded = await LoadAppState();
   renderBinds(loaded.binds || {});
   if (loaded.outputPath) outputInput.value = loaded.outputPath;
+}
+
+function runAction(action) {
+  if (!action) return;
+  if (action === 'capture') {
+    startCapture();
+  } else if (action === 'recapture') {
+    startCapture();
+  } else if (action === 'save') {
+    document.getElementById('save').click();
+  } else if (action === 'undo') {
+    document.getElementById('undo').click();
+  }
 }
 
 async function startCapture() {
@@ -325,6 +367,18 @@ recorder.addEventListener('keydown', async (evt) => {
 
 window.addEventListener('keydown', (evt) => {
   if (recordingAction) return;
+  if (Date.now() - lastHotkeyTs < 120) return;
+  const binds = state.binds || {};
+  const orderedActions = ['recapture', 'capture', 'save', 'undo'];
+  for (const action of orderedActions) {
+    const line = binds[action];
+    if (matchBind(line, evt)) {
+      evt.preventDefault();
+      lastHotkeyTs = Date.now();
+      runAction(action);
+      return;
+    }
+  }
   if (evt.key === 'Escape') {
     tool = 'select';
     document.querySelectorAll('[data-tool]').forEach((b) => b.classList.remove('active'));
