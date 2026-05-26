@@ -1,6 +1,12 @@
 use crate::model::{Annotation, ScreenshotImage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlattenedImage {
+    pub image: ScreenshotImage,
+    pub annotation_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorState {
     pub image: Option<ScreenshotImage>,
     pub annotations: Vec<Annotation>,
@@ -28,5 +34,12 @@ impl EditorState {
     pub fn add_annotation(&mut self, annotation: Annotation) {
         self.annotations.push(annotation);
     }
-}
 
+    pub fn flattened(&self) -> Option<FlattenedImage> {
+        let image = self.image.as_ref()?.blank_like();
+        Some(FlattenedImage {
+            image,
+            annotation_count: self.annotations.len(),
+        })
+    }
+}
