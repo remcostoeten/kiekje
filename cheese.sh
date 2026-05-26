@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="cheese-wails"
 BIN_PATH="$ROOT_DIR/build/bin/$APP_NAME"
+TRAY_BIN_PATH="$ROOT_DIR/build/bin/cheese-tray"
 DIST_DIR="$ROOT_DIR/dist"
 
 cd "$ROOT_DIR"
@@ -31,23 +32,34 @@ require_cmd() {
 }
 
 stop_app() {
+  pkill -x "cheese-tray" >/dev/null 2>&1 || true
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  pkill -f "cheese-wails-dev-linux-amd64" >/dev/null 2>&1 || true
   pkill -f "wails dev" >/dev/null 2>&1 || true
+}
+
+build_tray() {
+  require_cmd go
+  mkdir -p "$(dirname "$TRAY_BIN_PATH")"
+  go build -o "$TRAY_BIN_PATH" ./cmd/cheese-tray
 }
 
 build_app() {
   require_cmd wails
   wails build -clean
+  build_tray
 }
 
 run_app() {
   if [[ ! -x "$BIN_PATH" ]]; then
     build_app
+  elif [[ ! -x "$TRAY_BIN_PATH" ]]; then
+    build_tray
   fi
   if [[ "${CHEESE_DEBUG:-0}" == "1" ]]; then
-    exec env JSC_SIGNAL_FOR_GC=12 "$BIN_PATH"
+    exec "$BIN_PATH"
   fi
-  exec env JSC_SIGNAL_FOR_GC=12 "$BIN_PATH" 2> >(
+  exec "$BIN_PATH" 2> >(
     grep -vE "Gtk-WARNING|Theme parsing error|Overriding existing handler for signal|JSC_SIGNAL_FOR_GC" >&2
   )
 }
@@ -63,11 +75,13 @@ ship_app() {
   staging="$(mktemp -d)"
 
   cp "$BIN_PATH" "$staging/$APP_NAME"
+  cp "$TRAY_BIN_PATH" "$staging/cheese-tray"
   cp README.md "$staging/README.md"
   tar -C "$staging" -czf "$archive" .
   rm -rf "$staging"
 
   echo "Shippable binary: $BIN_PATH"
+  echo "Tray sidecar: $TRAY_BIN_PATH"
   echo "Archive: $archive"
 }
 
@@ -78,6 +92,7 @@ print_header() {
   echo
   echo "Project: $ROOT_DIR"
   echo "Binary:  $BIN_PATH"
+  echo "Tray:    $TRAY_BIN_PATH"
   echo
 }
 
@@ -90,6 +105,7 @@ run_interactive_command() {
   case "$1" in
     dev)
       require_cmd wails
+      build_tray
       exec wails dev
       ;;
     run)
@@ -165,6 +181,7 @@ case "${1:-menu}" in
     ;;
   dev)
     require_cmd wails
+    build_tray
     exec wails dev
     ;;
   run)
