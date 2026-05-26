@@ -25,8 +25,8 @@ func main() {
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "cheese-wails",
 		},
+		StartHidden:        true,
 		DisableResize:      false,
-		StartHidden:        false,
 		MinWidth:           1180,
 		MinHeight:          760,
 		AssetServer: &assetserver.Options{

@@ -88,7 +88,10 @@ async function startCapture() {
       throw new Error('No image returned');
     }
     image = new Image();
-    image.onload = resizeCanvas;
+    image.onload = () => {
+      resizeCanvas();
+      window.runtime.WindowShow();
+    };
     image.src = `data:image/png;base64,${res.data}`;
     captureMode = false;
     captureBtn.textContent = 'Re-capture';

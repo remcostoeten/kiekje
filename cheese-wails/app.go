@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type App struct {
@@ -54,6 +56,9 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	runtime.WindowSetSize(ctx, 1366, 900)
+	runtime.WindowCenter(ctx)
+	runtime.WindowHide(ctx)
 }
 
 func (a *App) GetHyprlandSnapshot() (HyprlandSnapshot, error) {
