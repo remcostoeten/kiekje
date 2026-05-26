@@ -2,7 +2,7 @@
 pub struct ScreenshotImage {
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<u8>,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,7 +47,15 @@ impl ScreenshotImage {
         Self {
             width,
             height,
-            pixels: vec![0; pixel_count as usize],
+            bytes: vec![0; pixel_count as usize],
+        }
+    }
+
+    pub fn from_bytes(width: u32, height: u32, bytes: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            bytes,
         }
     }
 

@@ -1,4 +1,5 @@
 use crate::model::ScreenshotImage;
+use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionKind {
@@ -60,7 +61,20 @@ impl CaptureBackend for WaylandCaptureBackend {
             return Err(CaptureError::Failed("capture region must be non-zero".to_string()));
         }
 
-        Err(CaptureError::UnsupportedSession)
+        let geometry = format!("{},{} {}x{}", 0, 0, width, height);
+        let output = Command::new("grim")
+            .args(["-g", &geometry, "-"])
+            .output()
+            .map_err(|err| CaptureError::Failed(format!("failed to run grim: {err}")))?;
+
+        if !output.status.success() {
+            return Err(CaptureError::Failed(format!(
+                "grim failed with status {}",
+                output.status
+            )));
+        }
+
+        Ok(ScreenshotImage::from_bytes(width, height, output.stdout))
     }
 }
 

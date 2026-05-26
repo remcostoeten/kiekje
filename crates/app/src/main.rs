@@ -1,6 +1,20 @@
 use cheese_core::capture::{backend_for_current_session, SessionKind};
 use cheese_core::editor::EditorState;
 use cheese_core::model::Annotation;
+use std::process::Command;
+
+fn parse_slurp_geometry(geometry: &str) -> Option<(u32, u32, u32, u32)> {
+    let (origin, size) = geometry.trim().split_once(' ')?;
+    let (x, y) = origin.split_once(',')?;
+    let (width, height) = size.split_once('x')?;
+
+    Some((
+        x.parse().ok()?,
+        y.parse().ok()?,
+        width.parse().ok()?,
+        height.parse().ok()?,
+    ))
+}
 
 fn main() {
     let backend = backend_for_current_session();
@@ -10,9 +24,22 @@ fn main() {
         SessionKind::Unknown => "unknown",
     };
 
+    let (x, y, width, height) = if matches!(session, "wayland") {
+        let output = Command::new("slurp")
+            .output()
+            .expect("slurp should be available on this machine");
+        let geometry = String::from_utf8_lossy(&output.stdout);
+        parse_slurp_geometry(&geometry).unwrap_or((0, 0, 1280, 720))
+    } else {
+        (0, 0, 1280, 720)
+    };
+
     let image = backend
-        .capture_region(0, 0, 1280, 720)
-        .unwrap_or_else(|_| cheese_core::model::ScreenshotImage::new(1280, 720));
+        .capture_region(x, y, width, height)
+        .unwrap_or_else(|err| {
+            eprintln!("capture failed on {session}: {err:?}");
+            cheese_core::model::ScreenshotImage::new(width, height)
+        });
 
     let mut editor = EditorState::with_image(image);
     editor.add_annotation(Annotation::rectangle(32, 32, 240, 120));
