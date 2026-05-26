@@ -11,6 +11,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::thread;
 
 #[derive(Debug, Default)]
@@ -244,6 +245,7 @@ fn editor_html(image_url: &str) -> String {
 </head>
 <body>
   <div class="toolbar">
+    <button id="capture">Capture region</button>
     <button data-tool="select" class="active">Select</button>
     <button data-tool="rect">Rect</button>
     <button data-tool="arrow">Arrow</button>
@@ -268,6 +270,7 @@ fn editor_html(image_url: &str) -> String {
     let current = null;
     let dragStart = null;
     let penPoints = [];
+    let captureMode = true;
 
     function resize() {{
       canvas.width = img.naturalWidth || 1280;
@@ -315,7 +318,21 @@ fn editor_html(image_url: &str) -> String {
       return {{ x: (evt.clientX - rect.left) * sx, y: (evt.clientY - rect.top) * sy }};
     }}
 
+    async function startCapture() {{
+      const res = await fetch('/capture', {{ method: 'POST' }});
+      if (!res.ok) {{
+        alert('Capture failed');
+        return;
+      }}
+      captureMode = false;
+      img.src = imageUrl + '?v=' + Date.now();
+      document.getElementById('capture').textContent = 'Re-capture';
+    }}
+
+    document.getElementById('capture').onclick = startCapture;
+
     canvas.addEventListener('pointerdown', evt => {{
+      if (captureMode) return;
       if (tool === 'select') return;
       dragStart = pointerPos(evt);
       if (tool === 'pen') {{
@@ -327,6 +344,7 @@ fn editor_html(image_url: &str) -> String {
       canvas.setPointerCapture(evt.pointerId);
     }});
     canvas.addEventListener('pointermove', evt => {{
+      if (captureMode) return;
       if (!dragStart || !current || tool === 'text') return;
       const p = pointerPos(evt);
       if (tool === 'pen') {{
@@ -338,6 +356,7 @@ fn editor_html(image_url: &str) -> String {
       redraw();
     }});
     canvas.addEventListener('pointerup', () => {{
+      if (captureMode) return;
       if (!current) return;
       annotations.push(current);
       current = null;
@@ -366,6 +385,7 @@ fn editor_html(image_url: &str) -> String {
     }});
     img.onload = () => {{ resize(); }};
     img.onerror = () => {{ resize(); }};
+    redraw();
   </script>
 </body>
 </html>"#,
@@ -373,7 +393,13 @@ fn editor_html(image_url: &str) -> String {
     )
 }
 
-fn handle_connection(mut stream: TcpStream, image_path: &PathBuf, output_path: &PathBuf, done: &mpsc::Sender<()>) {
+fn handle_connection(
+    mut stream: TcpStream,
+    image_path: Arc<PathBuf>,
+    output_path: Arc<PathBuf>,
+    done: mpsc::Sender<()>,
+    backend_name: &'static str,
+) {
     let mut reader = match stream.try_clone() {
         Ok(clone) => BufReader::new(clone),
         Err(_) => return,
@@ -412,7 +438,7 @@ fn handle_connection(mut stream: TcpStream, image_path: &PathBuf, output_path: &
         );
         let _ = stream.write_all(response.as_bytes());
     } else if first_line.starts_with("GET /image.png ") {
-        match fs::read(image_path) {
+        match fs::read(&*image_path) {
             Ok(bytes) => {
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -431,8 +457,18 @@ fn handle_connection(mut stream: TcpStream, image_path: &PathBuf, output_path: &
                 let _ = stream.write_all(response.as_bytes());
             }
         }
+    } else if first_line.starts_with("POST /capture ") {
+        let geometry = capture_selection(if backend_name == "wayland" { SessionKind::Wayland } else { SessionKind::Unknown });
+        let (x, y, width, height) = geometry;
+        if capture_png(backend_name, x, y, width, height, &image_path).is_ok() {
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+            let _ = stream.write_all(response.as_bytes());
+            return;
+        }
+        let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 7\r\nConnection: close\r\n\r\nFailed";
+        let _ = stream.write_all(response.as_bytes());
     } else if first_line.starts_with("POST /save ") {
-        if fs::write(output_path, &body).is_ok() {
+        if fs::write(&*output_path, &body).is_ok() {
             let response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: close\r\n\r\nSaved!";
             let _ = stream.write_all(response.as_bytes());
             let _ = done.send(());
@@ -446,17 +482,29 @@ fn handle_connection(mut stream: TcpStream, image_path: &PathBuf, output_path: &
     }
 }
 
-fn start_preview_server(image_path: PathBuf, output_path: PathBuf) -> Result<(u16, mpsc::Receiver<()>), String> {
+fn start_preview_server(
+    image_path: PathBuf,
+    output_path: PathBuf,
+    backend_name: &'static str,
+) -> Result<(u16, mpsc::Receiver<()>), String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|err| format!("failed to bind preview server: {err}"))?;
     let port = listener
         .local_addr()
         .map_err(|err| format!("failed to read preview server address: {err}"))?
         .port();
     let (done_tx, done_rx) = mpsc::channel();
+    let image_path = Arc::new(image_path);
+    let output_path = Arc::new(output_path);
     thread::spawn(move || {
         for stream in listener.incoming() {
             match stream {
-                Ok(stream) => handle_connection(stream, &image_path, &output_path, &done_tx),
+                Ok(stream) => handle_connection(
+                    stream,
+                    Arc::clone(&image_path),
+                    Arc::clone(&output_path),
+                    done_tx.clone(),
+                    backend_name,
+                ),
                 Err(_) => break,
             }
         }
@@ -572,7 +620,7 @@ fn main() {
     }
 
     if opts.edit || opts.preview {
-        match start_preview_server(capture_path.clone(), output_path.clone()) {
+        match start_preview_server(capture_path.clone(), output_path.clone(), backend.name()) {
             Ok((port, done_rx)) => {
                 let url = format!("http://127.0.0.1:{port}/");
                 let _ = Command::new("xdg-open").arg(&url).spawn();
