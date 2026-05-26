@@ -22,6 +22,9 @@ func main() {
 		Height:             820,
 		Frameless:          true,
 		AlwaysOnTop:        true,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "cheese-wails",
+		},
 		DisableResize:      false,
 		StartHidden:        false,
 		AssetServer: &assetserver.Options{
