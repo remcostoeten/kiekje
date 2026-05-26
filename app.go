@@ -62,13 +62,14 @@ type HyprlandSnapshot struct {
 }
 
 type AppState struct {
-	OutputPath        string            `json:"outputPath"`
-	SaveDir           string            `json:"saveDir"`
-	LastSavedPath     string            `json:"lastSavedPath"`
-	CopyAfterCapture      bool              `json:"copyAfterCapture"`
-	CloseAfterCapture     bool              `json:"closeAfterCapture"`
-	ClipboardOnlyCapture  bool              `json:"clipboardOnlyCapture"`
-	Binds                 map[string]string `json:"binds"`
+	OutputPath           string            `json:"outputPath"`
+	SaveDir              string            `json:"saveDir"`
+	LastSavedPath        string            `json:"lastSavedPath"`
+	CopyAfterCapture     bool              `json:"copyAfterCapture"`
+	CloseAfterCapture    bool              `json:"closeAfterCapture"`
+	CloseAfterSave       bool              `json:"closeAfterSave"`
+	ClipboardOnlyCapture bool              `json:"clipboardOnlyCapture"`
+	Binds                map[string]string `json:"binds"`
 }
 
 type ShortcutBinding struct {
@@ -693,7 +694,7 @@ func (a *App) UpdateBind(action string, bindLine string) (AppState, error) {
 	return state, nil
 }
 
-func (a *App) UpdateSettings(saveDir string, copyAfterCapture bool, closeAfterCapture bool, clipboardOnlyCapture bool) (AppState, error) {
+func (a *App) UpdateSettings(saveDir string, copyAfterCapture bool, closeAfterCapture bool, closeAfterSave bool, clipboardOnlyCapture bool) (AppState, error) {
 	state, err := a.loadState()
 	if err != nil {
 		return AppState{}, err
@@ -705,6 +706,7 @@ func (a *App) UpdateSettings(saveDir string, copyAfterCapture bool, closeAfterCa
 	}
 	state.CopyAfterCapture = copyAfterCapture
 	state.CloseAfterCapture = closeAfterCapture
+	state.CloseAfterSave = closeAfterSave
 	state.ClipboardOnlyCapture = clipboardOnlyCapture
 	if err := a.saveState(state); err != nil {
 		return AppState{}, err

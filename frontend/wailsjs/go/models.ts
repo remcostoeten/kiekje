@@ -6,6 +6,7 @@ export namespace main {
 	    lastSavedPath: string;
 	    copyAfterCapture: boolean;
 	    closeAfterCapture: boolean;
+	    closeAfterSave: boolean;
 	    clipboardOnlyCapture: boolean;
 	    binds: Record<string, string>;
 	
@@ -20,6 +21,7 @@ export namespace main {
 	        this.lastSavedPath = source["lastSavedPath"];
 	        this.copyAfterCapture = source["copyAfterCapture"];
 	        this.closeAfterCapture = source["closeAfterCapture"];
+	        this.closeAfterSave = source["closeAfterSave"];
 	        this.clipboardOnlyCapture = source["clipboardOnlyCapture"];
 	        this.binds = source["binds"];
 	    }

@@ -1,6 +1,7 @@
 import './style.css';
 import '@tabler/icons-webfont/dist/tabler-icons.min.css';
 import {
+  CancelCapture,
   ChooseSaveDir,
   CopyImageToClipboard,
   CaptureRegion,
@@ -92,6 +93,10 @@ app.innerHTML = `
               <span>Close after capture</span>
               <div class="tog" id="tog-close" role="switch" tabindex="0"></div>
             </div>
+            <div class="menu-item">
+              <span>Close after save</span>
+              <div class="tog" id="tog-close-save" role="switch" tabindex="0"></div>
+            </div>
           </div>
           <div class="menu-section">
             <div class="menu-label">Shortcuts</div>
@@ -166,6 +171,7 @@ const toggles = {
   copy: document.getElementById('tog-copy'),
   clipboardOnly: document.getElementById('tog-clipboard-only'),
   close: document.getElementById('tog-close'),
+  closeSave: document.getElementById('tog-close-save'),
 };
 
 const bindEls = {
@@ -577,6 +583,7 @@ function renderSettings(nextState = {}) {
   setToggle(toggles.copy, Boolean(nextState.copyAfterCapture));
   setToggle(toggles.clipboardOnly, Boolean(nextState.clipboardOnlyCapture));
   setToggle(toggles.close, Boolean(nextState.closeAfterCapture));
+  setToggle(toggles.closeSave, Boolean(nextState.closeAfterSave));
 }
 
 function parseBindLine(line) {
@@ -865,7 +872,8 @@ document.getElementById('undo').onclick = () => {
 };
 document.getElementById('save').onclick = async () => {
   if (!hasImage()) return;
-  await saveCanvas();
+  const saved = await saveCanvas();
+  if (saved.closeAfterSave) closeAfterSave();
 };
 document.getElementById('copy').onclick = async () => {
   if (!hasImage()) return;
@@ -895,11 +903,24 @@ async function saveImageData(data, outputPath) {
   return loaded;
 }
 
+function closeAfterSave() {
+  image = new Image();
+  annotations = [];
+  current = null;
+  dragStart = null;
+  penPoints = [];
+  selectedIndices = [];
+  hoveredIndex = -1;
+  setIdle(true);
+  window.runtime.WindowHide();
+}
+
 async function persistSettings() {
   const updated = await UpdateSettings(
     state.saveDir || '',
     getToggle(toggles.copy),
     getToggle(toggles.close),
+    getToggle(toggles.closeSave),
     getToggle(toggles.clipboardOnly),
   );
   renderSettings(updated);
@@ -922,6 +943,7 @@ function wireToggle(el) {
 wireToggle(toggles.copy);
 wireToggle(toggles.clipboardOnly);
 wireToggle(toggles.close);
+wireToggle(toggles.closeSave);
 
 document.getElementById('choose-save-dir').onclick = async () => {
   setMenuOpen(false);
@@ -1038,7 +1060,17 @@ window.addEventListener('keydown', (evt) => {
   if (evt.key === 'p') { setTool('pen'); return; }
   if (evt.key === 't') { setTool('text'); return; }
   if (evt.key === 'c' && !evt.ctrlKey && !evt.metaKey) { startCapture(); return; }
-  if (evt.key === 'q') { QuitApp(); return; }
+  if (evt.key.toLowerCase() === 'q') {
+    evt.preventDefault();
+    if (isCapturing) {
+      captureCancelled = true;
+      CancelCapture();
+      window.runtime.WindowHide();
+      return;
+    }
+    QuitApp();
+    return;
+  }
 });
 
 /* ─── Color Picker ─── */

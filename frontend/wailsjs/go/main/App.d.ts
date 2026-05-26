@@ -40,4 +40,4 @@ export function ShowWindow():Promise<void>;
 
 export function UpdateBind(arg1:string,arg2:string):Promise<main.AppState>;
 
-export function UpdateSettings(arg1:string,arg2:boolean,arg3:boolean,arg4:boolean):Promise<main.AppState>;
+export function UpdateSettings(arg1:string,arg2:boolean,arg3:boolean,arg4:boolean,arg5:boolean):Promise<main.AppState>;
