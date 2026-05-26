@@ -430,9 +430,9 @@ func (a *App) writeGlobalShortcuts(state AppState) error {
 	hyprlandPath := filepath.Join(hyprDir, "hyprland.conf")
 
 	content := fmt.Sprintf(`# Managed by Cheese.
-windowrulev2 = float, title:^(Cheese)$
-windowrulev2 = pin, title:^(Cheese)$
-windowrulev2 = center, title:^(Cheese)$
+windowrule = float on, match:title ^(Cheese)$
+windowrule = pin on, match:title ^(Cheese)$
+windowrule = center on, match:title ^(Cheese)$
 %s
 `, globalBindLine(state.Binds["capture"], exe))
 

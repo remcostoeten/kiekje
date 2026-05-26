@@ -119,9 +119,9 @@ write_hyprland_config() {
   mkdir -p "$HYPR_DIR"
   cat > "$HYPR_SNIPPET" <<EOF
 # Managed by $APP_TITLE.
-windowrulev2 = float, title:^(Cheese)$
-windowrulev2 = pin, title:^(Cheese)$
-windowrulev2 = center, title:^(Cheese)$
+windowrule = float on, match:title ^(Cheese)$
+windowrule = pin on, match:title ^(Cheese)$
+windowrule = center on, match:title ^(Cheese)$
 bind = CTRL, C, exec, "$INSTALL_APP_PATH" --capture
 EOF
 

@@ -33,9 +33,9 @@ To remove the installed app files:
 The installer writes this automatically and sources it from `~/.config/hypr/hyprland.conf`:
 
 ```ini
-windowrulev2 = float, title:^(Cheese)$
-windowrulev2 = pin, title:^(Cheese)$
-windowrulev2 = center, title:^(Cheese)$
+windowrule = float on, match:title ^(Cheese)$
+windowrule = pin on, match:title ^(Cheese)$
+windowrule = center on, match:title ^(Cheese)$
 bind = CTRL, C, exec, "~/.local/bin/kiekje" --capture
 ```
 
