@@ -363,6 +363,11 @@ func (a *App) startTraySidecar() {
 	}
 
 	iconPath := filepath.Join(filepath.Dir(dir), "appicon.png")
+	if _, err := os.Stat(iconPath); err != nil {
+		if home, homeErr := os.UserHomeDir(); homeErr == nil {
+			iconPath = filepath.Join(home, ".local", "share", "icons", "hicolor", "256x256", "apps", "kiekje.png")
+		}
+	}
 	args := []string{"--app", exe}
 	if _, err := os.Stat(iconPath); err == nil {
 		args = append(args, "--icon", iconPath)
@@ -425,6 +430,9 @@ func (a *App) writeGlobalShortcuts(state AppState) error {
 	hyprlandPath := filepath.Join(hyprDir, "hyprland.conf")
 
 	content := fmt.Sprintf(`# Managed by Cheese.
+windowrulev2 = float, title:^(Cheese)$
+windowrulev2 = pin, title:^(Cheese)$
+windowrulev2 = center, title:^(Cheese)$
 %s
 `, globalBindLine(state.Binds["capture"], exe))
 

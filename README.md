@@ -14,14 +14,29 @@ wails dev
 wails build
 ```
 
+## Install
+
+```bash
+./cheese.sh install
+```
+
+This installs the app to `~/.local/bin/kiekje`, installs the tray sidecar beside it, adds a desktop launcher, enables autostart, installs the icon, and writes a managed Hyprland snippet at `~/.config/hypr/cheese-bindings.conf`.
+
+To remove the installed app files:
+
+```bash
+./cheese.sh uninstall
+```
+
 ## Hyprland floating rule
 
-Add this to your Hyprland config so the window always opens floating:
+The installer writes this automatically and sources it from `~/.config/hypr/hyprland.conf`:
 
 ```ini
 windowrulev2 = float, title:^(Cheese)$
 windowrulev2 = pin, title:^(Cheese)$
 windowrulev2 = center, title:^(Cheese)$
+bind = CTRL, C, exec, "~/.local/bin/kiekje" --capture
 ```
 
 If you want the app to stay above tiled windows, keep `AlwaysOnTop` enabled in `main.go`.
