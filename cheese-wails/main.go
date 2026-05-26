@@ -18,8 +18,8 @@ func main() {
 	// Create application with options
 	err := wails.Run(&options.App{
 		Title:              "Cheese",
-		Width:              1280,
-		Height:             820,
+		Width:              1366,
+		Height:             900,
 		Frameless:          true,
 		AlwaysOnTop:        true,
 		SingleInstanceLock: &options.SingleInstanceLock{
@@ -27,6 +27,8 @@ func main() {
 		},
 		DisableResize:      false,
 		StartHidden:        false,
+		MinWidth:           1180,
+		MinHeight:          760,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
