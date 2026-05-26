@@ -247,6 +247,7 @@ fn editor_html(image_url: &str) -> String {
     <button data-tool="select" class="active">Select</button>
     <button data-tool="rect">Rect</button>
     <button data-tool="arrow">Arrow</button>
+    <button data-tool="pen">Pen</button>
     <button data-tool="text">Text</button>
     <button id="undo">Undo</button>
     <button id="save">Save PNG</button>
@@ -266,6 +267,7 @@ fn editor_html(image_url: &str) -> String {
     const annotations = [];
     let current = null;
     let dragStart = null;
+    let penPoints = [];
 
     function resize() {{
       canvas.width = img.naturalWidth || 1280;
@@ -290,6 +292,15 @@ fn editor_html(image_url: &str) -> String {
       }} else if (a.kind === 'arrow') {{
         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y + h); ctx.stroke();
         ctx.beginPath(); ctx.arc(x + w, y + h, 5, 0, Math.PI * 2); ctx.fill();
+      }} else if (a.kind === 'pen') {{
+        if (a.points.length > 1) {{
+          ctx.beginPath();
+          for (let i = 0; i < a.points.length; i++) {{
+            const p = a.points[i];
+            if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+          }}
+          ctx.stroke();
+        }}
       }} else if (a.kind === 'text') {{
         ctx.font = '20px system-ui';
         ctx.fillStyle = 'rgba(255,255,255,0.95)';
@@ -307,14 +318,23 @@ fn editor_html(image_url: &str) -> String {
     canvas.addEventListener('pointerdown', evt => {{
       if (tool === 'select') return;
       dragStart = pointerPos(evt);
-      current = {{ kind: tool, x: dragStart.x, y: dragStart.y, w: 0, h: 0, text: tool === 'text' ? prompt('Text label:') || '' : '' }};
+      if (tool === 'pen') {{
+        penPoints = [dragStart];
+        current = {{ kind: 'pen', points: penPoints }};
+      }} else {{
+        current = {{ kind: tool, x: dragStart.x, y: dragStart.y, w: 0, h: 0, text: tool === 'text' ? prompt('Text label:') || '' : '' }};
+      }}
       canvas.setPointerCapture(evt.pointerId);
     }});
     canvas.addEventListener('pointermove', evt => {{
       if (!dragStart || !current || tool === 'text') return;
       const p = pointerPos(evt);
-      current.w = p.x - dragStart.x;
-      current.h = p.y - dragStart.y;
+      if (tool === 'pen') {{
+        penPoints.push(p);
+      }} else {{
+        current.w = p.x - dragStart.x;
+        current.h = p.y - dragStart.y;
+      }}
       redraw();
     }});
     canvas.addEventListener('pointerup', () => {{
@@ -335,7 +355,7 @@ fn editor_html(image_url: &str) -> String {
     document.getElementById('save').onclick = async () => {{
       const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       await fetch('/save', {{ method: 'POST', headers: {{ 'Content-Type': 'image/png' }}, body: blob }});
-      alert('Saved.');
+      alert('Saved to the output file.');
     }};
     window.addEventListener('keydown', evt => {{
       if (evt.key === 'Escape') {{
