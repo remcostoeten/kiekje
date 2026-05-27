@@ -159,9 +159,24 @@ fn editor_html(image_url: &str) -> String {
     .canvas-wrap {{ display: grid; place-items: center; padding: 18px; overflow: auto; }}
     canvas {{ background: #0b0f14; box-shadow: 0 18px 60px rgba(0,0,0,0.5); max-width: 100%; height: auto; }}
     .hint {{ opacity: 0.7; font-size: 13px; }}
+    .capture-mask {{
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 180ms ease;
+      font-size: 18px;
+      letter-spacing: 0.02em;
+      z-index: 20;
+    }}
+    .capture-mask.hidden {{ opacity: 0; }}
   </style>
 </head>
 <body>
+  <div id="mask" class="capture-mask">Capturing region…</div>
   <div class="toolbar">
     <button id="capture">Capture region</button>
     <button data-tool="select" class="active">Select</button>
@@ -237,14 +252,18 @@ fn editor_html(image_url: &str) -> String {
     }}
 
     async function startCapture() {{
+      document.getElementById('mask').classList.remove('hidden');
+      document.getElementById('mask').textContent = 'Capturing region…';
       const res = await fetch('/capture', {{ method: 'POST' }});
       if (!res.ok) {{
+        document.getElementById('mask').textContent = 'Capture failed';
         alert('Capture failed');
         return;
       }}
       captureMode = false;
       img.src = imageUrl + '?v=' + Date.now();
       document.getElementById('capture').textContent = 'Re-capture';
+      document.getElementById('mask').classList.add('hidden');
     }}
 
     document.getElementById('capture').onclick = startCapture;
@@ -304,6 +323,7 @@ fn editor_html(image_url: &str) -> String {
     img.onload = () => {{ resize(); }};
     img.onerror = () => {{ resize(); }};
     redraw();
+    document.addEventListener('DOMContentLoaded', startCapture, {{ once: true }});
   </script>
 </body>
 </html>"#,

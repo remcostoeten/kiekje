@@ -2,6 +2,12 @@ export namespace main {
 	
 	export class AppState {
 	    outputPath: string;
+	    saveDir: string;
+	    lastSavedPath: string;
+	    copyAfterCapture: boolean;
+	    closeAfterCapture: boolean;
+	    closeAfterSave: boolean;
+	    clipboardOnlyCapture: boolean;
 	    binds: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
@@ -11,6 +17,12 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.outputPath = source["outputPath"];
+	        this.saveDir = source["saveDir"];
+	        this.lastSavedPath = source["lastSavedPath"];
+	        this.copyAfterCapture = source["copyAfterCapture"];
+	        this.closeAfterCapture = source["closeAfterCapture"];
+	        this.closeAfterSave = source["closeAfterSave"];
+	        this.clipboardOnlyCapture = source["clipboardOnlyCapture"];
 	        this.binds = source["binds"];
 	    }
 	}
@@ -26,6 +38,24 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
 	        this.data = source["data"];
+	    }
+	}
+	export class WindowGeometry {
+	    x: number;
+	    y: number;
+	    w: number;
+	    h: number;
+
+	    static createFrom(source: any = {}) {
+	        return new WindowGeometry(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.w = source["w"];
+	        this.h = source["h"];
 	    }
 	}
 	export class ConfigFile {
@@ -119,4 +149,3 @@ export namespace main {
 	
 
 }
-

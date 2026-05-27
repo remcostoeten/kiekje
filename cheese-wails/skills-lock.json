@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "animation-micro-interaction-pack": {
+      "source": "patricio0312rev/skills",
+      "sourceType": "github",
+      "skillPath": "frontend/animation-micro-interaction-pack/SKILL.md",
+      "computedHash": "0a89548103098ca10765725d217b1086c7b8e83e767960dbffac5ca487323a3b"
+    },
+    "emilkowal-animations": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.experimental/emilkowal-animations/SKILL.md",
+      "computedHash": "f9d5fc89ddc9b7b1ce1b323c7152881c3a01d8088ccec5ddfd4c7aebc0c9c936"
+    }
+  }
+}
