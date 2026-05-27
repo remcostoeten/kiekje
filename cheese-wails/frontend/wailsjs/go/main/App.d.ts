@@ -36,6 +36,8 @@ export function OpenLastImage():Promise<void>;
 
 export function OpenSaveDir():Promise<void>;
 
+export function OpenSettings():Promise<void>;
+
 export function QuitApp():Promise<void>;
 
 export function RequestCapture():Promise<void>;

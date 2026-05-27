@@ -1,4 +1,4 @@
-module cheese-wails
+module kiekje
 
 go 1.23.0
 

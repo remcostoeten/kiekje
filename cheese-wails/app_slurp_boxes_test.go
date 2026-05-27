@@ -32,11 +32,14 @@ func TestParseSlurpGeometryIgnoresLabel(t *testing.T) {
 	}
 }
 
-func TestIsCheeseWindowLabel(t *testing.T) {
-	if !isCheeseWindowLabel("Cheese") {
-		t.Fatal("expected Cheese to match")
+func TestIsKiekjeWindowLabel(t *testing.T) {
+	if !isKiekjeWindowLabel("Kiekje") {
+		t.Fatal("expected Kiekje to match")
 	}
-	if isCheeseWindowLabel("Firefox") {
+	if !isKiekjeWindowLabel("Cheese") {
+		t.Fatal("expected legacy Cheese title to match")
+	}
+	if isKiekjeWindowLabel("Firefox") {
 		t.Fatal("expected Firefox not to match")
 	}
 }

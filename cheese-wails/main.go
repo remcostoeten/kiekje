@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"os"
 
 	"github.com/wailsapp/wails/v2"
@@ -21,10 +22,19 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "--sync-hyprland" {
+		app := NewApp()
+		if err := app.SyncHyprlandConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "kiekje: sync hyprland: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:       "Cheese",
+		Title:       "Kiekje",
 		Width:       1366,
 		Height:      900,
 		Frameless:   true,
@@ -35,7 +45,7 @@ func main() {
 			WebviewGpuPolicy: linuxoptions.WebviewGpuPolicyNever,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "cheese-wails",
+			UniqueId: "kiekje",
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
 				app.HandleSecondInstance(secondInstanceData.Args)
 			},

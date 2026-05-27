@@ -1,34 +1,36 @@
-# AGENTS.md — cheese-wails
+# AGENTS.md — Kiekje
 
 Guide for AI agents working in this repository.
 
+Author: Remco Stoeten
+
 ## Project summary
 
-**cheese-wails** (installed as `kiekje`) is a Wayland screenshot tool built with [Wails v2](https://wails.io). It provides:
+**Kiekje** is a Wayland screenshot tool built with [Wails v2](https://wails.io). It provides:
 
 - Region capture with a fullscreen overlay
 - Window pick via `Ctrl + click` (Hyprland + Sway resolvers today)
 - A canvas annotation editor (rect, arrow, pen, text)
 - Settings for save dir, clipboard behavior, and Hyprland binds
-- A tray sidecar (`cmd/cheese-tray`) and install script (`cheese.sh`)
+- A tray sidecar (`cmd/kiekje-tray`) and install script (`kiekje.sh`)
 
 Target desktop: **Hyprland first**, with partial support documented for Sway and roadmap specs for Plasma/GNOME.
 
 ## Repository layout
 
 ```
-cheese-wails/
+cheese-wails/          # repo folder name (monorepo path); app/product name is Kiekje
   main.go              # Wails app entry, window options, embed
   app.go               # Go backend: capture, state, binds, compositor APIs
   app_*_test.go        # Go unit tests
-  cmd/cheese-tray/     # System tray sidecar
+  cmd/kiekje-tray/     # System tray sidecar
   frontend/
     src/               # Vanilla JS (ES modules, Vite)
     wailsjs/           # Generated Wails bindings — do not hand-edit
     dist/              # Build output (embedded by Go)
   docs/                # Specs — read before changing capture/window-pick
   build/               # Hyprland snippet template
-  cheese.sh            # install / uninstall helper
+  kiekje.sh            # install / uninstall helper
   .agents/skills/      # Project-local agent skills (animations)
 ```
 
@@ -46,8 +48,8 @@ cd frontend && npm run build       # frontend only
 go test ./...
 
 # Install locally
-./cheese.sh install
-./cheese.sh uninstall
+./kiekje.sh install
+./kiekje.sh uninstall
 ```
 
 After changing Go methods exposed to the frontend, regenerate bindings:
@@ -64,7 +66,7 @@ Commit updated files under `frontend/wailsjs/` when bindings change.
 flowchart LR
   subgraph go [Go backend]
     App[app.go]
-    Tray[cheese-tray]
+    Tray[kiekje-tray]
   end
   subgraph fe [Frontend]
     Init[init.js]
@@ -82,12 +84,13 @@ flowchart LR
 
 - **Bindings**: methods on `App` in `app.go` are imported from `frontend/wailsjs/go/main/App.js`.
 - **Events** (Go → JS via `runtime.EventsEmit`):
-  - `cheese:capture` — start capture flow
-  - `cheese:cancel-capture` — abort overlay
-  - `cheese:choose-save-dir` — close menu during folder picker
+  - `kiekje:capture` — start capture flow
+  - `kiekje:cancel-capture` — abort overlay
+  - `kiekje:choose-save-dir` — close menu during folder picker
+  - `kiekje:open-settings` — show window and open settings menu
 - **Window chrome**: capture overlay uses `window.runtime.*` (`WindowFullscreen`, `WindowHide`, etc.) directly in `capture/overlay.js`.
 
-Persisted settings live in `~/.config/cheese-wails/state.json` (see `AppState` in `app.go`).
+Persisted settings live in `~/.config/kiekje/state.json` (see `AppState` in `app.go`).
 
 ### Frontend module map
 
@@ -159,6 +162,7 @@ Use existing CSS variables in `style.css` (`--ease-out`, `--duration-ui`, etc.) 
 | Add annotation tool | `editor/canvas.js`, `editor/annotations.js`, toolbar in `dom/template.js` |
 | Add setting toggle | `dom/template.js`, `settings/menu.js`, `app.go` `UpdateSettings` |
 | Add global shortcut | `app.go` bind writer + `settings/binds.js` + `input/keyboard.js` |
+| Sync Hyprland snippet + source line | `internal/hyprland/` + `kiekje --sync-hyprland` |
 | Add compositor support | `app.go` resolver + new doc in `docs/distro-specs/` |
 
 ## Testing checklist
@@ -177,7 +181,7 @@ Run `go test ./...` for Go changes.
 ## Do not
 
 - Hand-edit `frontend/wailsjs/**` (generated).
-- Commit `frontend/dist/`, `node_modules/`, or the `cheese-wails` binary (gitignored).
+- Commit `frontend/dist/`, `node_modules/`, or the `kiekje` binary (gitignored).
 - Add a frontend framework without an explicit request.
 - Split capture/window lifecycle in ways that skip `FinishCapture()` or leave the window fullscreen/hidden.
 - Remove `SingleInstanceLock` behavior — tray and Hyprland binds rely on second-instance args.
@@ -187,3 +191,10 @@ Run `go test ./...` for Go changes.
 Active feature branch: `feature/cheese-screenshot-tool`. Match existing commit style: short imperative subject, body explaining *why*.
 
 Only commit when the user asks.
+
+## Releases
+
+Semantic versioning via git-cliff. See [docs/RELEASING.md](docs/RELEASING.md).
+
+- `./scripts/release-prepare.sh prepare --bump auto` — version bump, `CHANGELOG.md`, annotated tag
+- Push `v*` tags to trigger `.github/workflows/release-publish.yml` (builds tarball + GitHub Release)

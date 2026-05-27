@@ -70,6 +70,10 @@ export function OpenSaveDir() {
   return window['go']['main']['App']['OpenSaveDir']();
 }
 
+export function OpenSettings() {
+  return window['go']['main']['App']['OpenSettings']();
+}
+
 export function QuitApp() {
   return window['go']['main']['App']['QuitApp']();
 }

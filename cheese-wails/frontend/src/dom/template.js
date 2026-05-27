@@ -112,9 +112,14 @@ export const EDITOR_TEMPLATE = `
           <div class="menu-section">
             <div class="menu-label">Shortcuts</div>
             <div class="menu-item">
-              <span>Capture</span>
+              <span>Capture region</span>
               <span><span class="kbd" id="bind-capture">-</span>
               <button type="button" data-record="capture">Rec</button></span>
+            </div>
+            <div class="menu-item">
+              <span>Capture window</span>
+              <span><span class="kbd" id="bind-captureWindow">-</span>
+              <button type="button" data-record="captureWindow">Rec</button></span>
             </div>
             <div class="menu-item">
               <span>Save</span>
@@ -163,6 +168,7 @@ export function mountTemplate(root) {
     },
     bindEls: {
       capture: document.getElementById('bind-capture'),
+      captureWindow: document.getElementById('bind-captureWindow'),
       save: document.getElementById('bind-save'),
       undo: document.getElementById('bind-undo'),
     },

@@ -61,10 +61,12 @@ export function initApp() {
 
   initTooltip(dom);
 
-  EventsOn('cheese:capture', () => captureFlow.startCapture());
-  EventsOn('cheese:capture-window', () => captureFlow.startCapture({ windowOnly: true }));
-  EventsOn('cheese:choose-save-dir', () => settings.setMenuOpen(false));
-  EventsOn('cheese:cancel-capture', () => {
+  EventsOn('kiekje:capture', () => captureFlow.startCapture());
+  EventsOn('kiekje:capture-window', () => captureFlow.startCapture({ windowOnly: true }));
+  EventsOn('kiekje:capture-result', (res) => captureFlow.processCaptureResult(res, actions.saveImageData));
+  EventsOn('kiekje:open-settings', () => settings.setMenuOpen(true));
+  EventsOn('kiekje:choose-save-dir', () => settings.setMenuOpen(false));
+  EventsOn('kiekje:cancel-capture', () => {
     state.capture.cancelled = true;
   });
 

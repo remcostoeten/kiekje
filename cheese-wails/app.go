@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"kiekje/internal/hyprland"
+
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -128,7 +130,7 @@ func (a *App) stateDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".cheese-wails"), nil
+	return filepath.Join(home, ".config", "kiekje"), nil
 }
 
 func (a *App) statePath() (string, error) {
@@ -169,6 +171,10 @@ func (a *App) loadState() (AppState, error) {
 	}
 	if _, ok := state.Binds["recapture"]; ok {
 		delete(state.Binds, "recapture")
+		changed = true
+	}
+	if _, ok := state.Binds["captureWindow"]; !ok {
+		state.Binds["captureWindow"] = defaultBinds()["captureWindow"]
 		changed = true
 	}
 	if state.SaveDir == "" {
@@ -217,9 +223,10 @@ func (a *App) saveState(state AppState) error {
 
 func defaultBinds() map[string]string {
 	return map[string]string{
-		"capture": "SUPER SHIFT, C, exec, cheese-wails --capture",
-		"save":    "CTRL, S, save",
-		"undo":    "CTRL, Z, undo",
+		"capture":       "SUPER SHIFT, C, exec, kiekje --capture",
+		"captureWindow": "SUPER SHIFT, W, exec, kiekje --capture-window",
+		"save":          "CTRL, S, save",
+		"undo":          "CTRL, Z, undo",
 	}
 }
 
@@ -228,14 +235,14 @@ func defaultSaveDir() string {
 	if err != nil {
 		return os.TempDir()
 	}
-	return filepath.Join(home, "Pictures", "Cheese")
+	return filepath.Join(home, "Pictures", "Kiekje")
 }
 
 func nextOutputPath(saveDir string) string {
 	if strings.TrimSpace(saveDir) == "" {
 		saveDir = defaultSaveDir()
 	}
-	return filepath.Join(saveDir, fmt.Sprintf("cheese-%s.png", time.Now().Format("20060102-150405")))
+	return filepath.Join(saveDir, fmt.Sprintf("kiekje-%s.png", time.Now().Format("20060102-150405")))
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -264,9 +271,32 @@ func (a *App) context() context.Context {
 }
 
 func (a *App) ShowWindow() {
+	ctx := a.context()
+	if ctx == nil {
+		return
+	}
+	runtime.WindowSetAlwaysOnTop(ctx, true)
+	runtime.WindowShow(ctx)
+	runtime.WindowCenter(ctx)
+	go func() {
+		// Hyprland needs the surface mapped before focus/raise dispatch.
+		time.Sleep(50 * time.Millisecond)
+		a.raiseKiekjeWindow()
+	}()
+}
+
+func (a *App) raiseKiekjeWindow() {
+	if _, err := exec.LookPath("hyprctl"); err != nil {
+		return
+	}
+	_ = exec.Command("hyprctl", "dispatch", "focuswindow", "title:Kiekje").Run()
+	_ = exec.Command("hyprctl", "dispatch", "alterzorder", "top").Run()
+}
+
+func (a *App) OpenSettings() {
+	a.ShowWindow()
 	if ctx := a.context(); ctx != nil {
-		runtime.WindowShow(ctx)
-		runtime.WindowCenter(ctx)
+		runtime.EventsEmit(ctx, "kiekje:open-settings")
 	}
 }
 
@@ -286,32 +316,53 @@ func (a *App) RequestCapture() {
 	if a.shouldDeferCapture() {
 		return
 	}
-	if ctx := a.context(); ctx != nil {
-		a.captureMu.Lock()
-		if a.capturing {
-			a.captureMu.Unlock()
-			return
-		}
-		a.capturing = true
-		a.captureMu.Unlock()
-		runtime.EventsEmit(ctx, "cheese:capture")
-	}
+	go a.triggerCapture(false)
 }
 
 func (a *App) RequestCaptureWindow() {
 	if a.shouldDeferCapture() {
 		return
 	}
-	if ctx := a.context(); ctx != nil {
-		a.captureMu.Lock()
-		if a.capturing {
-			a.captureMu.Unlock()
-			return
-		}
-		a.capturing = true
-		a.captureMu.Unlock()
-		runtime.EventsEmit(ctx, "cheese:capture-window")
+	go a.triggerCapture(true)
+}
+
+// triggerCapture runs slurp+grim from Go so Hyprland/tray shortcuts work when the
+// webview is hidden on another workspace (EventsEmit may not run there).
+func (a *App) triggerCapture(windowPickOnly bool) {
+	res, err := a.captureWithSlurp(windowPickOnly)
+	a.deliverCaptureResult(res, err)
+}
+
+func (a *App) deliverCaptureResult(res CaptureResult, err error) {
+	if err != nil {
+		return
 	}
+	state, loadErr := a.loadState()
+	if loadErr != nil {
+		return
+	}
+	ctx := a.context()
+	if ctx == nil {
+		return
+	}
+
+	if state.ClipboardOnlyCapture {
+		_ = a.CopyImageToClipboard(res.Path)
+		a.ShowCaptureSuccessToast()
+		a.HideWindow()
+		return
+	}
+
+	if state.CopyAfterCapture {
+		_ = a.CopyImageToClipboard(res.Path)
+	}
+	if state.CloseAfterCapture {
+		_ = a.SaveImage(res.Data, state.OutputPath)
+		a.HideWindow()
+		return
+	}
+
+	runtime.EventsEmit(ctx, "kiekje:capture-result", res)
 }
 
 func (a *App) FinishCapture() {
@@ -345,7 +396,7 @@ func (a *App) CancelCapture() {
 	}
 	a.FinishCapture()
 	if ctx := a.context(); ctx != nil {
-		runtime.EventsEmit(ctx, "cheese:cancel-capture")
+		runtime.EventsEmit(ctx, "kiekje:cancel-capture")
 	}
 }
 
@@ -357,7 +408,7 @@ func (a *App) beginChooseSaveDir() {
 	a.CancelCapture()
 	a.HideWindow()
 	if ctx := a.context(); ctx != nil {
-		runtime.EventsEmit(ctx, "cheese:choose-save-dir")
+		runtime.EventsEmit(ctx, "kiekje:choose-save-dir")
 	}
 }
 
@@ -385,16 +436,19 @@ func (a *App) HandleSecondInstance(args []string) {
 			if a.shouldDeferCapture() {
 				return
 			}
-			a.RequestCapture()
+			go a.triggerCapture(false)
 			return
 		case "--capture-window":
 			if a.shouldDeferCapture() {
 				return
 			}
-			a.RequestCaptureWindow()
+			go a.triggerCapture(true)
 			return
 		case "--show":
 			a.ShowWindow()
+			return
+		case "--settings":
+			a.OpenSettings()
 			return
 		case "--hide":
 			a.HideWindow()
@@ -408,6 +462,9 @@ func (a *App) HandleSecondInstance(args []string) {
 		case "--quit":
 			a.QuitApp()
 			return
+		case "--sync-hyprland":
+			_ = a.SyncHyprlandConfig()
+			return
 		}
 	}
 	a.ShowWindow()
@@ -419,7 +476,7 @@ func (a *App) startTraySidecar() {
 		return
 	}
 	dir := filepath.Dir(exe)
-	trayPath := filepath.Join(dir, "cheese-tray")
+	trayPath := filepath.Join(dir, "kiekje-tray")
 	if _, err := os.Stat(trayPath); err != nil {
 		return
 	}
@@ -458,14 +515,14 @@ func (a *App) InstallAutostart() error {
 
 	desktop := fmt.Sprintf(`[Desktop Entry]
 Type=Application
-Name=Cheese
-Comment=Cheese capture tray
+Name=Kiekje
+Comment=Kiekje capture tray
 Exec=%q
 Terminal=false
 X-GNOME-Autostart-enabled=true
 `, exe)
 
-	return os.WriteFile(filepath.Join(autostartDir, "cheese-wails.desktop"), []byte(desktop), 0o644)
+	return os.WriteFile(filepath.Join(autostartDir, "kiekje.desktop"), []byte(desktop), 0o644)
 }
 
 func (a *App) InstallGlobalShortcuts() error {
@@ -476,58 +533,46 @@ func (a *App) InstallGlobalShortcuts() error {
 	return a.writeGlobalShortcuts(state)
 }
 
-func (a *App) writeGlobalShortcuts(state AppState) error {
-	home, err := os.UserHomeDir()
+func (a *App) SyncHyprlandConfig() error {
+	state, err := a.loadState()
 	if err != nil {
 		return err
 	}
+	return a.writeGlobalShortcuts(state)
+}
 
+func (a *App) writeGlobalShortcuts(state AppState) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-
-	hyprDir := filepath.Join(home, ".config", "hypr")
-	bindsPath := filepath.Join(hyprDir, "cheese-bindings.conf")
-	hyprlandPath := filepath.Join(hyprDir, "hyprland.conf")
-
-	content := fmt.Sprintf(`# Managed by Cheese.
-windowrule = float on, match:title ^(Cheese)$
-windowrule = pin on, match:title ^(Cheese)$
-windowrule = center on, match:title ^(Cheese)$
-%s
-`, globalBindLine(state.Binds["capture"], exe))
-
-	if err := os.MkdirAll(hyprDir, 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(bindsPath, []byte(content), 0o644); err != nil {
-		return err
-	}
-
-	raw, err := os.ReadFile(hyprlandPath)
-	if err != nil {
-		return err
-	}
-
-	sourceLine := "source = ./cheese-bindings.conf"
-	if !strings.Contains(string(raw), sourceLine) {
-		updated := strings.TrimRight(string(raw), "\n") + "\n" + sourceLine + " # Cheese capture shortcuts\n"
-		if err := os.WriteFile(hyprlandPath, []byte(updated), 0o644); err != nil {
-			return err
-		}
-	}
-
-	_ = exec.Command("hyprctl", "reload").Run()
-	return nil
+	return hyprland.Sync(globalBindLines(state.Binds, exe))
 }
 
-func globalBindLine(bindLine string, exe string) string {
+func globalBindLines(binds map[string]string, exe string) string {
+	defaults := defaultBinds()
+	lines := []string{
+		managedGlobalBindLine(binds["capture"], defaults["capture"], exe, "--capture"),
+		managedGlobalBindLine(binds["captureWindow"], defaults["captureWindow"], exe, "--capture-window"),
+	}
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func managedGlobalBindLine(bindLine, fallback, exe, flag string) string {
 	modifiers, key := bindCombo(bindLine)
 	if modifiers == "" || key == "" {
-		modifiers, key = bindCombo(defaultBinds()["capture"])
+		modifiers, key = bindCombo(fallback)
 	}
-	return fmt.Sprintf("bind = %s, %s, exec, %q --capture", modifiers, key, exe)
+	if modifiers == "" || key == "" {
+		return ""
+	}
+	return fmt.Sprintf("bind = %s, %s, exec, %q %s", modifiers, key, exe, flag)
 }
 
 func bindCombo(bindLine string) (string, string) {
@@ -722,9 +767,9 @@ func formatSlurpBox(x, y, w, h int, label string) string {
 	return fmt.Sprintf("%d,%d %dx%d %s", x, y, w, h, slurpBoxLabel(label))
 }
 
-func isCheeseWindowLabel(label string) bool {
+func isKiekjeWindowLabel(label string) bool {
 	label = strings.ToLower(strings.TrimSpace(label))
-	return label == "cheese" || strings.Contains(label, "kiekje")
+	return label == "kiekje" || strings.Contains(label, "kiekje") || label == "cheese" || strings.Contains(label, "cheese")
 }
 
 func (a *App) slurpWindowBoxes() string {
@@ -766,7 +811,7 @@ func (a *App) hyprlandSlurpBoxes() ([]string, error) {
 			continue
 		}
 		label := slurpBoxLabel(client.Title, client.Class)
-		if isCheeseWindowLabel(label) || isCheeseWindowLabel(client.Title) || isCheeseWindowLabel(client.Class) {
+		if isKiekjeWindowLabel(label) || isKiekjeWindowLabel(client.Title) || isKiekjeWindowLabel(client.Class) {
 			continue
 		}
 		lines = append(lines, formatSlurpBox(client.At[0], client.At[1], w, h, label))
@@ -789,7 +834,7 @@ func appendSwaySlurpBoxes(node swayNode, pid int, out *[]string) {
 	if node.PID == 0 || node.PID == pid {
 		return
 	}
-	if isCheeseWindowLabel(node.windowLabel()) {
+	if isKiekjeWindowLabel(node.windowLabel()) {
 		return
 	}
 	if !node.isWindowLike() {
@@ -856,13 +901,13 @@ func (a *App) runSlurp(windowPickOnly bool) (string, error) {
 		"-F", "monospace",
 		"-w", "2",
 		"-b", "00000000",
-		"-s", "9775fa33",
+		"-s", "ededed28",
 		"-c", "ededede6",
 	}
 
 	boxes := a.slurpWindowBoxes()
 	if boxes != "" {
-		args = append(args, "-B", "69db7c44")
+		args = append(args, "-B", "ededed55")
 		if windowPickOnly {
 			args = append(args, "-r")
 		}
@@ -897,12 +942,12 @@ func (a *App) runSlurp(windowPickOnly bool) (string, error) {
 	return geom, nil
 }
 
-// CaptureRegion hides Cheese and uses slurp + grim so selection covers the full desktop.
+// CaptureRegion hides Kiekje and uses slurp + grim so selection covers the full desktop.
 func (a *App) CaptureRegion() (CaptureResult, error) {
 	return a.captureWithSlurp(false)
 }
 
-// CaptureWindow hides Cheese and uses slurp window boxes only (click a window to capture it).
+// CaptureWindow hides Kiekje and uses slurp window boxes only (click a window to capture it).
 func (a *App) CaptureWindow() (CaptureResult, error) {
 	return a.captureWithSlurp(true)
 }
@@ -911,6 +956,15 @@ func (a *App) captureWithSlurp(windowPickOnly bool) (CaptureResult, error) {
 	if a.shouldDeferCapture() {
 		return CaptureResult{}, fmt.Errorf("capture cancelled for save folder selection")
 	}
+
+	a.captureMu.Lock()
+	if a.capturing {
+		a.captureMu.Unlock()
+		return CaptureResult{}, fmt.Errorf("capture already in progress")
+	}
+	a.capturing = true
+	a.captureMu.Unlock()
+	defer a.FinishCapture()
 
 	a.prepareForSlurp()
 	defer a.restoreAfterSlurp()
@@ -937,7 +991,7 @@ func (a *App) CaptureRegionAt(x int, y int, width int, height int) (CaptureResul
 	}
 
 	tmpDir := os.TempDir()
-	tmpFile, err := os.CreateTemp(tmpDir, "cheese-*.png")
+	tmpFile, err := os.CreateTemp(tmpDir, "kiekje-*.png")
 	if err != nil {
 		return CaptureResult{}, err
 	}
@@ -1104,7 +1158,7 @@ func findWindowNode(node swayNode, x, y int, pid int) *swayNode {
 		return nil
 	}
 
-	if label := strings.ToLower(node.windowLabel()); label == "cheese" || strings.Contains(label, "cheese") {
+	if isKiekjeWindowLabel(node.windowLabel()) {
 		return nil
 	}
 
@@ -1166,7 +1220,7 @@ func (a *App) UpdateBind(action string, bindLine string) (AppState, error) {
 	if err := a.saveState(state); err != nil {
 		return AppState{}, err
 	}
-	if action == "capture" {
+	if action == "capture" || action == "captureWindow" {
 		if err := a.writeGlobalShortcuts(state); err != nil {
 			return AppState{}, err
 		}
@@ -1267,10 +1321,10 @@ func (a *App) ShowCaptureSuccessToast() {
 		go func() {
 			_ = exec.Command(
 				notifySend,
-				"--app-name=Cheese",
+				"--app-name=Kiekje",
 				"--urgency=low",
 				"--expire-time=1400",
-				"--hint=string:desktop-entry:cheese",
+				"--hint=string:desktop-entry:kiekje",
 				"Captured",
 				"Copied to clipboard",
 			).Run()

@@ -8,7 +8,7 @@ import {
 } from '../../wailsjs/go/main/App';
 import { shortenPath } from '../utils/path.js';
 import {
-  formatBindDisplay,
+  formatBindReadable,
   formatRecordingPreview,
   formatRecorderLine,
 } from './binds.js';
@@ -84,7 +84,7 @@ export function createSettingsMenu({ dom, state }) {
   function renderBinds(binds = {}) {
     state.settings.binds = binds;
     for (const [action, el] of Object.entries(dom.bindEls)) {
-      el.textContent = formatBindDisplay(binds[action]);
+      el.textContent = formatBindReadable(binds[action]) || '-';
       el.classList.remove('recording');
     }
   }

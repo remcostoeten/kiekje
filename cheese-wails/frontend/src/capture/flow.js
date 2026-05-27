@@ -4,6 +4,7 @@ import {
   CopyImageToClipboard,
   FinishCapture,
   ShowCaptureSuccessToast,
+  ShowWindow,
 } from '../../wailsjs/go/main/App';
 
 export function createCaptureFlow({ dom, state, actions, settings }) {
@@ -33,8 +34,7 @@ export function createCaptureFlow({ dom, state, actions, settings }) {
     state.image = new Image();
     state.image.onload = () => {
       actions.resizeCanvas();
-      window.runtime.WindowShow();
-      window.runtime.WindowCenter();
+      ShowWindow();
     };
     state.image.src = `data:image/png;base64,${res.data}`;
     state.captureMode = false;
@@ -54,8 +54,7 @@ export function createCaptureFlow({ dom, state, actions, settings }) {
     } catch (err) {
       console.error(err);
       if (!capture.cancelled && !String(err).includes('cancelled')) {
-        window.runtime.WindowShow();
-        window.runtime.WindowCenter();
+        ShowWindow();
       } else {
         window.runtime.WindowHide();
       }

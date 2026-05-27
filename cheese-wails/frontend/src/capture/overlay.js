@@ -157,19 +157,19 @@ export function createCaptureOverlay({ dom, state, actions }) {
       const h = capture.windowPreview.h;
 
       ctx.save();
-      ctx.fillStyle = 'rgba(105, 219, 124, 0.10)';
+      ctx.fillStyle = 'rgba(237, 237, 237, 0.10)';
       ctx.fillRect(x, y, w, h);
-      ctx.strokeStyle = '#69db7c';
+      ctx.strokeStyle = '#ededed';
       ctx.lineWidth = 1.8;
       ctx.setLineDash([10, 5]);
       ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
-      ctx.strokeStyle = 'rgba(105, 219, 124, 0.85)';
+      ctx.strokeStyle = 'rgba(237, 237, 237, 0.85)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.strokeRect(x + 2.5, y + 2.5, Math.max(0, w - 5), Math.max(0, h - 5));
       ctx.setLineDash([]);
-      drawLabelBox('window', x, Math.max(8, y - 30), 'left', true);
-      drawLabelBox(`${w} × ${h} px`, x + w, Math.max(8, y - 30), 'right', true);
+      drawLabelBox('window', x, Math.max(8, y - 30), 'left', false);
+      drawLabelBox(`${w} × ${h} px`, x + w, Math.max(8, y - 30), 'right', false);
       ctx.restore();
     }
 
@@ -189,7 +189,7 @@ export function createCaptureOverlay({ dom, state, actions }) {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([8, 4]);
     ctx.strokeRect(x + 0.5, y + 0.5, w, h);
-    ctx.strokeStyle = 'rgba(124, 92, 252, 0.85)';
+    ctx.strokeStyle = 'rgba(237, 237, 237, 0.55)';
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.strokeRect(x + 1.5, y + 1.5, Math.max(0, w - 3), Math.max(0, h - 3));
