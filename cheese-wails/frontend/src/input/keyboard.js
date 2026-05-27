@@ -91,8 +91,12 @@ export function initKeyboard({
     if (evt.key === 'r') { editor.setTool('rect'); return; }
     if (evt.key === 'a') { editor.setTool('arrow'); return; }
     if (evt.key === 'p') { editor.setTool('pen'); return; }
+    if (evt.key === 'h') { editor.setTool('highlight'); return; }
+    if (evt.key === 'o') { editor.setTool('ellipse'); return; }
+    if (evt.key === 'n') { editor.setTool('step'); return; }
     if (evt.key === 't') { editor.setTool('text'); return; }
     if (evt.key === 'b') { editor.setTool('blur'); return; }
+    if (evt.key === 'g') { editor.setTool('crop'); return; }
     if (evt.key === 'c' && !evt.ctrlKey && !evt.metaKey) { captureFlow.startCapture(); return; }
 
     if (evt.key.toLowerCase() === 'q') {

@@ -31,11 +31,23 @@ export const EDITOR_TEMPLATE = `
       <button class="btn" data-tool="pen" type="button" data-tip="Draw" data-kbd="P">
         <i class="ti ti-pencil" aria-hidden="true"></i>
       </button>
+      <button class="btn" data-tool="highlight" type="button" data-tip="Highlight" data-kbd="H">
+        <i class="ti ti-highlight" aria-hidden="true"></i>
+      </button>
+      <button class="btn" data-tool="ellipse" type="button" data-tip="Ellipse" data-kbd="O">
+        <i class="ti ti-circle" aria-hidden="true"></i>
+      </button>
+      <button class="btn" data-tool="step" type="button" data-tip="Numbered step" data-kbd="N">
+        <i class="ti ti-list-numbers" aria-hidden="true"></i>
+      </button>
       <button class="btn" data-tool="text" type="button" data-tip="Text" data-kbd="T">
         <i class="ti ti-letter-t" aria-hidden="true"></i>
       </button>
       <button class="btn" data-tool="blur" type="button" data-tip="Blur redact" data-kbd="B">
         <i class="ti ti-blur" aria-hidden="true"></i>
+      </button>
+      <button class="btn" data-tool="crop" type="button" data-tip="Crop image" data-kbd="G">
+        <i class="ti ti-crop" aria-hidden="true"></i>
       </button>
       <div class="color-wrap" id="color-wrap">
         <button class="btn" id="color-trigger" type="button" data-tip="Stroke color">

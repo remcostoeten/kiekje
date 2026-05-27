@@ -58,6 +58,32 @@ export function createImageLayer(state) {
     return true;
   }
 
+  function crop(x, y, w, h) {
+    if (!layer) return null;
+
+    const x1 = Math.max(0, Math.floor(Math.min(x, x + w)));
+    const y1 = Math.max(0, Math.floor(Math.min(y, y + h)));
+    const x2 = Math.min(layer.width, Math.ceil(Math.max(x, x + w)));
+    const y2 = Math.min(layer.height, Math.ceil(Math.max(y, y + h)));
+    const rw = x2 - x1;
+    const rh = y2 - y1;
+    if (rw < 2 || rh < 2) return null;
+
+    const cropped = document.createElement('canvas');
+    cropped.width = rw;
+    cropped.height = rh;
+    cropped.getContext('2d').drawImage(layer, x1, y1, rw, rh, 0, 0, rw, rh);
+
+    layer.width = rw;
+    layer.height = rh;
+    layer.getContext('2d').drawImage(cropped, 0, 0);
+    return { x: x1, y: y1, w: rw, h: rh };
+  }
+
+  function toDataURL() {
+    return layer ? layer.toDataURL('image/png') : '';
+  }
+
   function drawTo(ctx) {
     if (layer) ctx.drawImage(layer, 0, 0);
   }
@@ -72,6 +98,8 @@ export function createImageLayer(state) {
     getImageData,
     putImageData,
     applyBlurRect,
+    crop,
+    toDataURL,
     drawTo,
     reset,
   };

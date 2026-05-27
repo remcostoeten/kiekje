@@ -36,6 +36,8 @@ export function createAppState() {
       dragging: null,
       activeColor: '#ededed',
       strokeWidth: 3,
+      stepCounter: 1,
+      resizing: null,
       inlineTextInput: null,
       imageLayer: null,
       history: {
