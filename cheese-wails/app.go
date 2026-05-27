@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,14 +50,16 @@ type ipcRect struct {
 }
 
 type hyprClient struct {
-	PID            int   `json:"pid"`
-	Mapped         bool  `json:"mapped"`
-	Hidden         bool  `json:"hidden"`
-	Visible        bool  `json:"visible"`
-	AcceptsInput   bool  `json:"acceptsInput"`
-	At             []int `json:"at"`
-	Size           []int `json:"size"`
-	FocusHistoryID int   `json:"focusHistoryID"`
+	PID            int    `json:"pid"`
+	Mapped         bool   `json:"mapped"`
+	Hidden         bool   `json:"hidden"`
+	Visible        bool   `json:"visible"`
+	AcceptsInput   bool   `json:"acceptsInput"`
+	Title          string `json:"title"`
+	Class          string `json:"class"`
+	At             []int  `json:"at"`
+	Size           []int  `json:"size"`
+	FocusHistoryID int    `json:"focusHistoryID"`
 }
 
 type swayNode struct {
@@ -291,8 +294,23 @@ func (a *App) RequestCapture() {
 		}
 		a.capturing = true
 		a.captureMu.Unlock()
-		runtime.WindowShow(ctx)
 		runtime.EventsEmit(ctx, "cheese:capture")
+	}
+}
+
+func (a *App) RequestCaptureWindow() {
+	if a.shouldDeferCapture() {
+		return
+	}
+	if ctx := a.context(); ctx != nil {
+		a.captureMu.Lock()
+		if a.capturing {
+			a.captureMu.Unlock()
+			return
+		}
+		a.capturing = true
+		a.captureMu.Unlock()
+		runtime.EventsEmit(ctx, "cheese:capture-window")
 	}
 }
 
@@ -368,6 +386,12 @@ func (a *App) HandleSecondInstance(args []string) {
 				return
 			}
 			a.RequestCapture()
+			return
+		case "--capture-window":
+			if a.shouldDeferCapture() {
+				return
+			}
+			a.RequestCaptureWindow()
 			return
 		case "--show":
 			a.ShowWindow()
@@ -630,6 +654,278 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func parseSlurpGeometry(raw string) (int, int, int, int, error) {
+	geom := strings.TrimSpace(raw)
+	if geom == "" {
+		return 0, 0, 0, 0, fmt.Errorf("no region selected")
+	}
+
+	space := strings.IndexByte(geom, ' ')
+	if space < 0 {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+
+	origin := geom[:space]
+	sizePart := strings.Fields(geom[space+1:])
+	if len(sizePart) == 0 {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+	size := sizePart[0]
+	comma := strings.IndexByte(origin, ',')
+	xSep := strings.IndexByte(size, 'x')
+	if comma < 0 || xSep < 0 {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+
+	x, err := strconv.Atoi(origin[:comma])
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+	y, err := strconv.Atoi(origin[comma+1:])
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+	w, err := strconv.Atoi(size[:xSep])
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+	h, err := strconv.Atoi(size[xSep+1:])
+	if err != nil {
+		return 0, 0, 0, 0, fmt.Errorf("invalid slurp geometry: %q", raw)
+	}
+	if w <= 0 || h <= 0 {
+		return 0, 0, 0, 0, fmt.Errorf("no region selected")
+	}
+
+	return x, y, w, h, nil
+}
+
+func slurpBoxLabel(parts ...string) string {
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		part = strings.ReplaceAll(part, "\n", " ")
+		part = strings.ReplaceAll(part, "\r", " ")
+		if len(part) > 48 {
+			part = part[:48]
+		}
+		return part
+	}
+	return "window"
+}
+
+func formatSlurpBox(x, y, w, h int, label string) string {
+	return fmt.Sprintf("%d,%d %dx%d %s", x, y, w, h, slurpBoxLabel(label))
+}
+
+func isCheeseWindowLabel(label string) bool {
+	label = strings.ToLower(strings.TrimSpace(label))
+	return label == "cheese" || strings.Contains(label, "kiekje")
+}
+
+func (a *App) slurpWindowBoxes() string {
+	if boxes, err := a.hyprlandSlurpBoxes(); err == nil && len(boxes) > 0 {
+		return strings.Join(boxes, "\n")
+	}
+	if boxes, err := a.swaySlurpBoxes(); err == nil && len(boxes) > 0 {
+		return strings.Join(boxes, "\n")
+	}
+	return ""
+}
+
+func (a *App) hyprlandSlurpBoxes() ([]string, error) {
+	if _, err := exec.LookPath("hyprctl"); err != nil {
+		return nil, err
+	}
+
+	rawClients, err := exec.Command("hyprctl", "-j", "clients").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var clients []hyprClient
+	if err := json.Unmarshal(rawClients, &clients); err != nil {
+		return nil, err
+	}
+
+	pid := os.Getpid()
+	lines := make([]string, 0, len(clients))
+	for _, client := range clients {
+		if client.PID == pid || !client.Mapped || client.Hidden || !client.Visible {
+			continue
+		}
+		if len(client.At) < 2 || len(client.Size) < 2 {
+			continue
+		}
+		w, h := client.Size[0], client.Size[1]
+		if w <= 0 || h <= 0 {
+			continue
+		}
+		label := slurpBoxLabel(client.Title, client.Class)
+		if isCheeseWindowLabel(label) || isCheeseWindowLabel(client.Title) || isCheeseWindowLabel(client.Class) {
+			continue
+		}
+		lines = append(lines, formatSlurpBox(client.At[0], client.At[1], w, h, label))
+	}
+
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("no hyprland windows available")
+	}
+	return lines, nil
+}
+
+func appendSwaySlurpBoxes(node swayNode, pid int, out *[]string) {
+	for i := range node.FloatingNodes {
+		appendSwaySlurpBoxes(node.FloatingNodes[i], pid, out)
+	}
+	for i := range node.Nodes {
+		appendSwaySlurpBoxes(node.Nodes[i], pid, out)
+	}
+
+	if node.PID == 0 || node.PID == pid {
+		return
+	}
+	if isCheeseWindowLabel(node.windowLabel()) {
+		return
+	}
+	if !node.isWindowLike() {
+		return
+	}
+
+	rect := node.WindowRect
+	if rect.Width <= 0 || rect.Height <= 0 {
+		rect = node.Rect
+	}
+	if rect.Width <= 0 || rect.Height <= 0 {
+		return
+	}
+
+	*out = append(*out, formatSlurpBox(rect.X, rect.Y, rect.Width, rect.Height, node.windowLabel()))
+}
+
+func (a *App) swaySlurpBoxes() ([]string, error) {
+	if _, err := exec.LookPath("swaymsg"); err != nil {
+		return nil, err
+	}
+
+	rawTree, err := exec.Command("swaymsg", "-t", "get_tree").Output()
+	if err != nil {
+		return nil, err
+	}
+
+	var root swayNode
+	if err := json.Unmarshal(rawTree, &root); err != nil {
+		return nil, err
+	}
+
+	lines := make([]string, 0, 16)
+	appendSwaySlurpBoxes(root, os.Getpid(), &lines)
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("no sway windows available")
+	}
+	return lines, nil
+}
+
+func (a *App) prepareForSlurp() {
+	ctx := a.context()
+	if ctx != nil {
+		runtime.WindowSetAlwaysOnTop(ctx, false)
+		runtime.WindowUnfullscreen(ctx)
+		runtime.WindowSetBackgroundColour(ctx, 0, 0, 0, 1)
+	}
+	a.HideWindow()
+	// Let Hyprland drop the pinned float before slurp owns the layer-shell surface.
+	time.Sleep(250 * time.Millisecond)
+}
+
+func (a *App) restoreAfterSlurp() {
+	ctx := a.context()
+	if ctx != nil {
+		runtime.WindowSetAlwaysOnTop(ctx, true)
+	}
+}
+
+func (a *App) runSlurp(windowPickOnly bool) (string, error) {
+	args := []string{
+		"slurp",
+		"-d",
+		"-F", "monospace",
+		"-w", "2",
+		"-b", "00000000",
+		"-s", "9775fa33",
+		"-c", "ededede6",
+	}
+
+	boxes := a.slurpWindowBoxes()
+	if boxes != "" {
+		args = append(args, "-B", "69db7c44")
+		if windowPickOnly {
+			args = append(args, "-r")
+		}
+	}
+
+	cmd := exec.Command(args[0], args[1:]...)
+	if boxes != "" {
+		cmd.Stdin = strings.NewReader(boxes + "\n")
+	}
+
+	a.slurpMu.Lock()
+	a.slurpCmd = cmd
+	a.slurpMu.Unlock()
+	defer func() {
+		a.slurpMu.Lock()
+		a.slurpCmd = nil
+		a.slurpMu.Unlock()
+	}()
+
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return "", fmt.Errorf("capture cancelled")
+		}
+		return "", err
+	}
+
+	geom := strings.TrimSpace(string(out))
+	if geom == "" {
+		return "", fmt.Errorf("no region selected")
+	}
+	return geom, nil
+}
+
+// CaptureRegion hides Cheese and uses slurp + grim so selection covers the full desktop.
+func (a *App) CaptureRegion() (CaptureResult, error) {
+	return a.captureWithSlurp(false)
+}
+
+// CaptureWindow hides Cheese and uses slurp window boxes only (click a window to capture it).
+func (a *App) CaptureWindow() (CaptureResult, error) {
+	return a.captureWithSlurp(true)
+}
+
+func (a *App) captureWithSlurp(windowPickOnly bool) (CaptureResult, error) {
+	if a.shouldDeferCapture() {
+		return CaptureResult{}, fmt.Errorf("capture cancelled for save folder selection")
+	}
+
+	a.prepareForSlurp()
+	defer a.restoreAfterSlurp()
+
+	geom, err := a.runSlurp(windowPickOnly)
+	if err != nil {
+		return CaptureResult{}, err
+	}
+
+	x, y, w, h, err := parseSlurpGeometry(geom)
+	if err != nil {
+		return CaptureResult{}, err
+	}
+
+	return a.CaptureRegionAt(x, y, w, h)
 }
 
 func (a *App) CaptureRegionAt(x int, y int, width int, height int) (CaptureResult, error) {

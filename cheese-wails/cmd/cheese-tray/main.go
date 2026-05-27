@@ -41,6 +41,7 @@ func main() {
 
 		open := systray.AddMenuItem("Open Cheese", "Show the capture window")
 		capture := systray.AddMenuItem("Capture region", "Start region capture")
+		captureWindow := systray.AddMenuItem("Capture window", "Click a window to capture it")
 		chooseSaveDir := systray.AddMenuItem("Set save folder", "Choose where screenshots are saved")
 		openSaveDir := systray.AddMenuItem("Open save folder", "Open the screenshot folder")
 		openLastImage := systray.AddMenuItem("Open last image", "Open the most recently saved image")
@@ -50,6 +51,7 @@ func main() {
 
 		go runOnClick(open, *appPath, "--show")
 		go runOnClick(capture, *appPath, "--capture")
+		go runOnClick(captureWindow, *appPath, "--capture-window")
 		go runOnClick(chooseSaveDir, *appPath, "--choose-save-dir")
 		go runOnClick(openSaveDir, *appPath, "--open-save-dir")
 		go runOnClick(openLastImage, *appPath, "--open-last-image")

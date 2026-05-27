@@ -28,10 +28,6 @@ body {
   color: #ededed;
 }
 
-body.capturing {
-  background: transparent;
-}
-
 button {
   font: inherit;
 }
@@ -57,35 +53,8 @@ button {
   overflow: hidden;
 }
 
-body.capturing .editor {
-  background: transparent;
-}
-
-.editor.capturing .bar {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.editor.capturing .stage {
-  visibility: hidden;
-  pointer-events: none;
-}
-
 .capture-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 2500;
-  display: none;
-  pointer-events: auto;
-  background: transparent;
-}
-
-.editor.capturing .capture-overlay {
-  display: block;
-}
-
-.capture-overlay.hidden {
-  display: none;
+  display: none !important;
 }
 
 .capture-overlay canvas {

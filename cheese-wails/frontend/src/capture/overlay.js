@@ -1,4 +1,4 @@
-import { GetWindowGeometryAtPoint } from '../../wailsjs/go/main/App';
+import { GetWindowGeometryAtPoint, PrepareCaptureOverlay, FinishCaptureOverlay } from '../../wailsjs/go/main/App';
 import {
   clamp,
   capturePoint,
@@ -144,8 +144,6 @@ export function createCaptureOverlay({ dom, state, actions }) {
     const height = Math.max(1, Math.round(window.innerHeight));
     const ctx = captureCtx;
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.38)';
-    ctx.fillRect(0, 0, width, height);
 
     ctx.save();
     drawRuler(width, true);
@@ -153,8 +151,8 @@ export function createCaptureOverlay({ dom, state, actions }) {
     ctx.restore();
 
     if (capture.windowPreview) {
-      const x = capture.windowPreview.x;
-      const y = capture.windowPreview.y;
+      const x = capture.windowPreview.x - capture.screenOffset.x;
+      const y = capture.windowPreview.y - capture.screenOffset.y;
       const w = capture.windowPreview.w;
       const h = capture.windowPreview.h;
 
@@ -217,24 +215,19 @@ export function createCaptureOverlay({ dom, state, actions }) {
     captureCtx.clearRect(0, 0, dom.captureCanvas.width, dom.captureCanvas.height);
   }
 
-  function beginCaptureOverlay() {
+  async function beginCaptureOverlay() {
     resetCaptureOverlay();
     capture.selectionActive = true;
     dom.captureOverlay.classList.remove('hidden');
     setBodyCaptureState(true);
-    window.runtime.WindowSetBackgroundColour(0, 0, 0, 0);
-    window.runtime.WindowShow();
-    window.runtime.WindowSetAlwaysOnTop(true);
-    window.runtime.WindowFullscreen();
-    capture.screenOffset = {
-      x: Math.round(window.screenX || window.screenLeft || 0),
-      y: Math.round(window.screenY || window.screenTop || 0),
-    };
+    actions.setCapturing(true);
+    const origin = await PrepareCaptureOverlay();
+    capture.screenOffset = { x: origin.x, y: origin.y };
     resizeCaptureOverlay();
     requestAnimationFrame(resizeCaptureOverlay);
   }
 
-  function cancelCaptureOverlay(reason = 'capture cancelled') {
+  async function cancelCaptureOverlay(reason = 'capture cancelled') {
     if (!capture.selectionActive) return;
     const reject = capture.reject;
     capture.reject = null;
@@ -244,16 +237,14 @@ export function createCaptureOverlay({ dom, state, actions }) {
     capture.isCapturing = false;
     capture.cancelled = true;
     actions.setCapturing(false);
-    window.runtime.WindowSetBackgroundColour(0, 0, 0, 1);
-    window.runtime.WindowUnfullscreen();
+    await FinishCaptureOverlay();
     window.runtime.WindowHide();
     if (reject) reject(new Error(reason));
   }
 
   async function endCaptureOverlay() {
     resetCaptureOverlay();
-    window.runtime.WindowSetBackgroundColour(0, 0, 0, 1);
-    window.runtime.WindowUnfullscreen();
+    await FinishCaptureOverlay();
   }
 
   function finalizeCaptureSelection() {
@@ -324,10 +315,26 @@ export function createCaptureOverlay({ dom, state, actions }) {
     }
   });
 
+  async function runSelection() {
+    await beginCaptureOverlay();
+    try {
+      const geom = await new Promise((resolve, reject) => {
+        capture.resolve = resolve;
+        capture.reject = reject;
+      });
+      await endCaptureOverlay();
+      return geom;
+    } catch (err) {
+      await cancelCaptureOverlay(String(err?.message || err));
+      throw err;
+    }
+  }
+
   return {
     beginCaptureOverlay,
     cancelCaptureOverlay,
     endCaptureOverlay,
+    runSelection,
     resizeCaptureOverlay,
     resetWindowPickPreview,
     scheduleCaptureOverlayDraw,

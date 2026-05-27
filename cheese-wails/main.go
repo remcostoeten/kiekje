@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"os"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -11,6 +12,13 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+func init() {
+	// WebKitGTK DMABUF + translucent surfaces crash on several Linux/Wayland setups (Wails #2977).
+	if os.Getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == "" {
+		_ = os.Setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+	}
+}
 
 func main() {
 	app := NewApp()
@@ -23,6 +31,8 @@ func main() {
 		AlwaysOnTop: true,
 		Linux: &linuxoptions.Options{
 			WindowIsTranslucent: true,
+			// Required when Linux options are set; zero value enables GPU accel and can crash WebKitWebProcess.
+			WebviewGpuPolicy: linuxoptions.WebviewGpuPolicyNever,
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "cheese-wails",
@@ -30,7 +40,7 @@ func main() {
 				app.HandleSecondInstance(secondInstanceData.Args)
 			},
 		},
-		StartHidden:   false,
+		StartHidden:   true,
 		DisableResize: false,
 		MinWidth:      1180,
 		MinHeight:     760,

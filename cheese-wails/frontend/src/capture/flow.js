@@ -1,11 +1,12 @@
 import {
-  CaptureRegionAt,
+  CaptureRegion,
+  CaptureWindow,
   CopyImageToClipboard,
   FinishCapture,
   ShowCaptureSuccessToast,
 } from '../../wailsjs/go/main/App';
 
-export function createCaptureFlow({ dom, state, overlay, actions }) {
+export function createCaptureFlow({ dom, state, actions, settings }) {
   async function processCaptureResult(res, saveImageData) {
     if (!res?.data) throw new Error('No image');
 
@@ -39,44 +40,27 @@ export function createCaptureFlow({ dom, state, overlay, actions }) {
     state.captureMode = false;
   }
 
-  async function startCapture() {
+  async function startCapture({ windowOnly = false } = {}) {
     const capture = state.capture;
     if (capture.isCapturing) return;
     capture.cancelled = false;
     capture.isCapturing = true;
-    actions.setCapturing(true);
-    actions.setMenuOpen(false);
+    settings.setMenuOpen(false);
     dom.captureBtn.disabled = true;
+    window.runtime.WindowHide();
     try {
-      const selection = await new Promise((resolve, reject) => {
-        capture.resolve = resolve;
-        capture.reject = reject;
-        try {
-          overlay.beginCaptureOverlay();
-        } catch (err) {
-          capture.resolve = null;
-          capture.reject = null;
-          reject(err);
-        }
-      });
-      await overlay.endCaptureOverlay();
-      window.runtime.WindowHide();
-      const res = await CaptureRegionAt(selection.x, selection.y, selection.w, selection.h);
+      const res = windowOnly ? await CaptureWindow() : await CaptureRegion();
       await processCaptureResult(res, actions.saveImageData);
     } catch (err) {
       console.error(err);
       if (!capture.cancelled && !String(err).includes('cancelled')) {
-        try {
-          await overlay.endCaptureOverlay();
-        } catch {
-          // ignore restore failures
-        }
         window.runtime.WindowShow();
         window.runtime.WindowCenter();
+      } else {
+        window.runtime.WindowHide();
       }
     } finally {
       capture.isCapturing = false;
-      actions.setCapturing(false);
       dom.captureBtn.disabled = false;
       if (!capture.cancelled) await FinishCapture();
     }

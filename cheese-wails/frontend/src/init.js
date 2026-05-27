@@ -3,7 +3,6 @@ import { mountTemplate } from './dom/template.js';
 import { createAppState } from './state.js';
 import { initTooltip } from './ui/tooltip.js';
 import { initColors } from './ui/colors.js';
-import { createCaptureOverlay } from './capture/overlay.js';
 import { createCaptureFlow } from './capture/flow.js';
 import { createSettingsMenu } from './settings/menu.js';
 import { createSaveIO } from './io/save.js';
@@ -15,7 +14,6 @@ export function initApp() {
   const state = createAppState();
 
   const actions = {};
-  const overlay = createCaptureOverlay({ dom, state, actions });
   const settings = createSettingsMenu({ dom, state });
   const saveIO = createSaveIO({ dom, state, settings });
 
@@ -47,14 +45,13 @@ export function initApp() {
     saveImageData: saveIO.saveImageData,
   });
 
-  const captureFlow = createCaptureFlow({ dom, state, overlay, actions });
+  const captureFlow = createCaptureFlow({ dom, state, actions, settings });
 
   dom.captureBtn.onclick = () => captureFlow.startCapture();
 
   initKeyboard({
     state,
     settings,
-    overlay,
     captureFlow,
     editor,
     colors,
@@ -63,9 +60,10 @@ export function initApp() {
   initTooltip(dom);
 
   EventsOn('cheese:capture', () => captureFlow.startCapture());
+  EventsOn('cheese:capture-window', () => captureFlow.startCapture({ windowOnly: true }));
   EventsOn('cheese:choose-save-dir', () => settings.setMenuOpen(false));
   EventsOn('cheese:cancel-capture', () => {
-    overlay.cancelCaptureOverlay('capture cancelled');
+    state.capture.cancelled = true;
   });
 
   settings.loadState().then(() => {
@@ -80,6 +78,5 @@ export function initApp() {
 
   window.addEventListener('resize', () => {
     if (!dom.menu.classList.contains('hidden')) settings.positionMenu();
-    if (state.capture.selectionActive) overlay.resizeCaptureOverlay();
   });
 }

@@ -40,24 +40,6 @@ export namespace main {
 	        this.data = source["data"];
 	    }
 	}
-	export class WindowGeometry {
-	    x: number;
-	    y: number;
-	    w: number;
-	    h: number;
-
-	    static createFrom(source: any = {}) {
-	        return new WindowGeometry(source);
-	    }
-
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.x = source["x"];
-	        this.y = source["y"];
-	        this.w = source["w"];
-	        this.h = source["h"];
-	    }
-	}
 	export class ConfigFile {
 	    path: string;
 	    name: string;
@@ -147,5 +129,25 @@ export namespace main {
 		}
 	}
 	
+	
+	export class WindowGeometry {
+	    x: number;
+	    y: number;
+	    w: number;
+	    h: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WindowGeometry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.w = source["w"];
+	        this.h = source["h"];
+	    }
+	}
 
 }
+

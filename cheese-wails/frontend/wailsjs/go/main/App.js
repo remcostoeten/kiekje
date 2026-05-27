@@ -6,8 +6,16 @@ export function CancelCapture() {
   return window['go']['main']['App']['CancelCapture']();
 }
 
+export function CaptureRegion() {
+  return window['go']['main']['App']['CaptureRegion']();
+}
+
 export function CaptureRegionAt(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['CaptureRegionAt'](arg1, arg2, arg3, arg4);
+}
+
+export function CaptureWindow() {
+  return window['go']['main']['App']['CaptureWindow']();
 }
 
 export function ChooseSaveDir() {
@@ -18,20 +26,20 @@ export function CopyImageToClipboard(arg1) {
   return window['go']['main']['App']['CopyImageToClipboard'](arg1);
 }
 
-export function GetWindowGeometryAtPoint(arg1, arg2) {
-  return window['go']['main']['App']['GetWindowGeometryAtPoint'](arg1, arg2);
-}
-
-export function GetWindowGeometryAtCursor() {
-  return window['go']['main']['App']['GetWindowGeometryAtCursor']();
-}
-
 export function FinishCapture() {
   return window['go']['main']['App']['FinishCapture']();
 }
 
 export function GetHyprlandSnapshot() {
   return window['go']['main']['App']['GetHyprlandSnapshot']();
+}
+
+export function GetWindowGeometryAtCursor() {
+  return window['go']['main']['App']['GetWindowGeometryAtCursor']();
+}
+
+export function GetWindowGeometryAtPoint(arg1, arg2) {
+  return window['go']['main']['App']['GetWindowGeometryAtPoint'](arg1, arg2);
 }
 
 export function HandleSecondInstance(arg1) {
@@ -68,6 +76,10 @@ export function QuitApp() {
 
 export function RequestCapture() {
   return window['go']['main']['App']['RequestCapture']();
+}
+
+export function RequestCaptureWindow() {
+  return window['go']['main']['App']['RequestCaptureWindow']();
 }
 
 export function ResetBinds() {

@@ -4,19 +4,23 @@ import {main} from '../models';
 
 export function CancelCapture():Promise<void>;
 
+export function CaptureRegion():Promise<main.CaptureResult>;
+
 export function CaptureRegionAt(arg1:number,arg2:number,arg3:number,arg4:number):Promise<main.CaptureResult>;
+
+export function CaptureWindow():Promise<main.CaptureResult>;
 
 export function ChooseSaveDir():Promise<main.AppState>;
 
 export function CopyImageToClipboard(arg1:string):Promise<void>;
 
-export function GetWindowGeometryAtPoint(arg1:number,arg2:number):Promise<main.WindowGeometry>;
-
-export function GetWindowGeometryAtCursor():Promise<main.WindowGeometry>;
-
 export function FinishCapture():Promise<void>;
 
 export function GetHyprlandSnapshot():Promise<main.HyprlandSnapshot>;
+
+export function GetWindowGeometryAtCursor():Promise<main.WindowGeometry>;
+
+export function GetWindowGeometryAtPoint(arg1:number,arg2:number):Promise<main.WindowGeometry>;
 
 export function HandleSecondInstance(arg1:Array<string>):Promise<void>;
 
@@ -35,6 +39,8 @@ export function OpenSaveDir():Promise<void>;
 export function QuitApp():Promise<void>;
 
 export function RequestCapture():Promise<void>;
+
+export function RequestCaptureWindow():Promise<void>;
 
 export function ResetBinds():Promise<main.AppState>;
 

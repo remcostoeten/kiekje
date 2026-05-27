@@ -4,7 +4,6 @@ import { matchBind } from '../settings/binds.js';
 export function initKeyboard({
   state,
   settings,
-  overlay,
   captureFlow,
   editor,
   colors,
@@ -16,10 +15,11 @@ export function initKeyboard({
   }
 
   window.addEventListener('keydown', (evt) => {
-    if (state.capture.selectionActive) {
+    if (state.capture.isCapturing) {
       if (evt.key === 'Escape') {
         evt.preventDefault();
-        overlay.cancelCaptureOverlay('capture cancelled');
+        state.capture.cancelled = true;
+        CancelCapture();
       }
       return;
     }

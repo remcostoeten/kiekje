@@ -7,9 +7,7 @@ export const EDITOR_TEMPLATE = `
     <div class="capture-overlay hidden" id="capture-overlay" aria-hidden="true">
       <canvas id="capture-canvas"></canvas>
       <div class="capture-help">
-        <span>Drag to choose a region</span>
-        <kbd>Ctrl</kbd>
-        <span>click window</span>
+        <span>Drag a region</span>
         <kbd>Esc</kbd>
         <span>cancel</span>
       </div>
