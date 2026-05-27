@@ -1,6 +1,6 @@
 import { canvasPointToEditor } from '../utils/geometry.js';
 
-export function createInlineTextController({ dom, state, redraw }) {
+export function createInlineTextController({ dom, state, redraw, recordBeforeChange }) {
   function commitInlineText() {
     if (!state.editor.inlineTextInput) return;
     const input = state.editor.inlineTextInput;
@@ -9,6 +9,7 @@ export function createInlineTextController({ dom, state, redraw }) {
     input.remove();
     state.editor.inlineTextInput = null;
     if (text) {
+      recordBeforeChange();
       state.annotations.push({
         kind: 'text',
         x: p.x,
@@ -16,6 +17,7 @@ export function createInlineTextController({ dom, state, redraw }) {
         w: 0,
         h: 0,
         color: state.editor.activeColor,
+        strokeWidth: state.editor.strokeWidth,
         text,
       });
       redraw();

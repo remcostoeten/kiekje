@@ -35,7 +35,13 @@ export function createAppState() {
       hoveredIndex: -1,
       dragging: null,
       activeColor: '#ededed',
+      strokeWidth: 3,
       inlineTextInput: null,
+      imageLayer: null,
+      history: {
+        past: [],
+        future: [],
+      },
     },
   };
 }

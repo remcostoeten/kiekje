@@ -34,15 +34,25 @@ export const EDITOR_TEMPLATE = `
       <button class="btn" data-tool="text" type="button" data-tip="Text" data-kbd="T">
         <i class="ti ti-letter-t" aria-hidden="true"></i>
       </button>
+      <button class="btn" data-tool="blur" type="button" data-tip="Blur redact" data-kbd="B">
+        <i class="ti ti-blur" aria-hidden="true"></i>
+      </button>
       <div class="color-wrap" id="color-wrap">
         <button class="btn" id="color-trigger" type="button" data-tip="Stroke color">
           <span class="color-trigger-swatch" id="color-swatch"></span>
         </button>
         <div class="color-popper hidden" id="color-popper"></div>
       </div>
+      <label class="stroke-wrap" id="stroke-wrap" data-tip="Stroke width">
+        <i class="ti ti-line" aria-hidden="true"></i>
+        <input type="range" id="stroke-width" min="1" max="12" value="3" aria-label="Stroke width" />
+      </label>
       <div class="sep"></div>
       <button class="btn" id="undo" type="button" data-tip="Undo" data-kbd="Ctrl Z">
         <i class="ti ti-arrow-back-up" aria-hidden="true"></i>
+      </button>
+      <button class="btn" id="redo" type="button" data-tip="Redo" data-kbd="Ctrl Shift Z">
+        <i class="ti ti-arrow-forward-up" aria-hidden="true"></i>
       </button>
       <button class="btn done" id="save" type="button" data-tip="Save" data-kbd="Ctrl S">
         <i class="ti ti-check" aria-hidden="true"></i>
@@ -132,6 +142,7 @@ export function mountTemplate(root) {
     colorSwatch: document.getElementById('color-swatch'),
     colorWrap: document.getElementById('color-wrap'),
     colorTrigger: document.getElementById('color-trigger'),
+    strokeWidth: document.getElementById('stroke-width'),
     toggles: {
       copy: document.getElementById('tog-copy'),
       clipboardOnly: document.getElementById('tog-clipboard-only'),

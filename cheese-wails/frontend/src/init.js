@@ -23,6 +23,8 @@ export function initApp() {
     dom,
     state,
     onColorApplied: (color) => {
+      if (state.editor.selectedIndices.length === 0) return;
+      editor.recordBeforeChange();
       state.editor.selectedIndices.forEach((i) => {
         if (i >= 0 && i < state.annotations.length) state.annotations[i].color = color;
       });

@@ -49,6 +49,12 @@ export function initKeyboard({
       return;
     }
 
+    if ((evt.metaKey || evt.ctrlKey) && evt.shiftKey && evt.key.toLowerCase() === 'z') {
+      evt.preventDefault();
+      document.getElementById('redo').click();
+      return;
+    }
+
     if ((evt.metaKey || evt.ctrlKey) && evt.key.toLowerCase() === 'z') {
       evt.preventDefault();
       document.getElementById('undo').click();
@@ -64,15 +70,7 @@ export function initKeyboard({
     if ((evt.metaKey || evt.ctrlKey) && evt.key.toLowerCase() === 'v' && !evt.target.closest('input,textarea')) {
       if (window.copyBuffer && window.copyBuffer.length > 0) {
         evt.preventDefault();
-        window.copyBuffer.forEach((a) => {
-          const copy = JSON.parse(JSON.stringify(a));
-          const off = 15;
-          if (copy.kind === 'pen' && copy.points) copy.points.forEach((p) => { p.x += off; p.y += off; });
-          else { copy.x += off; copy.y += off; }
-          state.annotations.push(copy);
-        });
-        state.editor.selectedIndices = [];
-        editor.redraw();
+        editor.pasteOffset(window.copyBuffer);
       }
       return;
     }
@@ -83,9 +81,7 @@ export function initKeyboard({
       && !evt.target.closest('input,textarea')
       && state.editor.selectedIndices.length > 0) {
       evt.preventDefault();
-      state.editor.selectedIndices.sort((a, b) => b - a).forEach((i) => state.annotations.splice(i, 1));
-      state.editor.selectedIndices = [];
-      editor.redraw();
+      editor.deleteSelected();
       return;
     }
 
@@ -96,6 +92,7 @@ export function initKeyboard({
     if (evt.key === 'a') { editor.setTool('arrow'); return; }
     if (evt.key === 'p') { editor.setTool('pen'); return; }
     if (evt.key === 't') { editor.setTool('text'); return; }
+    if (evt.key === 'b') { editor.setTool('blur'); return; }
     if (evt.key === 'c' && !evt.ctrlKey && !evt.metaKey) { captureFlow.startCapture(); return; }
 
     if (evt.key.toLowerCase() === 'q') {

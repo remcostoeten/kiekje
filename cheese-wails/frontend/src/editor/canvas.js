@@ -3,14 +3,24 @@ import { hasImage } from '../state.js';
 import { pointerPos } from '../utils/geometry.js';
 import { hitTest, moveAnnotation, createAnnotationRenderer } from './annotations.js';
 import { createInlineTextController } from './inline-text.js';
+import { createEditorHistory } from './history.js';
+import { createImageLayer } from './image-layer.js';
 
 export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
   const ctx = dom.canvas.getContext('2d');
+  const imageLayer = createImageLayer(state);
   const { drawAnnotation } = createAnnotationRenderer(ctx, state);
+
+  const history = createEditorHistory({
+    state,
+    getImageData: () => imageLayer.getImageData(),
+    putImageData: (data) => imageLayer.putImageData(data),
+    redraw: () => redraw(),
+  });
 
   function redraw() {
     ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
-    if (hasImage(state)) ctx.drawImage(state.image, 0, 0);
+    if (hasImage(state)) imageLayer.drawTo(ctx);
     state.annotations.forEach(drawAnnotation);
     if (state.current) drawAnnotation(state.current, true);
   }
@@ -19,9 +29,11 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
     dom.canvas.classList.toggle('idle', idle);
     dom.editor.classList.toggle('editing', !idle);
     state.captureMode = idle;
-    for (const id of ['undo', 'save', 'copy']) {
-      document.getElementById(id).disabled = idle;
+    for (const id of ['undo', 'redo', 'save', 'copy']) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = idle;
     }
+    if (idle) history.resetHistory();
   }
 
   function setCapturing(on) {
@@ -31,11 +43,18 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
   function resizeCanvas() {
     dom.canvas.width = state.image.naturalWidth || 1;
     dom.canvas.height = state.image.naturalHeight || 1;
+    if (hasImage(state)) imageLayer.syncFromImage(state.image);
     setIdle(!hasImage(state));
+    history.resetHistory();
     redraw();
   }
 
-  const inlineText = createInlineTextController({ dom, state, redraw });
+  const inlineText = createInlineTextController({
+    dom,
+    state,
+    redraw,
+    recordBeforeChange: history.recordBeforeChange,
+  });
 
   function setTool(name) {
     inlineText.commitInlineText();
@@ -45,13 +64,57 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
     if (btn) btn.classList.add('on');
     state.editor.selectedIndices = [];
     state.editor.hoveredIndex = -1;
-    dom.canvas.style.cursor = name === 'select' ? 'default' : name === 'text' ? 'text' : 'crosshair';
+    dom.canvas.style.cursor = name === 'select'
+      ? 'default'
+      : name === 'text'
+        ? 'text'
+        : name === 'blur'
+          ? 'crosshair'
+          : 'crosshair';
+  }
+
+  function annotationDefaults() {
+    return {
+      color: state.editor.activeColor,
+      strokeWidth: state.editor.strokeWidth,
+    };
+  }
+
+  function finishBlurSelection() {
+    if (!state.current || state.tool !== 'blur') return;
+    const { x, y, w, h } = state.current;
+    state.current = null;
+    state.dragStart = null;
+    if (Math.abs(w) < 4 || Math.abs(h) < 4) {
+      redraw();
+      return;
+    }
+    history.recordBeforeChange();
+    if (imageLayer.applyBlurRect(x, y, w, h)) redraw();
+  }
+
+  function finishAnnotation() {
+    if (!state.current) return;
+    if (state.tool === 'blur') {
+      finishBlurSelection();
+      return;
+    }
+    history.recordBeforeChange();
+    state.annotations.push(state.current);
+    state.current = null;
+    state.dragStart = null;
+    redraw();
   }
 
   document.querySelectorAll('[data-tool]').forEach((btn) => {
     btn.addEventListener('click', () => {
       setTool(btn.dataset.tool);
     });
+  });
+
+  dom.strokeWidth?.addEventListener('input', (evt) => {
+    state.editor.strokeWidth = Number(evt.target.value) || 3;
+    redraw();
   });
 
   dom.canvas.addEventListener('pointerdown', (evt) => {
@@ -76,6 +139,7 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
         state.editor.selectedIndices = hit >= 0 ? [hit] : [];
       }
       if (hit >= 0 && state.editor.selectedIndices.includes(hit)) {
+        history.recordBeforeChange();
         state.editor.dragging = { last: p };
       }
       dom.canvas.setPointerCapture(evt.pointerId);
@@ -93,7 +157,16 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
     state.dragStart = p;
     if (state.tool === 'pen') {
       state.penPoints = [state.dragStart];
-      state.current = { kind: 'pen', color: state.editor.activeColor, points: state.penPoints };
+      state.current = { kind: 'pen', ...annotationDefaults(), points: state.penPoints };
+    } else if (state.tool === 'blur') {
+      state.current = {
+        kind: 'blur',
+        x: state.dragStart.x,
+        y: state.dragStart.y,
+        w: 0,
+        h: 0,
+        ...annotationDefaults(),
+      };
     } else {
       state.current = {
         kind: state.tool,
@@ -101,8 +174,8 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
         y: state.dragStart.y,
         w: 0,
         h: 0,
-        color: state.editor.activeColor,
         text: '',
+        ...annotationDefaults(),
       };
     }
     dom.canvas.setPointerCapture(evt.pointerId);
@@ -159,10 +232,7 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
       return;
     }
     if (!state.current) return;
-    state.annotations.push(state.current);
-    state.current = null;
-    state.dragStart = null;
-    redraw();
+    finishAnnotation();
   });
 
   dom.canvas.addEventListener('contextmenu', (evt) => {
@@ -183,10 +253,8 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
     redraw();
   });
 
-  document.getElementById('undo').onclick = () => {
-    state.annotations.pop();
-    redraw();
-  };
+  document.getElementById('undo').onclick = () => history.undo();
+  document.getElementById('redo').onclick = () => history.redo();
 
   document.getElementById('save').onclick = async () => {
     if (!hasImage(state)) return;
@@ -217,6 +285,8 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
     reader.readAsDataURL(blob);
   }
 
+  history.updateButtons();
+
   return {
     redraw,
     setIdle,
@@ -224,5 +294,25 @@ export function createEditorCanvas({ dom, state, colors, settings, saveIO }) {
     resizeCanvas,
     setTool,
     copyToClipboardAndQuit,
+    recordBeforeChange: history.recordBeforeChange,
+    deleteSelected: () => {
+      if (state.editor.selectedIndices.length === 0) return;
+      history.recordBeforeChange();
+      state.editor.selectedIndices.sort((a, b) => b - a).forEach((i) => state.annotations.splice(i, 1));
+      state.editor.selectedIndices = [];
+      redraw();
+    },
+    pasteOffset: (items) => {
+      history.recordBeforeChange();
+      items.forEach((a) => {
+        const copy = JSON.parse(JSON.stringify(a));
+        const off = 15;
+        if (copy.kind === 'pen' && copy.points) copy.points.forEach((p) => { p.x += off; p.y += off; });
+        else { copy.x += off; copy.y += off; }
+        state.annotations.push(copy);
+      });
+      state.editor.selectedIndices = [];
+      redraw();
+    },
   };
 }

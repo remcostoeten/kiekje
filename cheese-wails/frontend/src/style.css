@@ -607,6 +607,25 @@ button {
   align-items: center;
 }
 
+.stroke-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: #888;
+  min-width: 92px;
+}
+
+.stroke-wrap i {
+  font-size: 14px;
+}
+
+.stroke-wrap input[type='range'] {
+  width: 56px;
+  accent-color: #9775fa;
+  cursor: pointer;
+}
+
 .color-trigger-swatch {
   display: block;
   width: 12px;

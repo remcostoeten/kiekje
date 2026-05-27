@@ -118,7 +118,7 @@ export function createAnnotationRenderer(ctx, state) {
     const idx = state.annotations.indexOf(a);
     const isSelected = state.editor.selectedIndices.includes(idx) && !preview;
     const isHovered = idx === state.editor.hoveredIndex && !preview && state.tool === 'select';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = a.strokeWidth || state.editor.strokeWidth || 2;
     const color = a.color || '#ededed';
     ctx.strokeStyle = color;
     ctx.fillStyle = hexToRgba(color, preview ? 0.05 : 0.08);
@@ -142,9 +142,22 @@ export function createAnnotationRenderer(ctx, state) {
       a.points.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
       ctx.stroke();
     } else if (a.kind === 'text') {
-      ctx.font = '18px Inter, system-ui, sans-serif';
+      ctx.font = `${Math.round((a.strokeWidth || state.editor.strokeWidth || 2) * 6)}px Inter, system-ui, sans-serif`;
       ctx.fillStyle = a.color || '#ededed';
       ctx.fillText(a.text || 'Text', a.x, a.y + 18);
+    } else if (a.kind === 'blur') {
+      const x = Math.min(a.x, a.x + a.w);
+      const y = Math.min(a.y, a.y + a.h);
+      const w = Math.abs(a.w);
+      const h = Math.abs(a.h);
+      ctx.save();
+      ctx.strokeStyle = preview ? 'rgba(151, 117, 250, 0.95)' : 'rgba(151, 117, 250, 0.8)';
+      ctx.fillStyle = 'rgba(151, 117, 250, 0.12)';
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x + 0.5, y + 0.5, Math.max(0, w - 1), Math.max(0, h - 1));
+      ctx.setLineDash([]);
+      ctx.restore();
     }
 
     if (isHovered || isSelected) {
