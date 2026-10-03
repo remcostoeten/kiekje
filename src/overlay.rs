@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gtk::prelude::*;
-use gtk::{cairo, gdk, glib};
+use gtk::{cairo, gdk, glib, graphene};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::capture::Frame;
@@ -92,6 +92,47 @@ pub fn show(
 pub fn uses_layer_shell() -> bool {
     gdk::Display::default().is_some_and(|display| display.backend().is_wayland())
         && gtk4_layer_shell::is_supported()
+}
+
+/// Loads the renderer, GL driver and fonts the overlay needs before the first capture.
+///
+/// Realizes a window that is never mapped and renders one small overlay-like frame offscreen,
+/// so the first overlay after startup opens as fast as later ones.
+///
+/// # Examples
+///
+/// ```ignore
+/// glib::idle_add_local_once(overlay::warm_up);
+/// ```
+pub fn warm_up() {
+    let started = glib::monotonic_time();
+    let window = gtk::Window::new();
+    WidgetExt::realize(&window);
+    if let Some(renderer) = window.renderer() {
+        let bounds = graphene::Rect::new(0.0, 0.0, 64.0, 64.0);
+        let texture = gdk::MemoryTexture::new(
+            2,
+            2,
+            gdk::MemoryFormat::B8g8r8a8Premultiplied,
+            &glib::Bytes::from_owned(vec![255u8; 16]),
+            8,
+        );
+        let snapshot = gtk::Snapshot::new();
+        snapshot.append_texture(&texture, &bounds);
+        let context = snapshot.append_cairo(&bounds);
+        context.set_source_rgba(0.0, 0.0, 0.0, DIM);
+        report(context.paint());
+        draw_size_label(&context, "1 × 1", 0.0, 32.0, 64, 64);
+        drop(context);
+        if let Some(node) = snapshot.to_node() {
+            renderer.render_texture(&node, Some(&bounds));
+        }
+    }
+    window.destroy();
+    println!(
+        "kiekje: overlay warmed up in {:.1} ms",
+        (glib::monotonic_time() - started) as f64 / 1000.0
+    );
 }
 
 fn build_surface(

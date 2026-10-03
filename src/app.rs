@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -12,12 +12,16 @@ use crate::capture::{BackendChoice, Capture, CaptureError, CaptureMode, LogicalR
 use crate::clipboard::Clipboard;
 use crate::output::{self, Image};
 use crate::overlay;
+use crate::shortcuts::{
+    PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland_bind,
+};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
 
 struct Session {
     busy: Cell<bool>,
     clipboard: Option<Clipboard>,
+    shortcuts: RefCell<Option<PortalGuard>>,
 }
 
 pub enum Command {
@@ -92,17 +96,20 @@ pub fn run(command: Command) -> glib::ExitCode {
     let session = Rc::new(Session {
         busy: Cell::new(false),
         clipboard,
+        shortcuts: RefCell::new(None),
     });
     install_actions(&app, &session);
+    register_shortcuts(&app, &session);
     let hold = app.hold();
     let initial = match command {
         Command::Capture(request) => Some(request),
         Command::Daemon | Command::Quit => None,
     };
     let initial = Cell::new(initial);
-    app.connect_activate(move |app| {
-        if let Some(request) = initial.take() {
-            start_capture(app, request, &session);
+    app.connect_activate(move |app| match initial.take() {
+        Some(request) => start_capture(app, request, &session),
+        None => {
+            glib::idle_add_local_once(overlay::warm_up);
         }
     });
 
@@ -130,6 +137,65 @@ fn exit_without_running(app: &gtk::Application, code: glib::ExitCode) -> glib::E
     // Only g_application_run releases the D-Bus registration; dropping a registered app makes GLib warn.
     app.connect_handle_local_options(move |_, _| ControlFlow::Break(code));
     app.run_with_args(&["kiekje-next"])
+}
+
+fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
+    let Some(connection) = app.dbus_connection() else {
+        eprintln!("kiekje: no session bus, global shortcuts are off");
+        return;
+    };
+    let registrar = PortalShortcuts::new(connection);
+    let weak_app = app.downgrade();
+    let weak_session = Rc::downgrade(session);
+    let on_activated = move |action: ShortcutAction| {
+        let (Some(app), Some(session)) = (weak_app.upgrade(), weak_session.upgrade()) else {
+            return;
+        };
+        println!("kiekje: shortcut {}", action.id());
+        let mode = match action {
+            ShortcutAction::CaptureRegion => CaptureMode::Region,
+            ShortcutAction::CaptureFullscreen => CaptureMode::Fullscreen,
+        };
+        let request = Request {
+            mode,
+            backend: BackendChoice::Auto,
+            save: true,
+            trigger_us: glib::monotonic_time(),
+        };
+        start_capture(&app, request, &session);
+    };
+    let session = Rc::downgrade(session);
+    glib::spawn_future_local(async move {
+        match registrar.bind(on_activated).await {
+            Ok((guard, bindings)) => {
+                for binding in bindings {
+                    match binding.trigger {
+                        Some(trigger) => println!(
+                            "kiekje: shortcut {} bound to {trigger} through {}",
+                            binding.action.id(),
+                            registrar.name()
+                        ),
+                        None if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() => {
+                            println!(
+                                "kiekje: shortcut {} registered without a key; add to hyprland.conf: {}",
+                                binding.action.id(),
+                                hyprland_bind(binding.action, APP_ID)
+                            )
+                        }
+                        None => println!(
+                            "kiekje: shortcut {} registered through {} without a trigger; assign one in the desktop settings",
+                            binding.action.id(),
+                            registrar.name()
+                        ),
+                    }
+                }
+                if let Some(session) = session.upgrade() {
+                    session.shortcuts.replace(Some(guard));
+                }
+            }
+            Err(error) => eprintln!("kiekje: global shortcuts are off: {error}"),
+        }
+    });
 }
 
 fn install_actions(app: &gtk::Application, session: &Rc<Session>) {

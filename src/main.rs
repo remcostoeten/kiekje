@@ -7,6 +7,7 @@ mod doctor;
 mod help;
 mod output;
 mod overlay;
+mod shortcuts;
 
 use gtk::glib;
 
