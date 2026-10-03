@@ -1,0 +1,2 @@
+pixels_fullscreen=pass 3840x2160, 256/256 samples
+clipboard_fullscreen=pass 167463 bytes, same as the saved file

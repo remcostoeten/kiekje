@@ -1,0 +1,91 @@
+kiekje: using the GTK clipboard: the compositor does not offer ext_data_control_manager_v1
+=== fullscreen auto 1 ===
+kiekje: timing trigger -> instance: 2.6 ms
+kiekje: timing instance -> frames: 449.8 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 2 ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 278.1 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 3 ===
+kiekje: timing trigger -> instance: 2.7 ms
+kiekje: timing instance -> frames: 278.7 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 4 ===
+kiekje: timing trigger -> instance: 4.1 ms
+kiekje: timing instance -> frames: 298.0 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 5 ===
+kiekje: timing trigger -> instance: 2.5 ms
+kiekje: timing instance -> frames: 273.9 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 1 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 276.6 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 2 ===
+kiekje: timing trigger -> instance: 1.8 ms
+kiekje: timing instance -> frames: 240.1 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 3 ===
+kiekje: timing trigger -> instance: 1.9 ms
+kiekje: timing instance -> frames: 246.0 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 4 ===
+kiekje: timing trigger -> instance: 1.9 ms
+kiekje: timing instance -> frames: 256.0 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 5 ===
+kiekje: timing trigger -> instance: 1.8 ms
+kiekje: timing instance -> frames: 256.5 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== pixels fullscreen ===
+kiekje: timing trigger -> instance: 2.7 ms
+kiekje: timing instance -> frames: 164.5 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-121842.png
+=== region escape ===
+kiekje: timing trigger -> instance: 2.5 ms
+kiekje: timing instance -> frames: 45.8 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+it appears your Wayland compositor does not support the Session Lock protocol
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA-EGL: warning: MESA-LOADER: failed to retrieve device information
+MESA-EGL: warning: failed to get driver name for fd -1
+Authorization required, but no authorization protocol specified
+
+MESA: error: ZINK: failed to choose pdev
+MESA-EGL: warning: egl: failed to create dri2 screen
+kiekje: timing trigger -> overlay painted: 443.7 ms
+kiekje: selection canceled, nothing saved
+=== region select ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 80.5 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: timing trigger -> overlay painted: 106.9 ms
+kiekje: copied 641x401 to the GTK clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-region-20261003-121846.png

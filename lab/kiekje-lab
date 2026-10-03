@@ -31,27 +31,114 @@ declare -A PORTALS=(
     [other]=xdg-desktop-portal-gtk
 )
 
-USAGE="usage:
-  kiekje-lab env                     print what this machine and session are
-  kiekje-lab run [--no-interactive]  build, test and log this session to lab-results/
-  kiekje-lab results                 summarize every run of every machine
-  kiekje-lab vms                     list libvirt VMs with state, address, distro and snapshot
-  kiekje-lab start <vm>              boot a VM and open its screen
-  kiekje-lab run-vm <vm> [args]      run the tests inside a VM over SSH
-  kiekje-lab stop <vm>               shut a VM down
+HELP_GROUPS=(
+    "Test this session"
+    "env||Print what this machine and session are"
+    "run|[--no-interactive|--driven]|Build, test and log this session to lab-results/"
+    "results||Summarize every run of every machine"
+    "Drive a VM"
+    "vms||List VMs with state, address, distro and snapshot"
+    "start|<vm>|Boot a VM and open its screen"
+    "run-vm|<vm> [--auto]|Run the tests in a VM; --auto drives the overlay checks"
+    "all|[vm...]|Reset, sync and --auto test every ready VM, then summarize"
+    "ssh|<vm> [cmd]|Open a shell or run a command in the VM"
+    "stop|<vm>|Shut a VM down"
+    "Create a VM"
+    "doctor-host||Check that this host can run lab VMs"
+    "up|<vm> [iso]|Create, wait for the install, then bootstrap to snapshot"
+    "new|<vm> <iso|url>|Create a VM from an ISO or download URL"
+    "iso|<vm> <iso|url|--eject>|Swap or eject the install medium"
+    "Setup steps, run in order by up"
+    "bootstrap|<vm>|Enable SSH, the guest agent and your key"
+    "provision|<vm>|Install build dependencies for the distro and desktop"
+    "sync|<vm> [--virtiofs]|Copy the repo in, or share it read-only"
+    "install|<vm>|Build, install to ~/.local/bin and run doctor"
+    "snapshot|<vm> [label]|Take a snapshot (default: clean)"
+    "Housekeeping"
+    "reset|<vm> [label]|Revert to a snapshot (default: clean)"
+    "rm|<vm>|Delete a VM and its disk"
+    "help||Show this overview (-h, --help)"
+)
 
-  kiekje-lab doctor-host             check that this host can run lab VMs
-  kiekje-lab up <vm> [iso]           new, wait for the OS install, then bootstrap through snapshot
-  kiekje-lab new <vm> <iso|url> [--ram 6G] [--cpus 4] [--disk 40G] [--no-3d]
-  kiekje-lab iso <vm> <iso|url|--eject>
-  kiekje-lab bootstrap <vm>          enable SSH, the guest agent and your key in a fresh install
-  kiekje-lab provision <vm>          install build dependencies for the guest distro and desktop
-  kiekje-lab sync <vm> [--virtiofs]  copy the repo into the VM, or share it read-only
-  kiekje-lab install <vm>            build, install to ~/.local/bin and run doctor in the VM
-  kiekje-lab snapshot <vm> [label]   take a snapshot, default label clean
-  kiekje-lab reset <vm> [label]      revert to a snapshot, default label clean
-  kiekje-lab ssh <vm> [cmd]          open a shell or run a command in the VM
-  kiekje-lab rm <vm>                 delete a VM and its disk"
+HELP_FLAGS=(
+    "--ram|<size>|Memory for new and up (default: 6G)"
+    "--cpus|<n>|Virtual CPUs for new and up (default: 4)"
+    "--disk|<size>|Disk size for new and up (default: 40G)"
+    "--no-3d||Turn off 3D acceleration for new and up"
+)
+
+HELP_ENV=(
+    "KIEKJE_LAB_CAPTURES|Captures per backend in a run (default: 5)"
+    "KIEKJE_LAB_RESULTS|Where runs are logged (default: lab-results/)"
+    "KIEKJE_LAB_ISOS|Download folder for ISOs (default: ~/vm/isos)"
+    "KIEKJE_LAB_KEY|SSH key for guests (default: ~/.ssh/id_ed25519)"
+    "KIEKJE_LAB_USER|Guest user name (default: kiek)"
+    "KIEKJE_LAB_PORT|Port that serves the bootstrap script (default: 8649)"
+)
+
+HELP_EXAMPLES=(
+    "Build a Fedora GNOME VM from scratch|up fedora https://example.org/Fedora.iso"
+    "Test the current tree in it and pull the logs back|run-vm fedora --auto"
+    "Test every ready VM without touching the keyboard|all"
+    "Start over from the clean snapshot|reset fedora"
+)
+
+function paint {
+    if [[ "$HELP_COLOR" == 1 && -n "$2" ]]; then
+        printf '\e[%sm%s\e[0m' "$1" "$2"
+    else
+        printf '%s' "$2"
+    fi
+}
+
+function help_row {
+    local name="$1" argument="$2" description="$3" code="$4"
+    local label=$((${#name} + 1 + ${#argument}))
+    printf '  %s %s%*s%s\n' "$(paint "$code" "$name")" "$(paint 2 "$argument")" $((30 - label)) "" "$(help_note "$description")"
+}
+
+function print_help {
+    local entry name argument description
+    HELP_COLOR=0
+    [[ -t 1 && -z "${NO_COLOR:-}" ]] && HELP_COLOR=1
+    printf '\n  %s  %s\n' "$(paint '1;38;2;254;81;1' kiekje-lab)" "$(paint 2 'VM test bench for Kiekje')"
+    printf '  %s\n\n' "$(paint 2 'Builds and tests the app on this session or inside libvirt VMs, one log folder per run.')"
+    printf '%s %s %s %s\n' "$(paint 1 Usage:)" "$(paint 1 kiekje-lab)" "$(paint 1 '<command>')" "$(paint '1;36' '[...args]')"
+    for entry in "${HELP_GROUPS[@]}"; do
+        if [[ "$entry" != *"|"* ]]; then
+            printf '\n%s\n' "$(paint 1 "$entry:")"
+        else
+            name="${entry%%|*}"
+            entry="${entry#*|}"
+            description="${entry##*|}"
+            argument="${entry%|*}"
+            help_row "$name" "$argument" "$description" '1;38;2;254;81;1'
+        fi
+    done
+    printf '\n%s\n' "$(paint 1 'VM flags:')"
+    for entry in "${HELP_FLAGS[@]}"; do
+        IFS='|' read -r name argument description <<<"$entry"
+        help_row "$name" "$argument" "$description" '1;36'
+    done
+    printf '\n%s\n' "$(paint 1 'Environment:')"
+    for entry in "${HELP_ENV[@]}"; do
+        name="${entry%%|*}"
+        printf '  %s%*s%s\n' "$(paint '1;36' "$name")" $((30 - ${#name})) "" "$(help_note "${entry#*|}")"
+    done
+    printf '\n%s\n' "$(paint 1 'Examples:')"
+    for entry in "${HELP_EXAMPLES[@]}"; do
+        printf '  %s\n  %s %s\n\n' "$(paint 2 "${entry%%|*}")" "$(paint 2 '$')" "kiekje-lab ${entry#*|}"
+    done
+    printf 'Run %s first on a new host.\n' "$(paint 1 'kiekje-lab doctor-host')"
+}
+
+function help_note {
+    if [[ "$1" =~ ^(.*)\ (\(.*\))$ ]]; then
+        printf '%s %s' "${BASH_REMATCH[1]}" "$(paint 2 "${BASH_REMATCH[2]}")"
+    else
+        printf '%s' "$1"
+    fi
+}
 
 function fail {
     echo "kiekje-lab: $*" >&2
@@ -80,6 +167,7 @@ function desktop_version {
     case "${XDG_CURRENT_DESKTOP:-}" in
     *GNOME*) gnome-shell --version 2>/dev/null | awk '{print $3}' ;;
     *KDE*) plasmashell --version 2>/dev/null | awk '{print $2}' ;;
+    *sway*) sway --version 2>/dev/null | awk '{print $3}' ;;
     *Hyprland*) hyprctl version -j 2>/dev/null | grep -oP '"tag":\s*"v?\K[^"-]+' || Hyprland --version 2>/dev/null | awk 'NR==1{print $2}' ;;
     *) echo unknown ;;
     esac
@@ -123,6 +211,10 @@ function binary_path {
     echo "${CARGO_TARGET_DIR:-$REPO/target}/release/kiekje-next"
 }
 
+function probe_path {
+    echo "${CARGO_TARGET_DIR:-$REPO/target}/release/examples/lab_probe"
+}
+
 function backends_from_doctor {
     awk '$1 == "capture" {print $2}' "$1" | while read -r kind; do
         case "$kind" in
@@ -160,7 +252,7 @@ function summarize_run {
         /^kiekje: backend / && backend != "" { used[backend] = $3 }
         /^kiekje: copied/ && backend != "" { ok[backend]++ }
         /capture failed|lab timeout/ && backend != "" { failed[backend]++; reason[backend] = $0 }
-        /^=== region/ { backend = "" }
+        /^=== (region|pixels)/ { backend = "" }
         END {
             for (b in total) {
                 n = split(ms[b], values, " ")
@@ -172,9 +264,125 @@ function summarize_run {
         }' "$RUN/daemon.log" | sort >"$RUN/summary.tsv"
 }
 
+function log_since {
+    tail -n +"$1" "$RUN/daemon.log"
+}
+
+function leave_gnome_overview {
+    [[ "${XDG_CURRENT_DESKTOP:-}" == *GNOME* ]] || return 0
+    # GNOME opens the Activities overview after login, which hides new windows and takes Escape.
+    gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell \
+        --method org.freedesktop.DBus.Properties.Set org.gnome.Shell OverviewActive '<false>' >/dev/null 2>&1 ||
+        say "could not close the GNOME overview; the pattern and Escape checks may fail"
+}
+
+function check_output {
+    echo "$1=$2" >>"$RUN/checks.txt"
+}
+
+function start_pattern {
+    : >"$RUN/probe.log"
+    "$PROBE" show >>"$RUN/probe.log" 2>&1 &
+    PATTERN=$!
+    local deadline=$((SECONDS + 15))
+    until grep -q 'pattern shown' "$RUN/probe.log"; do
+        if ((SECONDS >= deadline)) || ! kill -0 "$PATTERN" 2>/dev/null; then
+            check_output pattern "fail the pattern window never showed, see probe.log"
+            stop_pattern
+            return 1
+        fi
+        sleep 0.3
+    done
+}
+
+function stop_pattern {
+    [[ -n "${PATTERN:-}" ]] || return 0
+    kill "$PATTERN" 2>/dev/null || true
+    wait "$PATTERN" 2>/dev/null || true
+    PATTERN=""
+}
+
+function check_clipboard {
+    local name="$1" saved="$2" pasted="$RUN/png/$1-clipboard.png" status=0
+    "$PROBE" paste "$pasted" >>"$RUN/probe.log" 2>&1 || status=$?
+    if ((status == 3)); then
+        check_output "clipboard_$name" "unverified, no ext_data_control_manager_v1"
+    elif ((status != 0)); then
+        check_output "clipboard_$name" "fail $(tail -n 1 "$RUN/probe.log")"
+    elif cmp -s "$saved" "$pasted"; then
+        check_output "clipboard_$name" "pass $(stat -c %s "$pasted") bytes, same as the saved file"
+        rm -f "$pasted"
+    else
+        check_output "clipboard_$name" "fail the clipboard png differs from the saved file"
+    fi
+}
+
+function check_capture {
+    local name="$1" rect="$2" start="$3" saved frame verdict
+    wait_for_log '^kiekje: (saved|save failed)' 20 "$start" || true
+    saved="$(log_since "$start" | sed -n 's/^kiekje: saved //p' | tail -n 1)"
+    if [[ -z "$saved" || ! -f "$saved" ]]; then
+        check_output "pixels_$name" "fail nothing was saved"
+        return
+    fi
+    mkdir -p "$RUN/png"
+    mv "$saved" "$RUN/png/$name.png"
+    frame="$(log_since "$start" | awk '/^kiekje: frame / {print $4; exit}')"
+    verdict="$("$PROBE" check "$RUN/png/$name.png" "${frame:-unknown}" "$rect")" || true
+    check_output "pixels_$name" "$verdict"
+    check_clipboard "$name" "$RUN/png/$name.png"
+}
+
+function pixel_fullscreen {
+    local start
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    mark "pixels fullscreen"
+    capture_and_wait capture fullscreen
+    check_capture fullscreen 0,0,1,1 "$start"
+}
+
+function driven_region {
+    local check="$1" start verdict
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    mark "region $check"
+    if [[ "$check" == select ]]; then
+        "$BIN" capture region >>"$RUN/cli.log" 2>&1
+    else
+        "$BIN" capture region --no-save >>"$RUN/cli.log" 2>&1
+    fi
+    if ! wait_for_log 'overlay painted|capture failed' 20 "$start" || log_since "$start" | grep -q 'capture failed'; then
+        check_output "$check" "fail overlay never painted"
+        return
+    fi
+    sleep 0.5
+    echo "kiekje-lab: inject $check"
+    wait_for_log 'copied|selection canceled|capture failed|nothing to deliver' 15 "$start" ||
+        echo "kiekje: lab timeout waiting for the daemon" >>"$RUN/daemon.log"
+    case "$check" in
+    escape)
+        verdict="fail still open"
+        log_since "$start" | grep -q 'selection canceled' && verdict=pass
+        check_output escape "$verdict"
+        ;;
+    select) check_capture region 0.25,0.25,0.75,0.75 "$start" ;;
+    esac
+    if ! log_since "$start" | grep -qE 'copied|selection canceled'; then
+        "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
+        sleep 1
+        "$BIN" daemon >>"$RUN/daemon.log" 2>&1 &
+        DAEMON=$!
+        sleep 1
+    fi
+}
+
 function run_tests {
-    local interactive=1
-    [[ "${1:-}" == "--no-interactive" ]] && interactive=0
+    local mode=interactive
+    case "${1:-}" in
+    --no-interactive) mode=none ;;
+    --driven) mode=driven ;;
+    "") ;;
+    *) fail "unknown run flag: $1" ;;
+    esac
     import_session_env
 
     LABEL="$(machine_label)"
@@ -183,17 +391,20 @@ function run_tests {
     print_env >"$RUN/env.txt"
     echo "kiekje-lab: logging to $RUN"
 
-    (cd "$REPO" && cargo build --release 2>&1 | tail -n 3) >"$RUN/build.log" || fail "build failed, see $RUN/build.log"
+    (cd "$REPO" && cargo build --release --bin kiekje-next --example lab_probe 2>&1 | tail -n 3) >"$RUN/build.log" ||
+        fail "build failed, see $RUN/build.log"
     BIN="$(binary_path)"
-    [[ -x "$BIN" ]] || fail "no binary at $BIN"
+    PROBE="$(probe_path)"
+    [[ -x "$BIN" && -x "$PROBE" ]] || fail "no binary at $BIN or $PROBE, see $RUN/build.log"
 
     "$BIN" install-desktop-file >>"$RUN/cli.log" 2>&1
+    leave_gnome_overview
     "$BIN" doctor >"$RUN/doctor.txt" 2>&1 || true
     "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
 
     : >"$RUN/daemon.log"
     "$BIN" daemon >>"$RUN/daemon.log" 2>&1 &
-    local daemon=$!
+    DAEMON=$!
     sleep 1
 
     local backend i
@@ -206,7 +417,18 @@ function run_tests {
         done
     done
 
-    if ((interactive)); then
+    echo "kiekje-lab: pixel and clipboard checks on a position pattern"
+    if start_pattern; then
+        pixel_fullscreen
+        if [[ "$mode" == driven ]]; then
+            echo "kiekje-lab: region checks driven by the host"
+            driven_region escape
+            driven_region select
+        fi
+        stop_pattern
+    fi
+
+    if [[ "$mode" == interactive ]]; then
         echo
         echo "Region test: an overlay will open over the screen in 3 seconds."
         echo "Press Escape WITHOUT clicking first. If nothing happens after 10 seconds, click once and press Escape."
@@ -230,12 +452,15 @@ function run_tests {
     fi
 
     "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
-    wait "$daemon" 2>/dev/null || true
+    wait "$DAEMON" 2>/dev/null || true
     summarize_run
     echo
     print_summary_header
     cat "$RUN/summary.tsv"
-    [[ -f "$RUN/manual.txt" ]] && cat "$RUN/manual.txt"
+    local notes
+    for notes in "$RUN/manual.txt" "$RUN/checks.txt"; do
+        [[ -f "$notes" ]] && cat "$notes"
+    done
     echo "kiekje-lab: done, results in $RUN"
 }
 
@@ -252,9 +477,9 @@ function show_results {
             print_summary_header
             cat "$machine"*/summary.tsv 2>/dev/null
         } | column -t -s $'\t'
-        local manual
-        for manual in "$machine"*/manual.txt; do
-            [[ -f "$manual" ]] && echo "$(basename "$(dirname "$manual")"): $(paste -sd' ' "$manual")"
+        local notes
+        for notes in "$machine"*/manual.txt "$machine"*/region.txt "$machine"*/checks.txt; do
+            [[ -f "$notes" ]] && echo "$(basename "$(dirname "$notes")"): $(paste -sd' ' "$notes")"
         done
         echo
     done
@@ -273,7 +498,7 @@ function domain_state {
 }
 
 function require_domain {
-    [[ -n "$1" ]] || fail "$USAGE"
+    [[ -n "$1" ]] || fail "missing VM name; see kiekje-lab help"
     domain_exists "$1" || fail "no VM named $1; list them with: kiekje-lab vms"
 }
 
@@ -952,6 +1177,8 @@ function reset_vm {
     fi
     local start=$SECONDS
     vsh snapshot-revert "$vm" "$label" --running >/dev/null
+    agent "$vm" "{\"execute\":\"guest-set-time\",\"arguments\":{\"time\":$(date +%s%N)}}" >/dev/null ||
+        say "could not set the clock of $vm through the guest agent; run timestamps may be off"
     say "$vm is back at $label after $((SECONDS - start)) s"
 }
 
@@ -1098,6 +1325,54 @@ function start_vm {
     echo "kiekje-lab: $vm is up at $(vm_address "$vm")"
 }
 
+function send_input {
+    vsh qemu-monitor-command "$1" "{\"execute\":\"input-send-event\",\"arguments\":{\"events\":[$2]}}" >/dev/null
+}
+
+function pointer_at {
+    printf '{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}' \
+        $(($1 * 32767 / 100)) $(($2 * 32767 / 100))
+}
+
+function left_button {
+    printf '{"type":"btn","data":{"down":%s,"button":"left"}}' "$1"
+}
+
+function inject_drag {
+    local vm="$1" percent
+    send_input "$vm" "$(pointer_at 25 25)"
+    sleep 0.2
+    send_input "$vm" "$(left_button true)"
+    for percent in 30 40 50 60 70 75; do
+        sleep 0.05
+        send_input "$vm" "$(pointer_at "$percent" "$percent")"
+    done
+    sleep 0.2
+    send_input "$vm" "$(left_button false)"
+}
+
+function inject {
+    case "$2" in
+    escape) vsh send-key "$1" KEY_ESC >/dev/null ;;
+    select) inject_drag "$1" ;;
+    esac || say "injecting $2 into $1 failed"
+}
+
+function run_driven {
+    local vm="$1" line status=1
+    while IFS= read -r line; do
+        echo "$line"
+        [[ "$line" == "kiekje-lab: guest exit 0" ]] && status=0
+        [[ "$line" =~ ^kiekje-lab:\ inject\ (escape|select)$ ]] && inject "$vm" "${BASH_REMATCH[1]}"
+    done < <(
+        ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH \
+CARGO_TARGET_DIR=\$HOME/kiekje-target KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && \
+cd \$HOME/kiekje-next && lab/kiekje-lab run --driven'" 2>&1
+        echo "kiekje-lab: guest exit $?"
+    )
+    return "$status"
+}
+
 function run_in_vm {
     local vm="${1:?vm name}"
     shift
@@ -1112,13 +1387,41 @@ function run_in_vm {
     require_ssh "$vm"
     resolve_ssh "$vm"
     local status=0
-    ssh "${SSH_ARGS[@]}" -t "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH CARGO_TARGET_DIR=\$HOME/kiekje-target \
+    if [[ "${1:-}" == "--auto" ]]; then
+        run_driven "$vm" || status=$?
+    else
+        ssh "${SSH_ARGS[@]}" -t "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH CARGO_TARGET_DIR=\$HOME/kiekje-target \
 KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && cd \$HOME/kiekje-next && lab/kiekje-lab run $*'" || status=$?
+    fi
     mkdir -p "$RESULTS"
     rsync -a -e "$(rsync_shell)" "$SSH_TARGET:kiekje-results/" "$RESULTS/" ||
         fail "could not copy results back from $vm:~/kiekje-results"
     say "results copied to $RESULTS"
     return "$status"
+}
+
+function ready_vms {
+    local vm
+    while read -r vm; do
+        [[ -n "$vm" ]] && step_done "$vm" snapshot && has_snapshot "$vm" clean && echo "$vm"
+    done < <(vsh list --all --name)
+}
+
+function run_all {
+    local vms=("$@") vm failed=()
+    ((${#vms[@]})) || mapfile -t vms < <(ready_vms)
+    ((${#vms[@]})) || fail "no VM has a clean snapshot yet; create one with: kiekje-lab up <vm> <iso>"
+    for vm in "${vms[@]}"; do
+        echo
+        say "== $vm"
+        if ! (reset_vm "$vm" && wait_for_ssh "$vm" && sync_vm "$vm" && run_in_vm "$vm" --auto); then
+            failed+=("$vm")
+        fi
+        vsh destroy "$vm" >/dev/null 2>&1 || true
+    done
+    echo
+    show_results
+    ((${#failed[@]} == 0)) || fail "failed: ${failed[*]}"
 }
 
 case "${1:-}" in
@@ -1128,6 +1431,7 @@ results) show_results ;;
 vms) list_vms ;;
 start) start_vm "${2:-}" ;;
 run-vm) run_in_vm "${@:2}" ;;
+all) run_all "${@:2}" ;;
 stop) virsh -c "$LIBVIRT" shutdown "${2:?vm name}" ;;
 doctor-host) doctor_host ;;
 new) new_vm "${@:2}" ;;
@@ -1141,5 +1445,9 @@ snapshot) snapshot_vm "${@:2}" ;;
 reset) reset_vm "${@:2}" ;;
 ssh) ssh_vm "${@:2}" ;;
 rm) rm_vm "${2:-}" ;;
-*) fail "$USAGE" ;;
+help | -h | --help | "") print_help ;;
+*)
+    print_help >&2 || true
+    fail "unknown command: $1"
+    ;;
 esac

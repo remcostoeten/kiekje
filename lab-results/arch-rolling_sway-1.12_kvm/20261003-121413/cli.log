@@ -1,0 +1,42 @@
+kiekje: wrote /home/kiek/.local/share/applications/dev.remcostoeten.KiekjeNext.desktop
+
+(process:879): Gdk-WARNING **: 12:14:15.431: Cannot get portal org.freedesktop.portal.Inhibit version: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: No such interface “org.freedesktop.portal.Inhibit”
+kiekje: not running
+
+(process:901): GLib-GIO-WARNING **: 12:14:16.486: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:927): GLib-GIO-WARNING **: 12:14:18.020: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:949): GLib-GIO-WARNING **: 12:14:19.553: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:973): GLib-GIO-WARNING **: 12:14:21.090: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:995): GLib-GIO-WARNING **: 12:14:22.625: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1019): GLib-GIO-WARNING **: 12:14:24.157: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1041): GLib-GIO-WARNING **: 12:14:25.693: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1067): GLib-GIO-WARNING **: 12:13:38.026: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1089): GLib-GIO-WARNING **: 12:13:39.575: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1113): GLib-GIO-WARNING **: 12:13:41.141: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1135): GLib-GIO-WARNING **: 12:13:42.692: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1165): GLib-GIO-WARNING **: 12:13:44.223: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1192): GLib-GIO-WARNING **: 12:13:45.759: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1217): GLib-GIO-WARNING **: 12:13:47.293: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1244): GLib-GIO-WARNING **: 12:13:48.826: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1295): GLib-GIO-WARNING **: 12:13:51.290: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1335): GLib-GIO-WARNING **: 12:13:51.887: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1375): GLib-GIO-WARNING **: 12:13:53.437: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:1426): GLib-GIO-WARNING **: 12:13:55.551: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().

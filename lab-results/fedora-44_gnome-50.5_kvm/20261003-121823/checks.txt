@@ -1,0 +1,5 @@
+pixels_fullscreen=pass 1280x800, 256/256 samples
+clipboard_fullscreen=unverified, no ext_data_control_manager_v1
+escape=pass
+pixels_region=pass 641x401, 256/256 samples
+clipboard_region=unverified, no ext_data_control_manager_v1

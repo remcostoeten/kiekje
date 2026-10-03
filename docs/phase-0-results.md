@@ -56,6 +56,7 @@ Same two-monitor setup, `capture fullscreen --no-save`, 3850x3960 output, 16 cor
 - The portal writes its PNG into `~/Pictures`. The backend deletes it only when it was created during the request; the folder count was unchanged after 5 runs.
 - Clipboard: KWin ignores a selection set by a client without keyboard focus. Setting it while the overlay still has focus works (`image/png`, `image/tiff`, `image/jpeg` offered). A fullscreen capture from the background daemon does not reach the clipboard.
 - KWin exposes `ext_data_control_manager_v1` to normal clients. This is the route for setting the clipboard from the tray without focus.
+- Checked 2026-10-03 on Plasma Wayland: three `capture fullscreen --no-save` runs sent to the background daemon each left a 3840x2160 `image/png` that `wl-paste` read back, with no window focused. Klipper also requests the PNG once per capture. The debug build offers it about 2 s after the trigger, mostly PNG encode.
 
 ## Backend contract and detection
 
@@ -104,6 +105,7 @@ Fedora 44, GNOME Shell 50.5, KVM VM `kiekje-gnome` with one 1280x800 virtio disp
 - Portal fullscreen capture with the permission granted: 196 to 239 ms over 6 samples.
 - The first non-interactive Screenshot request showed a permission dialog. With the screen blanked nobody answered it, the call never returned, and every later trigger was dropped as "already running". The portal call now has a 30 s method timeout, and detection and `doctor` give up on a hung bus call after 2 s.
 - The VM has idle blanking and the lock screen turned off, and the screenshot permission for host apps is granted in the permission store, so automated runs don't wait on the dialog. Reset it with `flatpak permission-reset screenshot` to retest first use.
+- After a snapshot revert GNOME shows the Activities overview. It hides the pattern window and takes Escape, which made run `20261003-121456` fail `pixels_fullscreen` and `escape`. `run` now closes the overview through the `OverviewActive` property of `org.gnome.Shell` first. Run `20261003-121823` in `test-fedora` then passed `escape` without a click: the fullscreen-window overlay, triggered from a CLI over SSH, got keyboard focus. Focus when triggered by a real global shortcut is still unverified.
 
 ## Lab CLI
 
@@ -114,7 +116,8 @@ Quick start for a new VM from any desktop ISO:
 ```
 lab/kiekje-lab doctor-host                          # check KVM, libvirt and tools, prints the pacman fix
 lab/kiekje-lab up my-test ~/vm/isos/some-distro.iso # install the OS by hand, log in, paste one line
-lab/kiekje-lab run-vm my-test                       # run the tests, results land in lab-results/
+lab/kiekje-lab run-vm my-test --auto                # run the tests, results land in lab-results/
+lab/kiekje-lab all                                  # reset, sync and test every ready VM in turn
 lab/kiekje-lab reset my-test                        # back to the clean snapshot
 lab/kiekje-lab rm my-test                           # delete the VM and its disk
 ```
@@ -133,10 +136,12 @@ lab/kiekje-lab rm my-test                           # delete the VM and its disk
 | `snapshot <vm> [label]`, `reset <vm> [label]` | libvirt internal snapshots, default label `clean`. `reset` asks first for any other label. When a live snapshot is refused, `snapshot` shuts the VM down, takes it and boots again. |
 | `ssh <vm> [cmd]`, `rm <vm>` | Shell or command in the VM; delete the VM, its snapshots and its disk after typing its name. The ISO stays. |
 | `vms` | State, address, distro, desktop and whether a `clean` snapshot exists. |
+| `run-vm <vm> --auto` | Runs `run --driven` in the guest. When the overlay has painted, the guest prints an inject line and the host answers through QEMU: `virsh send-key KEY_ESC` for the Escape check, `input-send-event` on the USB tablet for a drag from 25% to 75% of the screen. The guest writes `escape=pass` to `checks.txt` when the overlay canceled without a click. The drag is saved and judged as `pixels_region`, see the pixel checks below. Runs before this change wrote `region.txt`. |
+| `all [vm...]` | For every VM with a finished `up` and a `clean` snapshot, or the ones named: revert to `clean`, set the guest clock through the agent, sync, `run-vm --auto`, then power the VM off. Prints `results` at the end and exits non-zero when a VM failed. |
 
 Per-VM state (user, distro, desktop, sync mode, last finished step) lives in `~/.local/share/kiekje-lab/<vm>.env`, next to the lab's own `known_hosts` and the qcow2 copy of the OVMF variable store. Internal snapshots of a UEFI VM need qcow2 NVRAM, and libvirt can't convert the raw Arch template itself. For VMs made by `new`, `run-vm` writes results to `~/kiekje-results` in the guest and copies them back into `lab-results/` with the same layout. VMs without a state file, like `kiekje-gnome`, keep the old behavior.
 
-`KIEKJE_LAB_CAPTURES=10` changes the number of fullscreen captures per backend (default 5). `--no-interactive` skips the region checks.
+`KIEKJE_LAB_CAPTURES=10` changes the number of fullscreen captures per backend (default 5). `--no-interactive` skips the region checks. Only the OS install and the first bootstrap still need a person; everything after the `clean` snapshot runs unattended with `all`.
 
 ### What was run on 2026-10-03
 
@@ -153,9 +158,18 @@ Sway on the Ubuntu and Arch VMs was installed by hand with tty autologin, becaus
 
 Unverified: the graphical OS install from the Fedora Workstation Live, Ubuntu Desktop, EndeavourOS, CachyOS and Omarchy ISOs, so also whether the login wait sees the guest agent on those images (pressing Enter always works). Not run at all: the suse family, Debian proper, KDE, Hyprland or GNOME on Ubuntu and Arch, and virgl with live snapshots.
 
+### Pixel and clipboard checks
+
+Every `run` builds `examples/lab_probe.rs` next to the app. `lab_probe show` opens a fullscreen window whose pixels encode their own position: red is x, green is y, both 0 to 255 across the screen, and blue is a constant 128. With the pattern on screen the run makes a saved fullscreen capture, and in `--driven` mode the 25% to 75% drag is saved too. `lab_probe check` then samples a 16x16 grid of the PNG and decodes where each sample came from. It writes these lines to `checks.txt`:
+
+- `pixels_fullscreen` and `pixels_region` pass when the PNG has the expected size (exactly the native frame for fullscreen, within 2% for the drag) and at least 90% of the samples decode to their expected position, within 1% for fullscreen and 2% for the drag. Swapped channels, mirroring, rotation, a logical-size capture on a scaled monitor and a crop from the wrong place all fail, with the worst sample in the message. The outlier budget covers the cursor.
+- `clipboard_fullscreen` and `clipboard_region` read `image/png` back through `ext-data-control-v1` and pass when it is byte-identical to the saved file. Without that protocol (GNOME) the line says `unverified`.
+
+The checked PNGs stay in `png/` inside the run folder, which git ignores.
+
 ## Follow-up for Phase 1
 
-1. Clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
+1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
 2. Pre-create or warm the overlay so the first capture after login is not slower than later ones.
 3. Done: memory growth came from the glibc heap, see above.
 4. GlobalShortcuts portal registration on KDE and Hyprland, then the Hyprland managed `bind` include.

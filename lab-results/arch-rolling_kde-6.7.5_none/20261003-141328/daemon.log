@@ -1,0 +1,113 @@
+=== fullscreen auto 1 ===
+kiekje: timing trigger -> instance: 1.5 ms
+kiekje: timing instance -> frames: 52.8 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 78.5 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen auto 2 ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 52.7 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 75.6 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen auto 3 ===
+kiekje: timing trigger -> instance: 1.6 ms
+kiekje: timing instance -> frames: 53.5 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 80.7 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen auto 4 ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 50.3 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 83.6 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen auto 5 ===
+kiekje: timing trigger -> instance: 1.5 ms
+kiekje: timing instance -> frames: 51.3 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 93.1 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen kwin 1 ===
+kiekje: timing trigger -> instance: 1.5 ms
+kiekje: timing instance -> frames: 51.8 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 127.1 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen kwin 2 ===
+kiekje: timing trigger -> instance: 1.2 ms
+kiekje: timing instance -> frames: 49.2 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 126.2 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen kwin 3 ===
+kiekje: timing trigger -> instance: 1.5 ms
+kiekje: timing instance -> frames: 49.5 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 125.5 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen kwin 4 ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 56.7 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 96.3 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen kwin 5 ===
+kiekje: timing trigger -> instance: 1.2 ms
+kiekje: timing instance -> frames: 49.3 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 126.7 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen portal 1 ===
+kiekje: timing trigger -> instance: 1.6 ms
+kiekje: timing instance -> frames: 857.2 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 899.0 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen portal 2 ===
+kiekje: timing trigger -> instance: 1.6 ms
+kiekje: timing instance -> frames: 1071.4 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 1114.4 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen portal 3 ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 1537.4 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 1611.0 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen portal 4 ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 482.5 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 516.1 ms
+kiekje: copied 3840x2160 to the clipboard
+=== fullscreen portal 5 ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 436.7 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 459.3 ms
+kiekje: copied 3840x2160 to the clipboard
+=== pixels fullscreen ===
+kiekje: timing trigger -> instance: 1.3 ms
+kiekje: timing instance -> frames: 46.5 ms
+kiekje: backend kwin-screenshot2
+kiekje: frame DP-2 3840x2160 for logical 3840x2160+0+0 (BgraPremultiplied)
+kiekje: timing trigger -> clipboard offered: 66.1 ms
+kiekje: copied 3840x2160 to the clipboard
+kiekje: saved /home/remcostoeten/Pictures/Kiekje/kiekje-fullscreen-20261003-141401.png

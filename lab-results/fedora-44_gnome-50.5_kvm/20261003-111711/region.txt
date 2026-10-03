@@ -1,0 +1,2 @@
+escape=fail still open
+select=pass 641x401 of 1280x800

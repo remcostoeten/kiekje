@@ -1,0 +1,9 @@
+session      wayland / KDE
+overlay      layer-shell
+monitor      DP-2 3840x2160+0+0 scale 1
+portal       Screenshot      v2
+portal       ScreenCast      v5
+portal       GlobalShortcuts v2
+capture      kwin-screenshot2        cursor yes native yes sandbox no
+capture      xdg-desktop-portal      cursor no native no sandbox yes
+kwin         desktop file installed for this binary (/home/remcostoeten/.local/share/applications/dev.remcostoeten.KiekjeNext.desktop)
