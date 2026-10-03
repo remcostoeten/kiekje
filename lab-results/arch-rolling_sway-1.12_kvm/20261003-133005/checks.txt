@@ -1,0 +1,5 @@
+pixels_fullscreen=pass 1280x800, 256/256 samples
+clipboard_fullscreen=pass 23270 bytes, same as the saved file
+escape=pass
+pixels_region=pass 641x401, 256/256 samples
+clipboard_region=pass 6740 bytes, same as the saved file

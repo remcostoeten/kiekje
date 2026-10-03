@@ -1,0 +1,6 @@
+layout=multi, region drags on HEADLESS-1
+pixels_fullscreen=pass 3840x1200, 256/256 samples
+clipboard_fullscreen=pass 94587 bytes, same as the saved file
+escape=pass
+pixels_region=pass 962x602, 256/256 samples
+clipboard_region=pass 12917 bytes, same as the saved file

@@ -1,0 +1,9 @@
+session      tty / sway
+overlay      layer-shell
+monitor      Virtual-1 853x533+0+0 scale 1.5009380863039399
+portal       Screenshot      v2
+portal       ScreenCast      v4
+portal       GlobalShortcuts unavailable
+capture      ext-image-copy-capture  cursor yes native yes sandbox no
+capture      wlr-screencopy          cursor yes native yes sandbox no
+capture      xdg-desktop-portal      cursor no native no sandbox yes

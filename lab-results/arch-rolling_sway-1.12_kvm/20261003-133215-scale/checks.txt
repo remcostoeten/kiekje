@@ -1,0 +1,6 @@
+layout=scale, region drags on Virtual-1
+pixels_fullscreen=pass 1280x800, 256/256 samples
+clipboard_fullscreen=pass 24284 bytes, same as the saved file
+escape=pass
+pixels_region=pass 642x402, 256/256 samples
+clipboard_region=pass 6355 bytes, same as the saved file

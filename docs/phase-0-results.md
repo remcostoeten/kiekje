@@ -92,8 +92,9 @@ When GDK is not on Wayland or the compositor has no `zwlr_layer_shell_v1`, the o
 
 - A real Hyprland or Omarchy session, Sway and X11.
 - Keyboard focus for the fullscreen overlay on GNOME.
-- Rotated monitors on any backend.
-- Two or more active monitors, cross-monitor selection, negative origins and rotation on real hardware. Unit tests cover the mapping and stitching math only.
+- Rotated monitors on KWin, the portal and real hardware. Sway virtual outputs pass, see "Layouts" below.
+- Two or more physical monitors outside KDE, and any multi-monitor layout on GNOME or Hyprland.
+- A selection across a monitor edge. The overlay keeps a drag on the monitor where it started, so this is a missing feature, not a passing test.
 - Global shortcuts through the GlobalShortcuts portal (v2 is present on this machine).
 - Hiding the tray menu before capture. There is no tray yet.
 
@@ -137,11 +138,12 @@ lab/kiekje-lab rm my-test                           # delete the VM and its disk
 | `ssh <vm> [cmd]`, `rm <vm>` | Shell or command in the VM; delete the VM, its snapshots and its disk after typing its name. The ISO stays. |
 | `vms` | State, address, distro, desktop and whether a `clean` snapshot exists. |
 | `run-vm <vm> --auto` | Runs `run --driven` in the guest. When the overlay has painted, the guest prints an inject line and the host answers through QEMU: `virsh send-key KEY_ESC` for the Escape check, `input-send-event` on the USB tablet for a drag from 25% to 75% of the screen. The guest writes `escape=pass` to `checks.txt` when the overlay canceled without a click. The drag is saved and judged as `pixels_region`, see the pixel checks below. Runs before this change wrote `region.txt`. |
+| `run-vm <vm> --auto --layout <name>` | Same, after switching the guest's outputs to a test layout, see "Layouts" below. Sway and Hyprland only. |
 | `all [vm...]` | For every VM with a finished `up` and a `clean` snapshot, or the ones named: revert to `clean`, set the guest clock through the agent, sync, `run-vm --auto`, then power the VM off. Prints `results` at the end and exits non-zero when a VM failed. |
 
 Per-VM state (user, distro, desktop, sync mode, last finished step) lives in `~/.local/share/kiekje-lab/<vm>.env`, next to the lab's own `known_hosts` and the qcow2 copy of the OVMF variable store. Internal snapshots of a UEFI VM need qcow2 NVRAM, and libvirt can't convert the raw Arch template itself. For VMs made by `new`, `run-vm` writes results to `~/kiekje-results` in the guest and copies them back into `lab-results/` with the same layout. VMs without a state file, like `kiekje-gnome`, keep the old behavior.
 
-`KIEKJE_LAB_CAPTURES=10` changes the number of fullscreen captures per backend (default 5). `--no-interactive` skips the region checks. Only the OS install and the first bootstrap still need a person; everything after the `clean` snapshot runs unattended with `all`.
+`all` takes `--layout` too. `KIEKJE_LAB_CAPTURES=10` changes the number of fullscreen captures per backend (default 5). `--no-interactive` skips the region checks. Only the OS install and the first bootstrap still need a person; everything after the `clean` snapshot runs unattended with `all`.
 
 ### What was run on 2026-10-03
 
@@ -160,12 +162,63 @@ Unverified: the graphical OS install from the Fedora Workstation Live, Ubuntu De
 
 ### Pixel and clipboard checks
 
-Every `run` builds `examples/lab_probe.rs` next to the app. `lab_probe show` opens a fullscreen window whose pixels encode their own position: red is x, green is y, both 0 to 255 across the screen, and blue is a constant 128. With the pattern on screen the run makes a saved fullscreen capture, and in `--driven` mode the 25% to 75% drag is saved too. `lab_probe check` then samples a 16x16 grid of the PNG and decodes where each sample came from. It writes these lines to `checks.txt`:
+Every `run` builds `examples/lab_probe.rs` next to the app. `lab_probe show` opens a fullscreen window on every monitor whose pixels encode their own position on the desktop: red is x, green is y, both 0 to 255 across the bounding box of all monitors, and blue is a constant 128. With the pattern on screen the run makes a saved fullscreen capture, and in `--driven` mode the 25% to 75% drag is saved too. `lab_probe check` then samples a 16x16 grid of the PNG and decodes where each sample came from. It gets the daemon's `frame` lines, so it knows each monitor's logical rectangle and native size, and judges either the stitched desktop or a crop of one monitor. Samples that fall between monitors are skipped. It writes these lines to `checks.txt`:
 
-- `pixels_fullscreen` and `pixels_region` pass when the PNG has the expected size (exactly the native frame for fullscreen, within 2% for the drag) and at least 90% of the samples decode to their expected position, within 1% for fullscreen and 2% for the drag. Swapped channels, mirroring, rotation, a logical-size capture on a scaled monitor and a crop from the wrong place all fail, with the worst sample in the message. The outlier budget covers the cursor.
+- `pixels_fullscreen` and `pixels_region` pass when the PNG has the expected size (exactly the stitched desktop at the highest monitor density for fullscreen, within 2% of the dragged monitor's native frame for the drag) and at least 90% of the samples decode to their expected position, within 1% for fullscreen and 2% for the drag. Swapped channels, mirroring, rotation, a logical-size capture on a scaled monitor and a crop from the wrong place all fail, with the worst sample in the message. The outlier budget covers the cursor.
 - `clipboard_fullscreen` and `clipboard_region` read `image/png` back through `ext-data-control-v1` and pass when it is byte-identical to the saved file. Without that protocol (GNOME) the line says `unverified`.
 
 The checked PNGs stay in `png/` inside the run folder, which git ignores.
+
+### Layouts
+
+`--layout` reconfigures the guest's outputs before the run and restores them after. Run folders get the layout as a suffix, like `20261003-133355-multi`.
+
+| Layout | Outputs | Region drag on |
+| --- | --- | --- |
+| `single` | as booted | the only output |
+| `scale` | the first output at scale 1.5 (1280x800 native, 853x533 logical) | that output |
+| `multi` | adds a headless 1920x1200 output at 1.5, logical 1280x800 at -1280,0 | the headless output |
+| `rotated` | adds a headless 1920x1200 output at 2.0, turned 90 degrees, logical 600x960 at -600,0 | the headless output |
+
+On sway the extra output comes from `create_output` and the QEMU tablet is mapped to it with `map_to_output`. The Hyprland branch uses `hyprctl output create headless` and is unverified until a Hyprland VM exists.
+
+Results on 2026-10-03, every check passed:
+
+| VM | Layout | Fullscreen | Region |
+| --- | --- | --- | --- |
+| test-arch, sway 1.12 | scale | 1280x800, 256/256 | 642x402 |
+| test-arch | multi | 3840x1200, 256/256 | 962x602 on HEADLESS-1 |
+| test-arch | rotated | 3760x1920, 223/223 (33 samples fall between monitors) | 602x962 on HEADLESS-1 |
+| test-ubuntu, sway | scale | 1280x800, 256/256 | 642x402 |
+| test-ubuntu | multi | 3840x1200, 256/256 | 962x602 on HEADLESS-1 |
+
+This covers mixed scale 1.0 + 1.5 and 1.0 + 2.0, a negative origin, a rotated output and a crop on a fractional-scaled monitor. Clipboard readback matched the saved file in every run. GDK reported scale 3.2 for the rotated headless output at scale 2; Kiekje derives its scale from frame size over logical size, so this did not affect it.
+
+### Save, error paths, memory and lifecycle
+
+Every `run` now also writes these lines to `checks.txt`:
+
+| Check | Passes when |
+| --- | --- |
+| `save_burst` | 10 back-to-back saved captures give 10 distinct, valid PNG files named `kiekje-fullscreen-<date>-<time>[-n].png` in the Kiekje pictures folder. |
+| `readonly_save` | With that folder read-only, the daemon logs `save failed`, still puts the image on the clipboard, and the next capture saves normally. |
+| `missing_backend` | `--backend` with a backend this session lacks logs `capture failed` with the reason, and the next capture works. |
+| `double_trigger` | A trigger while the region overlay is open is dropped and logged (driven runs only). |
+| `escape` | Also fails when canceling left a file behind. |
+| `memory` | Anonymous memory grows less than 4 MB over a second round of 10 fullscreen captures. Idle and per-round numbers are in the line. |
+| `single_instance` | A second `daemon` exits with `already running` and the first keeps running. |
+| `quit` | The daemon exits within 10 s of `quit` and a new client reports `not running`. |
+| `cli_exit` | No CLI client printed the GLib D-Bus unregister warning. |
+
+Results on 2026-10-03, every check passed on test-arch, test-ubuntu and test-fedora. Memory on the 1280x800 VMs, anonymous:
+
+| VM | Idle | After backend loops and overlays | Round 1 growth | Round 2 growth |
+| --- | --- | --- | --- | --- |
+| test-arch | 6 MB | 55 MB | 7 MB | 0 MB |
+| test-ubuntu | 5 MB | 40 MB | 0 MB | 0 MB |
+| test-fedora | 6 MB | 43 MB | 0 MB | 0 MB |
+
+The save burst landed up to 2 captures in the same second; the second got the `-2` suffix from the exclusive create.
 
 ## Follow-up for Phase 1
 
@@ -173,5 +226,5 @@ The checked PNGs stay in `png/` inside the run folder, which git ignores.
 2. Pre-create or warm the overlay so the first capture after login is not slower than later ones.
 3. Done: memory growth came from the glibc heap, see above.
 4. GlobalShortcuts portal registration on KDE and Hyprland, then the Hyprland managed `bind` include.
-5. The remote CLI client prints a GLib warning about not unregistering from D-Bus. Harmless, but it should exit through `g_application_run`.
+5. Done: CLI clients that forward to the running instance, and `quit` with nothing running, now leave through `g_application_run` with a `handle-local-options` handler that exits at once. GLib no longer warns about the D-Bus registration.
 6. Run `lab/kiekje-lab run` in a Hyprland or Omarchy session, and the interactive `run-vm` in the GNOME VM to answer the focus question.

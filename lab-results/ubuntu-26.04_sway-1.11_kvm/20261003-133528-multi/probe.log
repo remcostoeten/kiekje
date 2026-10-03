@@ -1,0 +1,13 @@
+lab_probe: monitor Virtual-1 1280x800+0+0 scale 1
+libEGL warning: failed to get driver name for fd -1
+
+libEGL warning: MESA-LOADER: failed to retrieve device information
+
+libEGL warning: failed to get driver name for fd -1
+
+MESA: error: ZINK: failed to choose pdev
+libEGL warning: egl: failed to create dri2 screen
+lab_probe: monitor HEADLESS-1 1280x800-1280+0 scale 1.5
+lab_probe: pattern shown
+lab_probe: wrote 94587 clipboard bytes to /home/kiek/kiekje-results/ubuntu-26.04_sway-1.11_kvm/20261003-133528-multi/png/fullscreen-clipboard.png
+lab_probe: wrote 12917 clipboard bytes to /home/kiek/kiekje-results/ubuntu-26.04_sway-1.11_kvm/20261003-133528-multi/png/region-clipboard.png

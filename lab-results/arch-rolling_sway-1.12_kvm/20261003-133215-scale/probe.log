@@ -1,0 +1,9 @@
+lab_probe: monitor Virtual-1 853x533+0+0 scale 1.5009380863039399
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA-EGL: warning: MESA-LOADER: failed to retrieve device information
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA: error: ZINK: vkCreateInstance failed (VK_ERROR_INCOMPATIBLE_DRIVER)
+MESA-EGL: warning: egl: failed to create dri2 screen
+lab_probe: pattern shown
+lab_probe: wrote 24284 clipboard bytes to /home/kiek/kiekje-results/arch-rolling_sway-1.12_kvm/20261003-133215-scale/png/fullscreen-clipboard.png
+lab_probe: wrote 6355 clipboard bytes to /home/kiek/kiekje-results/arch-rolling_sway-1.12_kvm/20261003-133215-scale/png/region-clipboard.png

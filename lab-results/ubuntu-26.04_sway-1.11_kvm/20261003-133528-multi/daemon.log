@@ -1,0 +1,116 @@
+=== fullscreen auto 1 ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 22.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 42.3 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen auto 2 ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 16.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 34.7 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen auto 3 ===
+kiekje: timing trigger -> instance: 2.8 ms
+kiekje: timing instance -> frames: 29.9 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 60.6 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen auto 4 ===
+kiekje: timing trigger -> instance: 2.5 ms
+kiekje: timing instance -> frames: 15.9 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 32.8 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen auto 5 ===
+kiekje: timing trigger -> instance: 2.5 ms
+kiekje: timing instance -> frames: 16.6 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 40.5 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen wlroots 1 ===
+kiekje: timing trigger -> instance: 3.9 ms
+kiekje: timing instance -> frames: 21.1 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 40.5 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen wlroots 2 ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 17.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 35.0 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen wlroots 3 ===
+kiekje: timing trigger -> instance: 1.7 ms
+kiekje: timing instance -> frames: 19.9 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 36.4 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen wlroots 4 ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 14.5 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 28.4 ms
+kiekje: copied 3840x1200 to the clipboard
+=== fullscreen wlroots 5 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 14.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 29.0 ms
+kiekje: copied 3840x1200 to the clipboard
+=== pixels fullscreen ===
+kiekje: timing trigger -> instance: 2.4 ms
+kiekje: timing instance -> frames: 25.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 44.7 ms
+kiekje: copied 3840x1200 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-133552.png
+=== region escape ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 16.6 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+libEGL warning: failed to get driver name for fd -1
+
+libEGL warning: MESA-LOADER: failed to retrieve device information
+
+libEGL warning: failed to get driver name for fd -1
+
+MESA: error: ZINK: failed to choose pdev
+libEGL warning: egl: failed to create dri2 screen
+kiekje: timing trigger -> overlay painted: 259.5 ms
+kiekje: selection canceled, nothing saved
+=== region select ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 42.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: frame HEADLESS-1 1920x1200 for logical 1280x800-1280+0 (Bgrx)
+kiekje: timing trigger -> overlay painted: 62.6 ms
+kiekje: selected 962x602+478+298 on HEADLESS-1
+kiekje: timing trigger -> clipboard offered: 2156.0 ms
+kiekje: copied 962x602 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-region-20261003-133557.png

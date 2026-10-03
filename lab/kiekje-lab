@@ -34,13 +34,13 @@ declare -A PORTALS=(
 HELP_GROUPS=(
     "Test this session"
     "env||Print what this machine and session are"
-    "run|[--no-interactive|--driven]|Build, test and log this session to lab-results/"
+    "run|[--no-interactive|--driven] [--layout <name>]|Build, test and log this session to lab-results/"
     "results||Summarize every run of every machine"
     "Drive a VM"
     "vms||List VMs with state, address, distro and snapshot"
     "start|<vm>|Boot a VM and open its screen"
-    "run-vm|<vm> [--auto]|Run the tests in a VM; --auto drives the overlay checks"
-    "all|[vm...]|Reset, sync and --auto test every ready VM, then summarize"
+    "run-vm|<vm> [--auto] [--layout <name>]|Run the tests in a VM; --auto drives the overlay checks"
+    "all|[vm...] [--layout <name>]|Reset, sync and --auto test every ready VM, then summarize"
     "ssh|<vm> [cmd]|Open a shell or run a command in the VM"
     "stop|<vm>|Shut a VM down"
     "Create a VM"
@@ -65,6 +65,7 @@ HELP_FLAGS=(
     "--cpus|<n>|Virtual CPUs for new and up (default: 4)"
     "--disk|<size>|Disk size for new and up (default: 40G)"
     "--no-3d||Turn off 3D acceleration for new and up"
+    "--layout|<name>|single (default), scale (first output at 1.5), multi (adds a 1920x1200 output at 1.5 left of it and drags there) or rotated (the same output at 2.0, turned 90 degrees); sway and Hyprland only"
 )
 
 HELP_ENV=(
@@ -159,8 +160,12 @@ function import_session_env {
     while IFS= read -r line; do
         export "${line?}"
     done < <(systemctl --user show-environment 2>/dev/null |
-        grep -E '^(WAYLAND_DISPLAY|DISPLAY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|HYPRLAND_INSTANCE_SIGNATURE)=')
+        grep -E '^(WAYLAND_DISPLAY|DISPLAY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|HYPRLAND_INSTANCE_SIGNATURE|SWAYSOCK)=')
     [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] || fail "no graphical session found for $(id -un); log in on the VM screen first"
+    if [[ "${XDG_CURRENT_DESKTOP:-}" == *sway* && -z "${SWAYSOCK:-}" ]]; then
+        SWAYSOCK="$(compgen -G "$XDG_RUNTIME_DIR/sway-ipc.$(id -u).*.sock" | head -n 1)"
+        export SWAYSOCK
+    fi
 }
 
 function desktop_version {
@@ -317,8 +322,12 @@ function check_clipboard {
     fi
 }
 
+function frames_since {
+    log_since "$1" | awk '/^kiekje: frame / {printf "%s%s=%s@%s", sep, $3, $4, $7; sep = ";"}'
+}
+
 function check_capture {
-    local name="$1" rect="$2" start="$3" saved frame verdict
+    local name="$1" monitor="$2" rect="$3" start="$4" saved frames verdict
     wait_for_log '^kiekje: (saved|save failed)' 20 "$start" || true
     saved="$(log_since "$start" | sed -n 's/^kiekje: saved //p' | tail -n 1)"
     if [[ -z "$saved" || ! -f "$saved" ]]; then
@@ -327,8 +336,9 @@ function check_capture {
     fi
     mkdir -p "$RUN/png"
     mv "$saved" "$RUN/png/$name.png"
-    frame="$(log_since "$start" | awk '/^kiekje: frame / {print $4; exit}')"
-    verdict="$("$PROBE" check "$RUN/png/$name.png" "${frame:-unknown}" "$rect")" || true
+    frames="$(frames_since "$start")"
+    [[ "$monitor" == first ]] && monitor="$(echo "$frames" | cut -d= -f1)"
+    verdict="$("$PROBE" check "$RUN/png/$name.png" "${frames:-unknown}" "$monitor" "$rect")" || true
     check_output "pixels_$name" "$verdict"
     check_clipboard "$name" "$RUN/png/$name.png"
 }
@@ -338,11 +348,11 @@ function pixel_fullscreen {
     start=$(($(wc -l <"$RUN/daemon.log") + 1))
     mark "pixels fullscreen"
     capture_and_wait capture fullscreen
-    check_capture fullscreen 0,0,1,1 "$start"
+    check_capture fullscreen all 0,0,1,1 "$start"
 }
 
 function driven_region {
-    local check="$1" start verdict
+    local check="$1" start verdict files
     start=$(($(wc -l <"$RUN/daemon.log") + 1))
     mark "region $check"
     if [[ "$check" == select ]]; then
@@ -355,6 +365,15 @@ function driven_region {
         return
     fi
     sleep 0.5
+    files="$(count_captures)"
+    if [[ "$check" == escape ]]; then
+        "$BIN" capture fullscreen --no-save >>"$RUN/cli.log" 2>&1
+        sleep 0.5
+        verdict="fail a trigger during the overlay was not dropped"
+        log_since "$start" | grep -q 'already running, ignoring' && daemon_alive &&
+            verdict="pass a trigger during the overlay was dropped and logged"
+        check_output double_trigger "$verdict"
+    fi
     echo "kiekje-lab: inject $check"
     wait_for_log 'copied|selection canceled|capture failed|nothing to deliver' 15 "$start" ||
         echo "kiekje: lab timeout waiting for the daemon" >>"$RUN/daemon.log"
@@ -362,9 +381,10 @@ function driven_region {
     escape)
         verdict="fail still open"
         log_since "$start" | grep -q 'selection canceled' && verdict=pass
+        [[ "$verdict" == pass && "$(count_captures)" != "$files" ]] && verdict="fail canceling left a file"
         check_output escape "$verdict"
         ;;
-    select) check_capture region 0.25,0.25,0.75,0.75 "$start" ;;
+    select) check_capture region "${DRAG_OUTPUT:-first}" 0.25,0.25,0.75,0.75 "$start" ;;
     esac
     if ! log_since "$start" | grep -qE 'copied|selection canceled'; then
         "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
@@ -375,21 +395,242 @@ function driven_region {
     fi
 }
 
-function run_tests {
-    local mode=interactive
-    case "${1:-}" in
-    --no-interactive) mode=none ;;
-    --driven) mode=driven ;;
-    "") ;;
-    *) fail "unknown run flag: $1" ;;
+function memory_kb {
+    awk -v field="$2:" '$1 == field {print $2}' "/proc/$1/smaps_rollup" 2>/dev/null || echo 0
+}
+
+function memory_sample {
+    MEMORY+=("$1 $(($(memory_kb "$DAEMON" Anonymous) / 1024)) MB anonymous, $(($(memory_kb "$DAEMON" Pss) / 1024)) MB PSS")
+}
+
+function captures_dir {
+    local pictures
+    pictures="$(xdg-user-dir PICTURES 2>/dev/null || true)"
+    [[ -n "$pictures" && "$pictures" != "$HOME" ]] || pictures="$HOME/Pictures"
+    echo "$pictures/Kiekje"
+}
+
+function count_captures {
+    find "$(captures_dir)" -maxdepth 1 -name 'kiekje-*.png' 2>/dev/null | wc -l
+}
+
+function daemon_alive {
+    kill -0 "$DAEMON" 2>/dev/null
+}
+
+function check_save_burst {
+    local count=10 start i saved names unique bad=0 path seconds
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    mark "save burst"
+    for ((i = 1; i <= count; i++)); do
+        capture_and_wait capture fullscreen
+        wait_for_log '^kiekje: (saved|save failed)' 10 "$start" || true
+        start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    done
+    saved="$(sed -n '/^=== save burst ===/,$p' "$RUN/daemon.log" | sed -n 's/^kiekje: saved //p')"
+    names="$(echo "$saved" | grep -c . || true)"
+    unique="$(echo "$saved" | sort -u | grep -c . || true)"
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        if [[ "$(head -c 8 "$path" 2>/dev/null | od -An -tx1 | tr -d ' \n')" != 89504e470d0a1a0a ]]; then
+            bad=$((bad + 1))
+        fi
+        [[ "$(basename "$path")" =~ ^kiekje-fullscreen-[0-9]{8}-[0-9]{6}(-[0-9]+)?\.png$ ]] || bad=$((bad + 1))
+        [[ "$(dirname "$path")" == "$(captures_dir)" ]] || bad=$((bad + 1))
+    done <<<"$saved"
+    seconds="$(echo "$saved" | sed -E 's/.*-([0-9]{8}-[0-9]{6}).*/\1/' | sort | uniq -c | sort -rn | awk 'NR==1{print $1}')"
+    if ((names == count && unique == count && bad == 0)); then
+        check_output save_burst "pass $count captures, $count distinct png files, up to ${seconds:-0} in one second"
+    else
+        check_output save_burst "fail $names saved, $unique distinct, $bad bad names or headers"
+    fi
+    echo "$saved" | xargs -r rm -f
+}
+
+function check_readonly_save {
+    local dir start verdict
+    dir="$(captures_dir)"
+    mkdir -p "$dir"
+    chmod a-w "$dir"
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    mark "read-only save"
+    capture_and_wait capture fullscreen
+    wait_for_log '^kiekje: (saved|save failed)' 10 "$start" || true
+    chmod u+w "$dir"
+    if log_since "$start" | grep -q '^kiekje: save failed' && log_since "$start" | grep -q '^kiekje: copied' && daemon_alive; then
+        verdict="pass save failed with a logged error, the clipboard still got the image"
+    else
+        verdict="fail $(log_since "$start" | grep -E 'save|copied|failed' | paste -sd' ')"
+    fi
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    capture_and_wait capture fullscreen
+    wait_for_log '^kiekje: (saved|save failed)' 10 "$start" || true
+    log_since "$start" | sed -n 's/^kiekje: saved //p' | xargs -r rm -f
+    log_since "$start" | grep -q '^kiekje: saved' || verdict="fail the next capture after a read-only folder did not save"
+    check_output readonly_save "$verdict"
+}
+
+function check_missing_backend {
+    local available choice start
+    available=" $(backends_from_doctor "$RUN/doctor.txt" | paste -sd' ') "
+    for choice in kwin wlroots portal; do
+        [[ "$available" == *" $choice "* ]] || break
+    done
+    if [[ "$available" == *" $choice "* ]]; then
+        check_output missing_backend "unverified, every backend is available here"
+        return
+    fi
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    mark "missing backend $choice"
+    capture_and_wait capture fullscreen --no-save --backend "$choice"
+    if ! log_since "$start" | grep -q '^kiekje: capture failed'; then
+        check_output missing_backend "fail --backend $choice did not report a failure"
+        return
+    fi
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    capture_and_wait capture fullscreen --no-save
+    if daemon_alive && log_since "$start" | grep -q '^kiekje: copied'; then
+        check_output missing_backend "pass --backend $choice: $(grep '^kiekje: capture failed' "$RUN/daemon.log" | tail -n 1 | cut -d: -f3- | xargs), next capture worked"
+    else
+        check_output missing_backend "fail the daemon did not recover after --backend $choice"
+    fi
+}
+
+function check_memory {
+    local round i before middle after
+    memory_sample "after the backend loops:"
+    before="$(memory_kb "$DAEMON" Anonymous)"
+    for round in 1 2; do
+        for ((i = 1; i <= 10; i++)); do
+            mark "memory $round $i"
+            capture_and_wait capture fullscreen --no-save
+        done
+        sleep 3
+        memory_sample "after round $round of 10 fullscreen captures:"
+        [[ "$round" == 1 ]] && middle="$(memory_kb "$DAEMON" Anonymous)"
+    done
+    after="$(memory_kb "$DAEMON" Anonymous)"
+    local verdict=pass
+    ((after - middle < 4096)) || verdict=fail
+    check_output memory "$verdict $(printf '%s; ' "${MEMORY[@]}")round 1 grew $(((middle - before) / 1024)) MB, round 2 grew $(((after - middle) / 1024)) MB, budget 4 MB for round 2"
+}
+
+function check_second_daemon {
+    local output status=0
+    output="$(timeout 10 "$BIN" daemon 2>&1)" || status=$?
+    if ((status == 0)) && [[ "$output" == *"already running"* ]] && daemon_alive; then
+        check_output single_instance "pass a second daemon exited with: already running"
+    else
+        check_output single_instance "fail exit $status: $output"
+    fi
+}
+
+function check_quit {
+    local deadline=$((SECONDS + 10)) output
+    "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
+    while daemon_alive && ((SECONDS < deadline)); do
+        sleep 0.2
+    done
+    if daemon_alive; then
+        check_output quit "fail the daemon still runs 10 s after quit"
+        kill "$DAEMON" 2>/dev/null || true
+    else
+        output="$("$BIN" quit 2>&1)"
+        if [[ "$output" == *"not running"* ]]; then
+            check_output quit "pass the daemon exited and the bus name was released"
+        else
+            check_output quit "fail after quit, a new client saw: $output"
+        fi
+    fi
+    wait "$DAEMON" 2>/dev/null || true
+    if grep -q 'did not unregister from D-Bus' "$RUN/cli.log"; then
+        check_output cli_exit "fail a CLI client printed the GLib D-Bus unregister warning"
+    else
+        check_output cli_exit "pass no GLib warnings from $(grep -c . "$RUN/cli.log" || true) lines of CLI output"
+    fi
+}
+
+function sway_outputs {
+    swaymsg -t get_outputs -r | grep -oP '^ {4}"name": "\K[^"]+'
+}
+
+function apply_layout {
+    LAYOUT_UNDO=()
+    DRAG_OUTPUT=""
+    local primary added
+    [[ "$1" == single ]] && return
+    case "${XDG_CURRENT_DESKTOP:-}" in
+    *sway*)
+        primary="$(sway_outputs | head -n 1)"
+        if [[ "$1" == scale ]]; then
+            swaymsg -q -- output "$primary" scale 1.5
+            LAYOUT_UNDO=(swaymsg -q -- output "$primary" scale 1)
+        else
+            swaymsg -q create_output
+            added="$(sway_outputs | grep -E '^HEADLESS-' | tail -n 1)"
+            if [[ "$1" == multi ]]; then
+                swaymsg -q -- output "$added" mode 1920x1200 scale 1.5 pos -1280 0
+            else
+                swaymsg -q -- output "$added" mode 1920x1200 scale 2 transform 90 pos -600 0
+            fi
+            swaymsg -q -- input type:pointer map_to_output "$added"
+            LAYOUT_UNDO=(swaymsg -q -- output "$added" unplug)
+            primary="$added"
+        fi
+        ;;
+    *Hyprland*)
+        primary="$(hyprctl monitors -j | grep -oP '"name": "\K[^"]+' | head -n 1)"
+        if [[ "$1" == scale ]]; then
+            hyprctl -q keyword monitor "$primary,preferred,auto,1.5"
+            LAYOUT_UNDO=(hyprctl -q keyword monitor "$primary,preferred,auto,1")
+        else
+            hyprctl -q output create headless KIEKJE-LAB
+            if [[ "$1" == multi ]]; then
+                hyprctl -q keyword monitor "KIEKJE-LAB,1920x1200,-1280x0,1.5"
+            else
+                hyprctl -q keyword monitor "KIEKJE-LAB,1920x1200,-600x0,2,transform,1"
+            fi
+            hyprctl -q keyword input:touchdevice:output KIEKJE-LAB
+            LAYOUT_UNDO=(hyprctl -q output remove KIEKJE-LAB)
+            primary=KIEKJE-LAB
+        fi
+        ;;
+    *) fail "layout $1 needs sway or Hyprland; set it up by hand and run without --layout" ;;
     esac
+    DRAG_OUTPUT="$primary"
+    sleep 1
+    check_output layout "$1, region drags on $primary"
+}
+
+function restore_layout {
+    ((${#LAYOUT_UNDO[@]})) || return 0
+    "${LAYOUT_UNDO[@]}" || say "could not restore the output layout"
+}
+
+function run_tests {
+    local mode=interactive layout=single
+    while (($#)); do
+        case "$1" in
+        --no-interactive) mode=none ;;
+        --driven) mode=driven ;;
+        --layout)
+            layout="${2:-}"
+            shift
+            ;;
+        *) fail "unknown run flag: $1" ;;
+        esac
+        shift
+    done
+    [[ "$layout" =~ ^(single|scale|multi|rotated)$ ]] || fail "unknown layout: $layout (single, scale, multi or rotated)"
     import_session_env
 
     LABEL="$(machine_label)"
     RUN="$RESULTS/$LABEL/$(date +%Y%m%d-%H%M%S)"
+    [[ "$layout" == single ]] || RUN="$RUN-$layout"
     mkdir -p "$RUN"
     print_env >"$RUN/env.txt"
     echo "kiekje-lab: logging to $RUN"
+    apply_layout "$layout"
 
     (cd "$REPO" && cargo build --release --bin kiekje-next --example lab_probe 2>&1 | tail -n 3) >"$RUN/build.log" ||
         fail "build failed, see $RUN/build.log"
@@ -405,7 +646,9 @@ function run_tests {
     : >"$RUN/daemon.log"
     "$BIN" daemon >>"$RUN/daemon.log" 2>&1 &
     DAEMON=$!
+    MEMORY=()
     sleep 1
+    memory_sample "idle:"
 
     local backend i
     for backend in auto $(backends_from_doctor "$RUN/doctor.txt"); do
@@ -427,6 +670,13 @@ function run_tests {
         fi
         stop_pattern
     fi
+
+    echo "kiekje-lab: save, error path, memory and lifecycle checks"
+    check_memory
+    check_save_burst
+    check_readonly_save
+    check_missing_backend
+    check_second_daemon
 
     if [[ "$mode" == interactive ]]; then
         echo
@@ -451,8 +701,8 @@ function run_tests {
         echo "selection_ok=$answer" >>"$RUN/manual.txt"
     fi
 
-    "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
-    wait "$DAEMON" 2>/dev/null || true
+    check_quit
+    restore_layout
     summarize_run
     echo
     print_summary_header
@@ -1367,7 +1617,7 @@ function run_driven {
     done < <(
         ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH \
 CARGO_TARGET_DIR=\$HOME/kiekje-target KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && \
-cd \$HOME/kiekje-next && lab/kiekje-lab run --driven'" 2>&1
+cd \$HOME/kiekje-next && lab/kiekje-lab run --driven ${*:2}'" 2>&1
         echo "kiekje-lab: guest exit $?"
     )
     return "$status"
@@ -1388,7 +1638,7 @@ function run_in_vm {
     resolve_ssh "$vm"
     local status=0
     if [[ "${1:-}" == "--auto" ]]; then
-        run_driven "$vm" || status=$?
+        run_driven "$vm" "${@:2}" || status=$?
     else
         ssh "${SSH_ARGS[@]}" -t "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH CARGO_TARGET_DIR=\$HOME/kiekje-target \
 KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && cd \$HOME/kiekje-next && lab/kiekje-lab run $*'" || status=$?
@@ -1408,13 +1658,23 @@ function ready_vms {
 }
 
 function run_all {
-    local vms=("$@") vm failed=()
+    local vms=() flags=() vm failed=()
+    while (($#)); do
+        case "$1" in
+        --layout)
+            flags+=(--layout "${2:-}")
+            shift
+            ;;
+        *) vms+=("$1") ;;
+        esac
+        shift
+    done
     ((${#vms[@]})) || mapfile -t vms < <(ready_vms)
     ((${#vms[@]})) || fail "no VM has a clean snapshot yet; create one with: kiekje-lab up <vm> <iso>"
     for vm in "${vms[@]}"; do
         echo
         say "== $vm"
-        if ! (reset_vm "$vm" && wait_for_ssh "$vm" && sync_vm "$vm" && run_in_vm "$vm" --auto); then
+        if ! (reset_vm "$vm" && wait_for_ssh "$vm" && sync_vm "$vm" && run_in_vm "$vm" --auto "${flags[@]}"); then
             failed+=("$vm")
         fi
         vsh destroy "$vm" >/dev/null 2>&1 || true
@@ -1426,7 +1686,7 @@ function run_all {
 
 case "${1:-}" in
 env) print_env ;;
-run) run_tests "${2:-}" ;;
+run) run_tests "${@:2}" ;;
 results) show_results ;;
 vms) list_vms ;;
 start) start_vm "${2:-}" ;;
