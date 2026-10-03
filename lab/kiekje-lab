@@ -351,6 +351,34 @@ function pixel_fullscreen {
     check_capture fullscreen all 0,0,1,1 "$start"
 }
 
+function drag_points {
+    if [[ "${TABLET_SPANS:-0}" != 1 ]]; then
+        echo "2500 2500 7500 7500"
+        return
+    fi
+    # The tablet spans the whole desktop here, so aim at 25% to 75% of the drag output inside it.
+    awk -v target="$DRAG_OUTPUT" '
+        $1 == "lab_probe:" && $2 == "monitor" {
+            split($4, size, /[x+-]/)
+            match($4, /[+-][0-9.]+[+-][0-9.]+$/)
+            offsets = substr($4, RSTART, RLENGTH)
+            match(offsets, /^[+-][0-9.]+/)
+            x = substr(offsets, 1, RLENGTH) + 0
+            y = substr(offsets, RLENGTH + 1) + 0
+            w = size[1] + 0; h = size[2] + 0
+            if (n++ == 0 || x < bx0) bx0 = x
+            if (n == 1 || y < by0) by0 = y
+            if (n == 1 || x + w > bx1) bx1 = x + w
+            if (n == 1 || y + h > by1) by1 = y + h
+            if ($3 == target) { tx = x; ty = y; tw = w; th = h }
+        }
+        END {
+            bw = bx1 - bx0; bh = by1 - by0
+            printf "%d %d %d %d\n", (tx + tw / 4 - bx0) / bw * 10000, (ty + th / 4 - by0) / bh * 10000,
+                (tx + tw * 3 / 4 - bx0) / bw * 10000, (ty + th * 3 / 4 - by0) / bh * 10000
+        }' "$RUN/probe.log"
+}
+
 function driven_region {
     local check="$1" start verdict files
     start=$(($(wc -l <"$RUN/daemon.log") + 1))
@@ -374,7 +402,11 @@ function driven_region {
             verdict="pass a trigger during the overlay was dropped and logged"
         check_output double_trigger "$verdict"
     fi
-    echo "kiekje-lab: inject $check"
+    if [[ "$check" == select ]]; then
+        echo "kiekje-lab: inject select $(drag_points)"
+    else
+        echo "kiekje-lab: inject $check"
+    fi
     wait_for_log 'copied|selection canceled|capture failed|nothing to deliver' 15 "$start" ||
         echo "kiekje: lab timeout waiting for the daemon" >>"$RUN/daemon.log"
     case "$check" in
@@ -515,6 +547,21 @@ function check_memory {
     check_output memory "$verdict $(printf '%s; ' "${MEMORY[@]}")round 1 grew $(((middle - before) / 1024)) MB, round 2 grew $(((after - middle) / 1024)) MB, budget 4 MB for round 2"
 }
 
+function check_shortcuts {
+    local lines
+    if ! wait_for_log '^kiekje: (shortcut .* (bound|registered)|global shortcuts are off)' 15 1; then
+        check_output shortcuts "unverified, no registration result after 15 s; the desktop is probably asking in a dialog"
+        return
+    fi
+    sleep 1
+    lines="$(grep -E '^kiekje: (shortcut .* (bound|registered)|global shortcuts are off)' "$RUN/daemon.log" | cut -d' ' -f2- | paste -sd';')"
+    if grep -q 'global shortcuts are off' <<<"$lines"; then
+        check_output shortcuts "unavailable $lines"
+    else
+        check_output shortcuts "pass $lines"
+    fi
+}
+
 function check_second_daemon {
     local output status=0
     output="$(timeout 10 "$BIN" daemon 2>&1)" || status=$?
@@ -557,6 +604,7 @@ function sway_outputs {
 function apply_layout {
     LAYOUT_UNDO=()
     DRAG_OUTPUT=""
+    TABLET_SPANS=0
     local primary added
     [[ "$1" == single ]] && return
     case "${XDG_CURRENT_DESKTOP:-}" in
@@ -590,7 +638,7 @@ function apply_layout {
             else
                 hyprctl -q keyword monitor "KIEKJE-LAB,1920x1200,-600x0,2,transform,1"
             fi
-            hyprctl -q keyword input:touchdevice:output KIEKJE-LAB
+            TABLET_SPANS=1
             LAYOUT_UNDO=(hyprctl -q output remove KIEKJE-LAB)
             primary=KIEKJE-LAB
         fi
@@ -649,6 +697,7 @@ function run_tests {
     MEMORY=()
     sleep 1
     memory_sample "idle:"
+    check_shortcuts
 
     local backend i
     for backend in auto $(backends_from_doctor "$RUN/doctor.txt"); do
@@ -977,6 +1026,20 @@ function guest_mount_share {
         echo "kiekje $HOME/kiekje-next virtiofs ro,nofail 0 0" | sudo -n tee -a /etc/fstab >/dev/null
     mountpoint -q "$HOME/kiekje-next" || sudo -n mount "$HOME/kiekje-next"
     ls "$HOME/kiekje-next/Cargo.toml" >/dev/null
+}
+
+function guest_grant_screenshot {
+    import_session_env
+    # Without a stored grant the portal asks in a dialog, and an unanswered dialog stalls every later portal call.
+    busctl --user call org.freedesktop.impl.portal.PermissionStore /org/freedesktop/impl/portal/PermissionStore \
+        org.freedesktop.impl.portal.PermissionStore SetPermission sbssas screenshot true screenshot "" 1 yes
+}
+
+function guest_unmount_share {
+    if mountpoint -q "$HOME/kiekje-next"; then
+        sync
+        sudo -n umount "$HOME/kiekje-next"
+    fi
 }
 
 function guest_install_kiekje {
@@ -1331,6 +1394,8 @@ function provision_vm {
         fail "installing packages in $vm failed; see the package manager output above"
     say "installing the Rust toolchain with rustup"
     remote "$vm" guest_install_rust || fail "installing Rust in $vm failed; see the rustup output above"
+    say "granting host apps the screenshot portal permission"
+    remote "$vm" guest_grant_screenshot || say "could not store the screenshot permission; the first portal capture will ask"
     finish_step "$vm" provision
 }
 
@@ -1356,6 +1421,7 @@ function sync_vm {
     if [[ "${2:-}" == "--virtiofs" ]]; then
         share_virtiofs "$vm"
     elif [[ "$(state_get "$vm" SYNC)" == "virtiofs" ]]; then
+        remote "$vm" guest_mount_share || fail "mounting the share in $vm failed; see the output above"
         say "$vm reads the repo over virtiofs, nothing to copy"
     else
         resolve_ssh "$vm"
@@ -1403,6 +1469,10 @@ function snapshot_vm {
     if has_snapshot "$vm" "$label"; then
         say "replacing the existing $label snapshot of $vm"
         vsh snapshot-delete "$vm" "$label" >/dev/null
+    fi
+    if [[ "$(state_get "$vm" SYNC)" == virtiofs && "$(domain_state "$vm")" == running ]]; then
+        # virtiofsd cannot restore a mounted share from a live snapshot, so the snapshot holds it unmounted.
+        remote "$vm" guest_unmount_share || fail "unmounting the share in $vm failed"
     fi
     local error
     if ! error="$(vsh snapshot-create-as "$vm" "$label" "kiekje-lab $(date -Iseconds)" 2>&1)"; then
@@ -1581,7 +1651,7 @@ function send_input {
 
 function pointer_at {
     printf '{"type":"abs","data":{"axis":"x","value":%d}},{"type":"abs","data":{"axis":"y","value":%d}}' \
-        $(($1 * 32767 / 100)) $(($2 * 32767 / 100))
+        $(($1 * 32767 / 10000)) $(($2 * 32767 / 10000))
 }
 
 function left_button {
@@ -1589,13 +1659,13 @@ function left_button {
 }
 
 function inject_drag {
-    local vm="$1" percent
-    send_input "$vm" "$(pointer_at 25 25)"
+    local vm="$1" x0="${2:-2500}" y0="${3:-2500}" x1="${4:-7500}" y1="${5:-7500}" step
+    send_input "$vm" "$(pointer_at "$x0" "$y0")"
     sleep 0.2
     send_input "$vm" "$(left_button true)"
-    for percent in 30 40 50 60 70 75; do
+    for step in 1 2 3 4 5 6; do
         sleep 0.05
-        send_input "$vm" "$(pointer_at "$percent" "$percent")"
+        send_input "$vm" "$(pointer_at $((x0 + (x1 - x0) * step / 6)) $((y0 + (y1 - y0) * step / 6)))"
     done
     sleep 0.2
     send_input "$vm" "$(left_button false)"
@@ -1604,16 +1674,19 @@ function inject_drag {
 function inject {
     case "$2" in
     escape) vsh send-key "$1" KEY_ESC >/dev/null ;;
-    select) inject_drag "$1" ;;
+    select) inject_drag "$1" "${@:3}" ;;
     esac || say "injecting $2 into $1 failed"
 }
 
 function run_driven {
-    local vm="$1" line status=1
+    local vm="$1" line status=1 points
     while IFS= read -r line; do
         echo "$line"
         [[ "$line" == "kiekje-lab: guest exit 0" ]] && status=0
-        [[ "$line" =~ ^kiekje-lab:\ inject\ (escape|select)$ ]] && inject "$vm" "${BASH_REMATCH[1]}"
+        if [[ "$line" =~ ^kiekje-lab:\ inject\ (escape|select)((\ [0-9]+){4})?$ ]]; then
+            read -ra points <<<"${BASH_REMATCH[2]}"
+            inject "$vm" "${BASH_REMATCH[1]}" "${points[@]}"
+        fi
     done < <(
         ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH \
 CARGO_TARGET_DIR=\$HOME/kiekje-target KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && \

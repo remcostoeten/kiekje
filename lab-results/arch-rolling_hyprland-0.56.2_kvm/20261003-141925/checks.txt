@@ -1,0 +1,13 @@
+pixels_fullscreen=pass 1280x800, 256/256 samples
+clipboard_fullscreen=pass 23282 bytes, same as the saved file
+double_trigger=pass a trigger during the overlay was dropped and logged
+escape=pass
+pixels_region=pass 641x401, 256/256 samples
+clipboard_region=pass 7497 bytes, same as the saved file
+memory=pass idle: 51 MB anonymous, 94 MB PSS; after the backend loops: 72 MB anonymous, 115 MB PSS; after round 1 of 10 fullscreen captures: 72 MB anonymous, 115 MB PSS; after round 2 of 10 fullscreen captures: 60 MB anonymous, 103 MB PSS; round 1 grew 0 MB, round 2 grew -11 MB, budget 4 MB for round 2
+save_burst=pass 10 captures, 10 distinct png files, up to 2 in one second
+readonly_save=pass save failed with a logged error, the clipboard still got the image
+missing_backend=pass --backend kwin: backend unavailable: no `kwin` capture backend in this session; run `kiekje-next doctor`, next capture worked
+single_instance=pass a second daemon exited with: already running
+quit=pass the daemon exited and the bus name was released
+cli_exit=pass no GLib warnings from 2 lines of CLI output

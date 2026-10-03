@@ -90,12 +90,12 @@ When GDK is not on Wayland or the compositor has no `zwlr_layer_shell_v1`, the o
 
 ## Not verified
 
-- A real Hyprland or Omarchy session, Sway and X11.
-- Keyboard focus for the fullscreen overlay on GNOME.
-- Rotated monitors on KWin, the portal and real hardware. Sway virtual outputs pass, see "Layouts" below.
-- Two or more physical monitors outside KDE, and any multi-monitor layout on GNOME or Hyprland.
+- Omarchy, Hyprland on real hardware, and X11. Hyprland 0.56.2 and Plasma 6.7.5 run in VMs with software rendering, see "KDE and Hyprland VMs" below.
+- Keyboard focus for the fullscreen overlay on GNOME when triggered by a real global shortcut.
+- Rotated monitors on KWin, the portal and real hardware. Sway and Hyprland virtual outputs pass, see "Layouts" below.
+- Two or more physical monitors outside KDE, and any multi-monitor layout on GNOME or KWin in a VM.
 - A selection across a monitor edge. The overlay keeps a drag on the monitor where it started, so this is a missing feature, not a passing test.
-- Global shortcuts through the GlobalShortcuts portal (v2 is present on this machine).
+- Global shortcuts on GNOME and on this KDE host. KDE and Hyprland pass in VMs, see "Global shortcuts" below.
 - Hiding the tray menu before capture. There is no tray yet.
 
 ## GNOME 50 in a VM
@@ -180,7 +180,7 @@ The checked PNGs stay in `png/` inside the run folder, which git ignores.
 | `multi` | adds a headless 1920x1200 output at 1.5, logical 1280x800 at -1280,0 | the headless output |
 | `rotated` | adds a headless 1920x1200 output at 2.0, turned 90 degrees, logical 600x960 at -600,0 | the headless output |
 
-On sway the extra output comes from `create_output` and the QEMU tablet is mapped to it with `map_to_output`. The Hyprland branch uses `hyprctl output create headless` and is unverified until a Hyprland VM exists.
+On sway the extra output comes from `create_output` and the QEMU tablet is mapped to it with `map_to_output`. On Hyprland it comes from `hyprctl output create headless`, and the drag is aimed inside the tablet's whole-desktop range instead.
 
 Results on 2026-10-03, every check passed:
 
@@ -191,6 +191,9 @@ Results on 2026-10-03, every check passed:
 | test-arch | rotated | 3760x1920, 223/223 (33 samples fall between monitors) | 602x962 on HEADLESS-1 |
 | test-ubuntu, sway | scale | 1280x800, 256/256 | 642x402 |
 | test-ubuntu | multi | 3840x1200, 256/256 | 962x602 on HEADLESS-1 |
+| test-hypr, Hyprland 0.56.2 | scale | 1280x800, 256/256 | 642x402 |
+| test-hypr | multi | 3840x1200, 256/256 | 962x602 on KIEKJE-LAB |
+| test-hypr | rotated | 3760x1920, 223/223 | 602x962 on KIEKJE-LAB |
 
 This covers mixed scale 1.0 + 1.5 and 1.0 + 2.0, a negative origin, a rotated output and a crop on a fractional-scaled monitor. Clipboard readback matched the saved file in every run. GDK reported scale 3.2 for the rotated headless output at scale 2; Kiekje derives its scale from frame size over logical size, so this did not affect it.
 
@@ -210,7 +213,7 @@ Every `run` now also writes these lines to `checks.txt`:
 | `quit` | The daemon exits within 10 s of `quit` and a new client reports `not running`. |
 | `cli_exit` | No CLI client printed the GLib D-Bus unregister warning. |
 
-Results on 2026-10-03, every check passed on test-arch, test-ubuntu and test-fedora. Memory on the 1280x800 VMs, anonymous:
+Results on 2026-10-03, every check passed on test-arch, test-ubuntu, test-fedora, test-kde and test-hypr. On test-fedora the clipboard lines are `unverified` (no data-control protocol) and `shortcuts` is `unverified` (GNOME asks in a dialog). On the sway VMs `shortcuts` is `unavailable` because `xdg-desktop-portal-wlr` has no GlobalShortcuts. Memory on the 1280x800 VMs, anonymous:
 
 | VM | Idle | After backend loops and overlays | Round 1 growth | Round 2 growth |
 | --- | --- | --- | --- | --- |
@@ -220,11 +223,44 @@ Results on 2026-10-03, every check passed on test-arch, test-ubuntu and test-fed
 
 The save burst landed up to 2 captures in the same second; the second got the `-2` suffix from the exclusive create.
 
+## KDE and Hyprland VMs
+
+Both are clones of `test-arch` with the desktop installed over SSH instead of from an installer ISO, so no installer was clicked through.
+
+- `test-kde`: Plasma 6.7.5 on Wayland, started by `startplasma-wayland` from tty autologin, screen locking and display power-off disabled. KWin ScreenShot2 and the portal both work. The first portal Screenshot showed Plasma's "Allow Apps to Take Screenshots?" dialog; it was allowed once and the grant is in the clean snapshot.
+- `test-hypr`: Hyprland 0.56.2 with `xdg-desktop-portal-hyprland`, started by `start-hyprland` from tty autologin. `ext-image-copy-capture`, `wlr-screencopy` and the portal work. GlobalShortcuts is v1.
+- Cloning broke the network: cloud-init's `10-cloud-init-eth0.network` matches the old MAC address. The match line was removed through the guest agent.
+- Omarchy itself was not installed. It needs its own installer on top of Arch.
+
+Lab fixes found on the way:
+
+- The virtiofs share was not mounted in the clones, so the guest ran a stale rsync copy of the lab script. `sync` now mounts the share on every run.
+- A live snapshot taken with the share mounted could not be restored (`vhost-user-fs` back-end state). `snapshot` now unmounts the share first.
+- On Hyprland an unanswered portal permission dialog from `xdg-desktop-portal-gtk` stalled every later portal call, including the Settings calls GTK makes at startup. The pattern window then never showed, `capture` took 2 s per detection timeout, and `quit` with no daemon hung. `provision` now stores the screenshot grant for host apps in the permission store.
+- Hyprland has no way to map the QEMU tablet to one output, so the tablet spans the whole desktop. For the `multi` and `rotated` layouts the guest now computes the drag from the monitor geometry that `lab_probe show` prints and sends it with the inject line.
+
+## Global shortcuts
+
+The daemon registers `capture-region` (preferred `Print`) and `capture-fullscreen` (preferred `Shift+Print`) through the GlobalShortcuts portal at startup. It uses the GTK application's own D-Bus connection, because GTK registers the app id `dev.remcostoeten.KiekjeNext` with `org.freedesktop.host.portal.Registry` on it; the portal then names the shortcuts after the app. Activations arrive as signals on the main loop and start a saved capture through the same path as the CLI. Without a portal the daemon logs `global shortcuts are off` and keeps running.
+
+- KDE (`test-kde`): Plasma showed "Global Shortcuts Requested" with both shortcuts and their preferred keys. After OK, `BindShortcuts` returned `Print` and `Shift+Print`. Pressing Shift+Print through QEMU made a KWin fullscreen capture; Print opened the region overlay with keyboard focus, and Escape canceled it. The accepted bindings are in the clean snapshot.
+- Hyprland (`test-hypr`): xdph registered `dev.remcostoeten.KiekjeNext:capture-region` and `:capture-fullscreen` without keys, as `hyprctl globalshortcuts` shows. `hyprctl dispatch global dev.remcostoeten.KiekjeNext:capture-fullscreen` made a saved capture. On Hyprland the daemon logs the `bind = ..., global, ...` line to add to `hyprland.conf`; writing a managed include is still open.
+- Not tested: GNOME (GlobalShortcuts v1 in the Fedora VM), real key presses on Hyprland, and the KDE host, where registering would add bindings to the real `kglobalshortcutsrc`.
+
+Every lab run now writes a `shortcuts` line: `pass` with the bound triggers, `unavailable` when the session has no portal for it, or `unverified` when nothing came back within 15 s because the desktop is asking in a dialog.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
-2. Pre-create or warm the overlay so the first capture after login is not slower than later ones.
+2. Done: the daemon warms the overlay when it starts idle. It realizes a window that is never mapped and renders one small overlay-like frame offscreen, which loads the GL driver, the renderer and the label font. Measured on this desktop (NVIDIA, Plasma 6.7.5, 4K at 1.5), release build, fresh daemon each run:
+
+   | | Samples | First overlay painted | Idle after 6 s |
+   | --- | --- | --- | --- |
+   | Without warm-up | 4 | 246 to 432 ms | 72 MB PSS, 21 MB anonymous |
+   | With warm-up | 4 | 98 to 118 ms | 117 to 132 MB PSS, 36 to 37 MB anonymous |
+
+   The warm-up itself takes 222 to 313 ms on the main thread right after start. A trigger in that window waits for it, which is no slower than a cold overlay. The extra memory is the same driver cost every daemon paid after its first region capture anyway. A daemon started by `capture` skips the warm-up, because its first overlay does the same work.
 3. Done: memory growth came from the glibc heap, see above.
-4. GlobalShortcuts portal registration on KDE and Hyprland, then the Hyprland managed `bind` include.
+4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Open: the Hyprland managed `bind` include, rebinding from settings, and persisting a user's disabled shortcuts.
 5. Done: CLI clients that forward to the running instance, and `quit` with nothing running, now leave through `g_application_run` with a `handle-local-options` handler that exits at once. GLib no longer warns about the D-Bus registration.
-6. Run `lab/kiekje-lab run` in a Hyprland or Omarchy session, and the interactive `run-vm` in the GNOME VM to answer the focus question.
+6. Partly done: Hyprland runs in `test-hypr`. Still open: an Omarchy session, and GNOME overlay focus when triggered by a real global shortcut.

@@ -1,0 +1,7 @@
+lab_probe: monitor Virtual-1 1280x800+0+0 scale 1
+MESA-EGL: warning: egl: failed to create dri2 screen
+MESA-EGL: warning: egl: failed to create dri2 screen
+lab_probe: monitor KIEKJE-LAB 600x960-600+0 scale 3.2
+lab_probe: pattern shown
+lab_probe: wrote 147601 clipboard bytes to /home/kiek/kiekje-results/arch-rolling_hyprland-0.56.2_kvm/20261003-142624-rotated/png/fullscreen-clipboard.png
+lab_probe: wrote 14245 clipboard bytes to /home/kiek/kiekje-results/arch-rolling_hyprland-0.56.2_kvm/20261003-142624-rotated/png/region-clipboard.png

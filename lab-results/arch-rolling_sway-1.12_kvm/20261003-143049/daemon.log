@@ -1,0 +1,376 @@
+
+(process:965): Gdk-WARNING **: 14:30:58.002: Cannot get portal org.freedesktop.portal.Inhibit version: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: No such interface “org.freedesktop.portal.Inhibit”
+kiekje: global shortcuts are off: no GlobalShortcuts portal: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: No such interface “org.freedesktop.portal.GlobalShortcuts”
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA-EGL: warning: MESA-LOADER: failed to retrieve device information
+MESA-EGL: warning: failed to get driver name for fd -1
+MESA: error: ZINK: vkCreateInstance failed (VK_ERROR_INCOMPATIBLE_DRIVER)
+MESA-EGL: warning: egl: failed to create dri2 screen
+kiekje: overlay warmed up in 409.9 ms
+=== fullscreen auto 1 ===
+kiekje: timing trigger -> instance: 8.2 ms
+kiekje: timing instance -> frames: 14.3 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 29.5 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen auto 2 ===
+kiekje: timing trigger -> instance: 5.0 ms
+kiekje: timing instance -> frames: 13.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 25.2 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen auto 3 ===
+kiekje: timing trigger -> instance: 3.2 ms
+kiekje: timing instance -> frames: 21.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 30.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen auto 4 ===
+kiekje: timing trigger -> instance: 23.3 ms
+kiekje: timing instance -> frames: 84.8 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 119.3 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen auto 5 ===
+kiekje: timing trigger -> instance: 4.7 ms
+kiekje: timing instance -> frames: 20.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 41.1 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen wlroots 1 ===
+kiekje: timing trigger -> instance: 5.2 ms
+kiekje: timing instance -> frames: 22.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 40.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen wlroots 2 ===
+kiekje: timing trigger -> instance: 2.7 ms
+kiekje: timing instance -> frames: 18.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 29.1 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen wlroots 3 ===
+kiekje: timing trigger -> instance: 2.5 ms
+kiekje: timing instance -> frames: 14.3 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 24.3 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen wlroots 4 ===
+kiekje: timing trigger -> instance: 3.5 ms
+kiekje: timing instance -> frames: 8.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 17.4 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen wlroots 5 ===
+kiekje: timing trigger -> instance: 3.6 ms
+kiekje: timing instance -> frames: 10.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 22.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen portal 1 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 56.1 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 65.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen portal 2 ===
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 50.9 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 57.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen portal 3 ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 56.6 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 62.2 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen portal 4 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 45.0 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 52.3 ms
+kiekje: copied 1280x800 to the clipboard
+=== fullscreen portal 5 ===
+kiekje: timing trigger -> instance: 1.7 ms
+kiekje: timing instance -> frames: 49.3 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: timing trigger -> clipboard offered: 53.7 ms
+kiekje: copied 1280x800 to the clipboard
+=== pixels fullscreen ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 9.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 14.9 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143124.png
+=== region escape ===
+kiekje: timing trigger -> instance: 1.5 ms
+kiekje: timing instance -> frames: 4.8 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> overlay painted: 118.5 ms
+kiekje: a capture is already running, ignoring this trigger
+kiekje: selection canceled, nothing saved
+=== region select ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 12.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> overlay painted: 66.3 ms
+kiekje: selected 641x401+319+199 on Virtual-1
+kiekje: timing trigger -> clipboard offered: 1970.6 ms
+kiekje: copied 641x401 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-region-20261003-143129.png
+=== memory 1 1 ===
+kiekje: timing trigger -> instance: 1.9 ms
+kiekje: timing instance -> frames: 5.1 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 11.1 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 2 ===
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 5.9 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 13.2 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 3 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 12.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 20.1 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 4 ===
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 5.8 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 12.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 5 ===
+kiekje: timing trigger -> instance: 1.6 ms
+kiekje: timing instance -> frames: 7.6 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 13.2 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 6 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 9.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 23.7 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 7 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 8.9 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 15.3 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 8 ===
+kiekje: timing trigger -> instance: 1.8 ms
+kiekje: timing instance -> frames: 5.1 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 10.7 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 9 ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 6.1 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 12.4 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 1 10 ===
+kiekje: timing trigger -> instance: 1.8 ms
+kiekje: timing instance -> frames: 4.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 9.8 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 1 ===
+kiekje: timing trigger -> instance: 5.9 ms
+kiekje: timing instance -> frames: 25.3 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 37.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 2 ===
+kiekje: timing trigger -> instance: 5.0 ms
+kiekje: timing instance -> frames: 10.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 21.3 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 3 ===
+kiekje: timing trigger -> instance: 3.5 ms
+kiekje: timing instance -> frames: 17.8 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 30.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 4 ===
+kiekje: timing trigger -> instance: 2.6 ms
+kiekje: timing instance -> frames: 8.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 22.1 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 5 ===
+kiekje: timing trigger -> instance: 3.0 ms
+kiekje: timing instance -> frames: 8.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 19.0 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 6 ===
+kiekje: timing trigger -> instance: 2.9 ms
+kiekje: timing instance -> frames: 11.3 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 19.1 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 7 ===
+kiekje: timing trigger -> instance: 2.7 ms
+kiekje: timing instance -> frames: 15.5 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 24.9 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 8 ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 5.1 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 11.8 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 9 ===
+kiekje: timing trigger -> instance: 1.8 ms
+kiekje: timing instance -> frames: 8.5 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 16.8 ms
+kiekje: copied 1280x800 to the clipboard
+=== memory 2 10 ===
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 6.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 13.3 ms
+kiekje: copied 1280x800 to the clipboard
+=== save burst ===
+kiekje: timing trigger -> instance: 1.9 ms
+kiekje: timing instance -> frames: 5.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 11.4 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143146.png
+kiekje: timing trigger -> instance: 2.6 ms
+kiekje: timing instance -> frames: 6.9 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 18.2 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143147.png
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 5.8 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 12.0 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143147-2.png
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 8.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 16.0 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143148.png
+kiekje: timing trigger -> instance: 2.4 ms
+kiekje: timing instance -> frames: 7.6 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 14.2 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143149.png
+kiekje: timing trigger -> instance: 1.9 ms
+kiekje: timing instance -> frames: 7.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 12.8 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143149-2.png
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 8.4 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 15.4 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143150.png
+kiekje: timing trigger -> instance: 2.8 ms
+kiekje: timing instance -> frames: 9.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 17.3 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143150-2.png
+kiekje: timing trigger -> instance: 2.9 ms
+kiekje: timing instance -> frames: 9.7 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 17.0 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143151.png
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 7.3 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 13.3 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143151-2.png
+=== read-only save ===
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 6.3 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 12.3 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: save failed: Permission denied (os error 13)
+kiekje: timing trigger -> instance: 2.2 ms
+kiekje: timing instance -> frames: 6.0 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 12.8 ms
+kiekje: copied 1280x800 to the clipboard
+kiekje: saved /home/kiek/Pictures/Kiekje/kiekje-fullscreen-20261003-143152.png
+=== missing backend kwin ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 0.9 ms
+kiekje: capture failed: backend unavailable: no `kwin` capture backend in this session; run `kiekje-next doctor`
+kiekje: timing trigger -> instance: 1.7 ms
+kiekje: timing instance -> frames: 6.2 ms
+kiekje: backend ext-image-copy-capture
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Bgrx)
+kiekje: timing trigger -> clipboard offered: 10.7 ms
+kiekje: copied 1280x800 to the clipboard

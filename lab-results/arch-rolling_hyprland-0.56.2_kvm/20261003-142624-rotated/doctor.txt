@@ -1,0 +1,10 @@
+session      tty / Hyprland
+overlay      layer-shell
+monitor      Virtual-1 1280x800+0+0 scale 1
+monitor      KIEKJE-LAB 600x960-600+0 scale 3.2
+portal       Screenshot      v2
+portal       ScreenCast      v6
+portal       GlobalShortcuts v1
+capture      ext-image-copy-capture  cursor yes native yes sandbox no
+capture      wlr-screencopy          cursor yes native yes sandbox no
+capture      xdg-desktop-portal      cursor no native no sandbox yes
