@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
@@ -72,25 +73,13 @@ pub fn run(command: Command) -> glib::ExitCode {
     }
 
     if app.is_remote() {
-        match command {
-            Command::Daemon => println!("kiekje: already running"),
-            Command::Quit => app.activate_action("quit", None),
-            Command::Capture(request) => {
-                app.activate_action("capture", Some(&request.to_variant()))
-            }
-        }
-        if let Some(connection) = app.dbus_connection()
-            && let Err(error) = connection.flush_sync(gio::Cancellable::NONE)
-        {
-            eprintln!("kiekje: could not reach the running instance: {error}");
-            return glib::ExitCode::FAILURE;
-        }
-        return glib::ExitCode::SUCCESS;
+        let code = forward(&app, command);
+        return exit_without_running(&app, code);
     }
 
     if matches!(command, Command::Quit) {
         println!("kiekje: not running");
-        return glib::ExitCode::SUCCESS;
+        return exit_without_running(&app, glib::ExitCode::SUCCESS);
     }
 
     let clipboard = match Clipboard::start() {
@@ -120,6 +109,27 @@ pub fn run(command: Command) -> glib::ExitCode {
     let code = app.run_with_args(&["kiekje-next"]);
     drop(hold);
     code
+}
+
+fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
+    match command {
+        Command::Daemon => println!("kiekje: already running"),
+        Command::Quit => app.activate_action("quit", None),
+        Command::Capture(request) => app.activate_action("capture", Some(&request.to_variant())),
+    }
+    if let Some(connection) = app.dbus_connection()
+        && let Err(error) = connection.flush_sync(gio::Cancellable::NONE)
+    {
+        eprintln!("kiekje: could not reach the running instance: {error}");
+        return glib::ExitCode::FAILURE;
+    }
+    glib::ExitCode::SUCCESS
+}
+
+fn exit_without_running(app: &gtk::Application, code: glib::ExitCode) -> glib::ExitCode {
+    // Only g_application_run releases the D-Bus registration; dropping a registered app makes GLib warn.
+    app.connect_handle_local_options(move |_, _| ControlFlow::Break(code));
+    app.run_with_args(&["kiekje-next"])
 }
 
 fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
@@ -226,16 +236,27 @@ fn handle_capture(
                 frames,
                 monitors,
                 move |selection| match selection {
-                    Some(selection) => deliver(
-                        Box::new(move || {
-                            Some(output::crop(
-                                &selection_frames[selection.frame_index],
-                                selection.rect,
-                            ))
-                        }),
-                        request,
-                        session,
-                    ),
+                    Some(selection) => {
+                        let rect = selection.rect;
+                        println!(
+                            "kiekje: selected {}x{}+{}+{} on {}",
+                            rect.width,
+                            rect.height,
+                            rect.x,
+                            rect.y,
+                            selection_frames[selection.frame_index].monitor.connector,
+                        );
+                        deliver(
+                            Box::new(move || {
+                                Some(output::crop(
+                                    &selection_frames[selection.frame_index],
+                                    selection.rect,
+                                ))
+                            }),
+                            request,
+                            session,
+                        )
+                    }
                     None => {
                         println!("kiekje: selection canceled, nothing saved");
                         session.busy.set(false);
