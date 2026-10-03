@@ -1,0 +1,24 @@
+kiekje: wrote /home/kiek/.local/share/applications/dev.remcostoeten.KiekjeNext.desktop
+kiekje: not running
+
+(process:6249): GLib-GIO-WARNING **: 18:24:38.103: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:6453): GLib-GIO-WARNING **: 18:25:09.342: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:6704): GLib-GIO-WARNING **: 18:25:50.103: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:7025): GLib-GIO-WARNING **: 18:26:31.334: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:7273): GLib-GIO-WARNING **: 18:27:12.060: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:7527): GLib-GIO-WARNING **: 18:27:53.293: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:7778): GLib-GIO-WARNING **: 18:28:34.534: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:8027): GLib-GIO-WARNING **: 18:29:15.273: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:8263): GLib-GIO-WARNING **: 18:29:56.177: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:8436): GLib-GIO-WARNING **: 18:30:37.146: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:8692): GLib-GIO-WARNING **: 18:31:18.450: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().

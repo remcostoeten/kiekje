@@ -1,0 +1,1145 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+RESULTS="${KIEKJE_LAB_RESULTS:-$REPO/lab-results}"
+LIBVIRT="qemu:///system"
+VM_USER="${KIEKJE_LAB_USER:-kiek}"
+VM_REPO="${KIEKJE_LAB_REPO:-/home/$VM_USER/kiekje-next}"
+CAPTURES="${KIEKJE_LAB_CAPTURES:-5}"
+STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/kiekje-lab"
+ISO_DIR="${KIEKJE_LAB_ISOS:-$HOME/vm/isos}"
+SSH_KEY="${KIEKJE_LAB_KEY:-$HOME/.ssh/id_ed25519}"
+OVMF_CODE="${KIEKJE_LAB_OVMF_CODE:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}"
+OVMF_VARS="${KIEKJE_LAB_OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}"
+VIRTIOFSD="${KIEKJE_LAB_VIRTIOFSD:-/usr/lib/virtiofsd}"
+QEMU_IMG="${KIEKJE_LAB_QEMU_IMG:-/usr/bin/qemu-img}"
+BOOTSTRAP_PORT="${KIEKJE_LAB_PORT:-8649}"
+STEPS=(new installed bootstrap provision sync install snapshot)
+
+declare -A PACKAGES=(
+    [arch]="gcc make pkgconf gtk4 gtk4-layer-shell wayland dbus xdg-desktop-portal rsync curl"
+    [fedora]="gcc make pkgconf-pkg-config gtk4-devel gtk4-layer-shell-devel wayland-devel dbus xdg-desktop-portal rsync curl"
+    [debian]="build-essential pkg-config libgtk-4-dev libgtk4-layer-shell-dev libwayland-dev dbus xdg-desktop-portal rsync curl"
+    [suse]="gcc make pkg-config gtk4-devel gtk4-layer-shell-devel wayland-devel dbus-1 xdg-desktop-portal rsync curl"
+)
+declare -A PORTALS=(
+    [gnome]=xdg-desktop-portal-gnome
+    [kde]=xdg-desktop-portal-kde
+    [hyprland]=xdg-desktop-portal-hyprland
+    [sway]=xdg-desktop-portal-wlr
+    [other]=xdg-desktop-portal-gtk
+)
+
+USAGE="usage:
+  kiekje-lab env                     print what this machine and session are
+  kiekje-lab run [--no-interactive]  build, test and log this session to lab-results/
+  kiekje-lab results                 summarize every run of every machine
+  kiekje-lab vms                     list libvirt VMs with state, address, distro and snapshot
+  kiekje-lab start <vm>              boot a VM and open its screen
+  kiekje-lab run-vm <vm> [args]      run the tests inside a VM over SSH
+  kiekje-lab stop <vm>               shut a VM down
+
+  kiekje-lab doctor-host             check that this host can run lab VMs
+  kiekje-lab up <vm> [iso]           new, wait for the OS install, then bootstrap through snapshot
+  kiekje-lab new <vm> <iso|url> [--ram 6G] [--cpus 4] [--disk 40G] [--no-3d]
+  kiekje-lab iso <vm> <iso|url|--eject>
+  kiekje-lab bootstrap <vm>          enable SSH, the guest agent and your key in a fresh install
+  kiekje-lab provision <vm>          install build dependencies for the guest distro and desktop
+  kiekje-lab sync <vm> [--virtiofs]  copy the repo into the VM, or share it read-only
+  kiekje-lab install <vm>            build, install to ~/.local/bin and run doctor in the VM
+  kiekje-lab snapshot <vm> [label]   take a snapshot, default label clean
+  kiekje-lab reset <vm> [label]      revert to a snapshot, default label clean
+  kiekje-lab ssh <vm> [cmd]          open a shell or run a command in the VM
+  kiekje-lab rm <vm>                 delete a VM and its disk"
+
+function fail {
+    echo "kiekje-lab: $*" >&2
+    exit 1
+}
+
+function say {
+    echo "kiekje-lab: $*"
+}
+
+function import_session_env {
+    if [[ -n "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+        return
+    fi
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+    local line
+    while IFS= read -r line; do
+        export "${line?}"
+    done < <(systemctl --user show-environment 2>/dev/null |
+        grep -E '^(WAYLAND_DISPLAY|DISPLAY|XDG_CURRENT_DESKTOP|XDG_SESSION_TYPE|HYPRLAND_INSTANCE_SIGNATURE)=')
+    [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] || fail "no graphical session found for $(id -un); log in on the VM screen first"
+}
+
+function desktop_version {
+    case "${XDG_CURRENT_DESKTOP:-}" in
+    *GNOME*) gnome-shell --version 2>/dev/null | awk '{print $3}' ;;
+    *KDE*) plasmashell --version 2>/dev/null | awk '{print $2}' ;;
+    *Hyprland*) hyprctl version -j 2>/dev/null | grep -oP '"tag":\s*"v?\K[^"-]+' || Hyprland --version 2>/dev/null | awk 'NR==1{print $2}' ;;
+    *) echo unknown ;;
+    esac
+}
+
+function virt_kind {
+    local kind
+    kind="$(systemd-detect-virt 2>/dev/null || true)"
+    echo "${kind:-none}"
+}
+
+function os_release {
+    sed -nE "s/^$1=\"?([^\"]*)\"?$/\1/p" /etc/os-release
+}
+
+function machine_label {
+    local os desktop
+    local version
+    version="$(os_release VERSION_ID)"
+    os="$(os_release ID)-${version:-rolling}"
+    desktop="$(echo "${XDG_CURRENT_DESKTOP:-none}" | cut -d: -f1 | tr '[:upper:]' '[:lower:]')"
+    echo "${os}_${desktop}-$(desktop_version)_$(virt_kind)"
+}
+
+function print_env {
+    import_session_env
+    echo "label      $(machine_label)"
+    echo "host       $(uname -n)"
+    echo "os         $(os_release PRETTY_NAME)"
+    echo "kernel     $(uname -r)"
+    echo "virt       $(virt_kind)"
+    echo "desktop    ${XDG_CURRENT_DESKTOP:-unset} $(desktop_version)"
+    echo "session    ${XDG_SESSION_TYPE:-unset} wayland=${WAYLAND_DISPLAY:-unset} x11=${DISPLAY:-unset}"
+    echo "gpu        $(lspci 2>/dev/null | grep -iE 'vga|3d|display' | sed 's/^[^ ]* //' | paste -sd';' || echo unknown)"
+    echo "cpu        $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs) ($(nproc) threads)"
+    echo "memory     $(awk '/MemTotal/{printf "%.1f GB", $2/1048576}' /proc/meminfo)"
+    echo "commit     $(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo uncommitted)"
+}
+
+function binary_path {
+    echo "${CARGO_TARGET_DIR:-$REPO/target}/release/kiekje-next"
+}
+
+function backends_from_doctor {
+    awk '$1 == "capture" {print $2}' "$1" | while read -r kind; do
+        case "$kind" in
+        kwin-screenshot2) echo kwin ;;
+        ext-image-copy-capture | wlr-screencopy) echo wlroots ;;
+        xdg-desktop-portal) echo portal ;;
+        esac
+    done | awk '!seen[$0]++'
+}
+
+function mark {
+    echo "=== $* ===" >>"$RUN/daemon.log"
+}
+
+function wait_for_log {
+    local pattern="$1" deadline=$((SECONDS + $2))
+    until grep -qE "$pattern" <(tail -n +"$3" "$RUN/daemon.log"); do
+        ((SECONDS < deadline)) || return 1
+        sleep 0.5
+    done
+}
+
+function capture_and_wait {
+    local start
+    start=$(($(wc -l <"$RUN/daemon.log") + 1))
+    "$BIN" "$@" >>"$RUN/cli.log" 2>&1
+    wait_for_log 'copied|capture failed|canceled|nothing to deliver' 40 "$start" ||
+        echo "kiekje: lab timeout waiting for the daemon" >>"$RUN/daemon.log"
+}
+
+function summarize_run {
+    awk -v run="$(basename "$RUN")" '
+        /^=== fullscreen / { backend = $3; total[backend]++ }
+        /instance -> frames:/ && backend != "" { ms[backend] = ms[backend] " " $(NF-1) }
+        /^kiekje: backend / && backend != "" { used[backend] = $3 }
+        /^kiekje: copied/ && backend != "" { ok[backend]++ }
+        /capture failed|lab timeout/ && backend != "" { failed[backend]++; reason[backend] = $0 }
+        /^=== region/ { backend = "" }
+        END {
+            for (b in total) {
+                n = split(ms[b], values, " ")
+                asort(values)
+                median = n ? values[int((n + 1) / 2)] : "-"
+                printf "%s\t%s\t%s\t%d/%d\t%s\t%s\t%s\n", run, b, used[b] ? used[b] : "-", ok[b], total[b],
+                    n ? values[1] "-" values[n] : "-", median, reason[b]
+            }
+        }' "$RUN/daemon.log" | sort >"$RUN/summary.tsv"
+}
+
+function run_tests {
+    local interactive=1
+    [[ "${1:-}" == "--no-interactive" ]] && interactive=0
+    import_session_env
+
+    LABEL="$(machine_label)"
+    RUN="$RESULTS/$LABEL/$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$RUN"
+    print_env >"$RUN/env.txt"
+    echo "kiekje-lab: logging to $RUN"
+
+    (cd "$REPO" && cargo build --release 2>&1 | tail -n 3) >"$RUN/build.log" || fail "build failed, see $RUN/build.log"
+    BIN="$(binary_path)"
+    [[ -x "$BIN" ]] || fail "no binary at $BIN"
+
+    "$BIN" install-desktop-file >>"$RUN/cli.log" 2>&1
+    "$BIN" doctor >"$RUN/doctor.txt" 2>&1 || true
+    "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
+
+    : >"$RUN/daemon.log"
+    "$BIN" daemon >>"$RUN/daemon.log" 2>&1 &
+    local daemon=$!
+    sleep 1
+
+    local backend i
+    for backend in auto $(backends_from_doctor "$RUN/doctor.txt"); do
+        echo "kiekje-lab: $CAPTURES fullscreen captures with $backend"
+        for ((i = 1; i <= CAPTURES; i++)); do
+            mark "fullscreen $backend $i"
+            capture_and_wait capture fullscreen --no-save --backend "$backend"
+            sleep 1
+        done
+    done
+
+    if ((interactive)); then
+        echo
+        echo "Region test: an overlay will open over the screen in 3 seconds."
+        echo "Press Escape WITHOUT clicking first. If nothing happens after 10 seconds, click once and press Escape."
+        read -rp "Press Enter to start it. " _
+        mark "region escape"
+        sleep 3
+        capture_and_wait capture region --no-save
+        local answer
+        read -rp "Did Escape cancel it without clicking first? [y/n] " answer
+        echo "escape_without_click=$answer" >>"$RUN/manual.txt"
+        read -rp "Any other notes (Enter to skip): " answer
+        [[ -n "$answer" ]] && echo "notes=$answer" >>"$RUN/manual.txt"
+
+        echo
+        echo "Selection test: drag a rectangle on the overlay."
+        read -rp "Press Enter to start it. " _
+        mark "region select"
+        capture_and_wait capture region --no-save
+        read -rp "Did the overlay look right and the selection outline follow the pointer? [y/n] " answer
+        echo "selection_ok=$answer" >>"$RUN/manual.txt"
+    fi
+
+    "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
+    wait "$daemon" 2>/dev/null || true
+    summarize_run
+    echo
+    print_summary_header
+    cat "$RUN/summary.tsv"
+    [[ -f "$RUN/manual.txt" ]] && cat "$RUN/manual.txt"
+    echo "kiekje-lab: done, results in $RUN"
+}
+
+function print_summary_header {
+    printf "run\trequested\tused\tok\trange_ms\tmedian_ms\tlast_error\n"
+}
+
+function show_results {
+    [[ -d "$RESULTS" ]] || fail "no results yet in $RESULTS"
+    local machine
+    for machine in "$RESULTS"/*/; do
+        echo "## $(basename "$machine")"
+        {
+            print_summary_header
+            cat "$machine"*/summary.tsv 2>/dev/null
+        } | column -t -s $'\t'
+        local manual
+        for manual in "$machine"*/manual.txt; do
+            [[ -f "$manual" ]] && echo "$(basename "$(dirname "$manual")"): $(paste -sd' ' "$manual")"
+        done
+        echo
+    done
+}
+
+function vsh {
+    virsh -c "$LIBVIRT" "$@"
+}
+
+function domain_exists {
+    vsh dominfo "$1" >/dev/null 2>&1
+}
+
+function domain_state {
+    vsh domstate "$1" 2>/dev/null | sed -n 1p
+}
+
+function require_domain {
+    [[ -n "$1" ]] || fail "$USAGE"
+    domain_exists "$1" || fail "no VM named $1; list them with: kiekje-lab vms"
+}
+
+function require_running {
+    require_domain "$1"
+    [[ "$(domain_state "$1")" == "running" ]] || fail "$1 is not running; start it with: kiekje-lab start $1"
+}
+
+function state_file {
+    echo "$STATE_DIR/$1.env"
+}
+
+function state_get {
+    local file
+    file="$(state_file "$1")"
+    [[ -f "$file" ]] || return 0
+    sed -n "s/^$2=//p" "$file" | tail -1
+}
+
+function state_set {
+    local file
+    file="$(state_file "$1")"
+    mkdir -p "$STATE_DIR"
+    {
+        grep -v "^$2=" "$file" 2>/dev/null || true
+        echo "$2=$3"
+    } >"$file.tmp"
+    mv "$file.tmp" "$file"
+}
+
+function step_index {
+    local i
+    for i in "${!STEPS[@]}"; do
+        [[ "${STEPS[i]}" == "$1" ]] && echo "$i" && return
+    done
+    echo -1
+}
+
+function step_done {
+    local last
+    last="$(state_get "$1" STEP)"
+    [[ -n "$last" ]] && (($(step_index "$last") >= $(step_index "$2")))
+}
+
+function finish_step {
+    local last
+    last="$(state_get "$1" STEP)"
+    if (($(step_index "$2") == $(step_index "${last:-none}") + 1)); then
+        state_set "$1" STEP "$2"
+    fi
+}
+
+function vm_address {
+    local source address
+    for source in agent lease; do
+        address="$(vsh domifaddr "$1" --source "$source" 2>/dev/null |
+            awk '$3 == "ipv4" && $4 !~ /^127\./ && !found++ {split($4, a, "/"); print a[1]}')"
+        if [[ -n "$address" ]]; then
+            echo "$address"
+            return
+        fi
+    done
+}
+
+function agent {
+    vsh qemu-agent-command "$1" "$2" --timeout 3 2>/dev/null
+}
+
+function agent_ready {
+    agent "$1" '{"execute":"guest-ping"}' >/dev/null
+}
+
+function agent_logged_in_user {
+    agent "$1" '{"execute":"guest-get-users"}' | grep -oP '"user":\s*"\K[^"]+' | grep -vx root | sed -n 1p || true
+}
+
+function vm_user {
+    local user
+    user="$(state_get "$1" VM_USER)"
+    echo "${user:-$VM_USER}"
+}
+
+function resolve_ssh {
+    local address
+    address="$(vm_address "$1")"
+    [[ -n "$address" ]] || fail "$1 has no network address yet; start it with: kiekje-lab start $1"
+    mkdir -p "$STATE_DIR"
+    SSH_TARGET="$(vm_user "$1")@$address"
+    SSH_ARGS=(-i "$SSH_KEY" -o IdentitiesOnly=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new
+        -o UserKnownHostsFile="$STATE_DIR/known_hosts" -o HostKeyAlias="kiekje-lab-$1")
+}
+
+function ssh_ready {
+    [[ -n "$(vm_address "$1")" ]] || return 1
+    resolve_ssh "$1"
+    ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" true 2>/dev/null
+}
+
+function require_ssh {
+    require_running "$1"
+    local deadline=$((SECONDS + 60))
+    until ssh_ready "$1"; do
+        ((SECONDS < deadline)) || fail "cannot reach $1 over SSH with $SSH_KEY; run: kiekje-lab bootstrap $1"
+        sleep 3
+    done
+}
+
+function rsync_shell {
+    printf 'ssh'
+    printf ' %q' "${SSH_ARGS[@]}" -o BatchMode=yes
+}
+
+function remote {
+    local vm="$1" fn="$2"
+    shift 2
+    resolve_ssh "$vm"
+    ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" "bash -s -- $(printf '%q ' "$@")" < <(
+        echo "set -euo pipefail"
+        declare -f fail os_release import_session_env guest_require_sudo "$fn"
+        echo "$fn \"\$@\""
+    )
+}
+
+function guest_require_sudo {
+    sudo -n true 2>/dev/null || fail "sudo in the guest asks for a password; run: kiekje-lab bootstrap again"
+}
+
+function guest_bootstrap {
+    local key="$1" user
+    user="$(id -un)"
+    if command -v pacman >/dev/null; then
+        sudo pacman -Syu --needed --noconfirm openssh qemu-guest-agent rsync
+    elif command -v apt-get >/dev/null; then
+        sudo apt-get update -q
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get install -yq openssh-server qemu-guest-agent rsync
+    elif command -v dnf >/dev/null; then
+        sudo dnf install -y openssh-server qemu-guest-agent rsync
+    elif command -v zypper >/dev/null; then
+        sudo zypper --non-interactive install openssh qemu-guest-agent rsync
+    else
+        echo "kiekje-lab: no pacman, apt-get, dnf or zypper in this guest" >&2
+        return 1
+    fi
+    sudo systemctl enable --now ssh.service 2>/dev/null || sudo systemctl enable --now sshd.service
+    sudo systemctl start qemu-guest-agent.service || echo "kiekje-lab: the guest agent did not start; the VM has no agent channel"
+    echo "$user ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/kiekje-lab >/dev/null
+    sudo chmod 440 /etc/sudoers.d/kiekje-lab
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    grep -qxF "$key" "$HOME/.ssh/authorized_keys" 2>/dev/null || echo "$key" >>"$HOME/.ssh/authorized_keys"
+    chmod 600 "$HOME/.ssh/authorized_keys"
+    if command -v restorecon >/dev/null; then
+        restorecon -R "$HOME/.ssh"
+    fi
+    echo "kiekje-lab: bootstrap done for $user, go back to the host terminal"
+}
+
+function guest_os_release {
+    local id like version
+    id="$(os_release ID)"
+    like="$(os_release ID_LIKE)"
+    version="$(os_release VERSION_ID)"
+    echo "${id:-unknown}|$like|${version:-rolling}"
+}
+
+function guest_desktop {
+    local session desktop=""
+    for session in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+        desktop="$(loginctl show-session "$session" -P Desktop 2>/dev/null || true)"
+        [[ -n "$desktop" ]] && break
+    done
+    case "${desktop,,}" in
+    *gnome* | ubuntu*) echo gnome ;;
+    *kde* | *plasma*) echo kde ;;
+    *hyprland*) echo hyprland ;;
+    *sway*) echo sway ;;
+    *)
+        if command -v plasmashell >/dev/null; then
+            echo kde
+        elif command -v gnome-shell >/dev/null; then
+            echo gnome
+        elif command -v Hyprland >/dev/null; then
+            echo hyprland
+        elif command -v sway >/dev/null; then
+            echo sway
+        else
+            echo other
+        fi
+        ;;
+    esac
+}
+
+function guest_install_packages {
+    local family="$1"
+    shift
+    guest_require_sudo
+    case "$family" in
+    arch) sudo -n pacman -Syu --needed --noconfirm "$@" ;;
+    fedora) sudo -n dnf install -y "$@" ;;
+    debian)
+        sudo -n apt-get update -q
+        sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -yq "$@"
+        ;;
+    suse) sudo -n zypper --non-interactive install --no-recommends "$@" ;;
+    esac
+}
+
+function guest_install_rust {
+    export PATH="$HOME/.cargo/bin:$PATH"
+    if command -v rustup >/dev/null; then
+        rustup toolchain install stable --profile minimal
+        rustup default stable
+    else
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            RUSTUP_INIT_SKIP_PATH_CHECK=yes sh -s -- -y --profile minimal
+    fi
+    cargo --version
+}
+
+function guest_mount_share {
+    guest_require_sudo
+    grep -qw virtiofs /proc/filesystems || sudo -n modprobe virtiofs ||
+        fail "the guest kernel has no virtiofs support; use kiekje-lab sync without --virtiofs"
+    mkdir -p "$HOME/kiekje-next"
+    grep -q "^kiekje $HOME/kiekje-next " /etc/fstab ||
+        echo "kiekje $HOME/kiekje-next virtiofs ro,nofail 0 0" | sudo -n tee -a /etc/fstab >/dev/null
+    mountpoint -q "$HOME/kiekje-next" || sudo -n mount "$HOME/kiekje-next"
+    ls "$HOME/kiekje-next/Cargo.toml" >/dev/null
+}
+
+function guest_install_kiekje {
+    export PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="$HOME/kiekje-target"
+    cd "$HOME/kiekje-next"
+    cargo build --release 2>&1 | tail -n 5
+    [[ -x "$CARGO_TARGET_DIR/release/kiekje-next" ]] || fail "the release build failed"
+    install -Dm755 "$CARGO_TARGET_DIR/release/kiekje-next" "$HOME/.local/bin/kiekje-next"
+    "$HOME/.local/bin/kiekje-next" quit >/dev/null 2>&1 || true
+    "$HOME/.local/bin/kiekje-next" install-desktop-file
+    if [[ "$(systemctl --user show-environment 2>/dev/null)" =~ (^|$'\n')(WAYLAND_DISPLAY|DISPLAY)= ]]; then
+        import_session_env
+    else
+        echo "kiekje-lab: no graphical session yet, so doctor runs without one"
+    fi
+    "$HOME/.local/bin/kiekje-next" doctor || true
+}
+
+function distro_family {
+    local id likes
+    read -ra likes <<<"$2"
+    for id in "$1" "${likes[@]}"; do
+        case "$id" in
+        arch | archarm | endeavouros | cachyos | manjaro | garuda | omarchy) echo arch && return ;;
+        fedora | rhel | centos | nobara | ultramarine) echo fedora && return ;;
+        debian | ubuntu | linuxmint | pop | elementary | zorin) echo debian && return ;;
+        opensuse* | suse | sles) echo suse && return ;;
+        esac
+    done
+    return 1
+}
+
+function ram_mib {
+    [[ "$1" =~ ^([0-9]+)([GgMm]?)$ ]] || fail "--ram takes a size like 6G or 4096M, not $1"
+    case "${BASH_REMATCH[2]}" in
+    M | m) echo "${BASH_REMATCH[1]}" ;;
+    *) echo $((BASH_REMATCH[1] * 1024)) ;;
+    esac
+}
+
+function disk_gib {
+    [[ "$1" =~ ^([0-9]+)[Gg]?$ ]] || fail "--disk takes a size like 40G, not $1"
+    echo "${BASH_REMATCH[1]}"
+}
+
+function guess_osinfo {
+    local name="${1,,}" guess=""
+    name="${name//x86_64/}"
+    case "$name" in
+    fedora*) guess="fedora$(grep -oE '(^|[-_])[0-9]{2}([-_.]|$)' <<<"$name" | sed -n 1p | tr -dc '0-9')" ;;
+    ubuntu*) guess="ubuntu$(grep -oE '[0-9]{2}\.[0-9]{2}' <<<"$name" | sed -n 1p)" ;;
+    debian*) guess="debian$(grep -oE '(^|[-_])[0-9]{2}(\.|[-_])' <<<"$name" | sed -n 1p | tr -dc '0-9')" ;;
+    opensuse-tumbleweed* | opensuse_tumbleweed*) guess=opensusetumbleweed ;;
+    opensuse-leap*) guess="opensuse$(grep -oE '[0-9]{2}\.[0-9]' <<<"$name" | sed -n 1p)" ;;
+    manjaro*) guess=manjaro ;;
+    arch* | endeavouros* | cachyos* | omarchy* | garuda*) guess=archlinux ;;
+    esac
+    if [[ -n "$guess" && "$(osinfo-query os -f short-id "short-id=$guess" 2>/dev/null)" == *" $guess"* ]]; then
+        echo "$guess"
+    else
+        echo linux2024
+    fi
+}
+
+function resolve_iso {
+    local source="$1" file
+    if [[ "$source" =~ ^https?:// ]]; then
+        mkdir -p "$ISO_DIR"
+        file="$ISO_DIR/$(basename "${source%%\?*}")"
+        if [[ ! -f "$file" ]]; then
+            say "downloading $source to $ISO_DIR" >&2
+            curl -fL --retry 3 -C - -o "$file.part" "$source" >&2 || fail "download of $source failed; rerun to resume it"
+            mv "$file.part" "$file"
+        fi
+        echo "$file"
+        return
+    fi
+    if [[ ! -f "$source" && -f "$ISO_DIR/$source" ]]; then
+        source="$ISO_DIR/$source"
+    fi
+    [[ -f "$source" ]] || fail "no ISO at $source; put it in $ISO_DIR or pass a URL"
+    readlink -f "$source"
+}
+
+function qemu_user {
+    local user
+    user="$(sed -nE 's/^\s*user\s*=\s*"([^"]+)".*/\1/p' /etc/libvirt/qemu.conf 2>/dev/null | tail -1)"
+    if [[ -n "$user" ]]; then
+        echo "$user"
+    elif getent passwd libvirt-qemu >/dev/null; then
+        echo libvirt-qemu
+    else
+        echo qemu
+    fi
+}
+
+function allow_qemu_read {
+    local dir user
+    user="$(qemu_user)"
+    dir="$(dirname "$1")"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -O "$dir" && "$(getfacl -p "$dir" 2>/dev/null)" != *"user:$user:--x"* ]]; then
+            setfacl -m "u:$user:x" "$dir"
+        fi
+        dir="$(dirname "$dir")"
+    done
+}
+
+function vars_template {
+    local template="$STATE_DIR/OVMF_VARS.qcow2"
+    if [[ ! -f "$template" ]]; then
+        [[ -f "$OVMF_VARS" ]] || fail "no UEFI variable store at $OVMF_VARS; install it with: sudo pacman -S edk2-ovmf"
+        mkdir -p "$STATE_DIR"
+        "$QEMU_IMG" convert -f raw -O qcow2 "$OVMF_VARS" "$template"
+    fi
+    echo "$template"
+}
+
+function cdrom_target {
+    vsh domblklist "$1" --details --inactive | awk '$2 == "cdrom" && !found++ {print $3}'
+}
+
+function cdrom_media {
+    vsh domblklist "$1" --details ${3:+"$3"} | awk -v t="$2" '$3 == t && $4 != "-" {print $4}'
+}
+
+function change_cdrom {
+    local vm="$1" target="$2" source="$3" view listing current
+    for view in --live --config; do
+        if [[ "$view" == "--live" ]]; then
+            [[ "$(domain_state "$vm")" == "running" ]] || continue
+            listing=""
+        else
+            listing=--inactive
+        fi
+        current="$(cdrom_media "$vm" "$target" "$listing")"
+        if [[ "$source" != "--eject" ]]; then
+            vsh change-media "$vm" "$target" "$source" "$([[ -n "$current" ]] && echo --update || echo --insert)" "$view" >/dev/null
+        elif [[ -n "$current" ]]; then
+            vsh change-media "$vm" "$target" --eject "$view" >/dev/null
+        fi
+    done
+}
+
+function live_flags {
+    if [[ "$(domain_state "$1")" == "running" ]]; then
+        echo --live --config
+    else
+        echo --config
+    fi
+}
+
+function open_viewer {
+    setsid -f virt-viewer -c "$LIBVIRT" --reconnect "$1" >/dev/null 2>&1
+}
+
+function new_vm {
+    local vm="${1:-}" source="${2:-}" ram=6G cpus=4 disk=40G gl=1
+    [[ -n "$vm" && -n "$source" ]] || fail "usage: kiekje-lab new <vm> <iso|url> [--ram 6G] [--cpus 4] [--disk 40G] [--no-3d]"
+    shift 2
+    while (($#)); do
+        case "$1" in
+        --ram) ram="${2:?--ram needs a size}" && shift 2 ;;
+        --cpus) cpus="${2:?--cpus needs a count}" && shift 2 ;;
+        --disk) disk="${2:?--disk needs a size}" && shift 2 ;;
+        --no-3d) gl=0 && shift ;;
+        *) fail "unknown option $1 for new" ;;
+        esac
+    done
+    [[ "$cpus" =~ ^[0-9]+$ ]] || fail "--cpus takes a number, not $cpus"
+    domain_exists "$vm" && fail "a VM named $vm already exists; remove it with kiekje-lab rm $vm or pick another name"
+
+    local iso osinfo template
+    iso="$(resolve_iso "$source")"
+    allow_qemu_read "$iso"
+    template="$(vars_template)"
+    osinfo="$(guess_osinfo "$(basename "$iso")")"
+    say "creating $vm ($osinfo, $ram RAM, $cpus CPUs, $disk disk) from $(basename "$iso")"
+
+    local args=(--connect "$LIBVIRT" --name "$vm" --memory "$(ram_mib "$ram")" --vcpus "$cpus"
+        --machine q35 --cpu host-passthrough --osinfo "$osinfo"
+        --boot "loader=$OVMF_CODE,loader.readonly=yes,loader.type=pflash,nvram.template=$template"
+        --xml ./os/nvram/@format=qcow2 --xml ./os/nvram/@templateFormat=qcow2
+        --disk "size=$(disk_gib "$disk"),format=qcow2,bus=virtio" --cdrom "$iso"
+        --network "network=default,model=virtio"
+        --channel "unix,target.type=virtio,target.name=org.qemu.guest_agent.0"
+        --noautoconsole)
+    local log
+    if ((gl)) && ! log="$(virt-install "${args[@]}" --graphics spice,gl.enable=yes,listen=none --video virtio,accel3d=yes 2>&1)"; then
+        say "3D did not start on this host ($(grep -oE 'egl: [^:]+: [A-Z_]+' <<<"$log" | sed -n 1p)), creating $vm without 3D"
+        domain_exists "$vm" && vsh undefine "$vm" --nvram --remove-all-storage >/dev/null
+        gl=0
+    fi
+    if ((!gl)); then
+        virt-install "${args[@]}" --graphics spice --video virtio >/dev/null
+    fi
+
+    rm -f "$(state_file "$vm")"
+    ssh-keygen -R "kiekje-lab-$vm" -f "$STATE_DIR/known_hosts" >/dev/null 2>&1 || true
+    state_set "$vm" ISO "$iso"
+    state_set "$vm" GL "$gl"
+    state_set "$vm" STEP new
+    open_viewer "$vm"
+    say "$vm is booting the installer; install the OS in the window that opened"
+}
+
+function iso_vm {
+    local vm="${1:-}" source="${2:-}" target
+    [[ -n "$source" ]] || fail "usage: kiekje-lab iso <vm> <iso|url|--eject>"
+    require_domain "$vm"
+    target="$(cdrom_target "$vm")"
+    [[ -n "$target" ]] || fail "$vm has no CD drive; add one with: virt-xml -c $LIBVIRT $vm --add-device --disk device=cdrom,bus=sata"
+    if [[ "$source" == "--eject" ]]; then
+        change_cdrom "$vm" "$target" --eject
+        say "ejected the ISO from $vm"
+        return
+    fi
+    local iso
+    iso="$(resolve_iso "$source")"
+    allow_qemu_read "$iso"
+    change_cdrom "$vm" "$target" "$iso"
+    state_set "$vm" ISO "$iso"
+    say "$vm now has $(basename "$iso") in its CD drive"
+}
+
+function eject_if_loaded {
+    local target
+    target="$(cdrom_target "$1")"
+    [[ -n "$target" ]] || return 0
+    if [[ -n "$(cdrom_media "$1" "$target" "")$(cdrom_media "$1" "$target" --inactive)" ]]; then
+        iso_vm "$1" --eject
+    fi
+}
+
+function wait_for_install {
+    local vm="$1" user
+    say "install the OS in the VM window, reboot into it and log in"
+    say "this continues when the guest agent reports a login, or press Enter here once you are logged in"
+    while true; do
+        if [[ "$(domain_state "$vm")" == "shut off" ]]; then
+            say "$vm powered off after the installer; ejecting the ISO and booting the installed system"
+            eject_if_loaded "$vm"
+            vsh start "$vm" >/dev/null
+            open_viewer "$vm"
+        fi
+        user="$(agent_logged_in_user "$vm")"
+        if [[ -n "$user" ]]; then
+            say "$user is logged in on $vm"
+            state_set "$vm" VM_USER "$user"
+            break
+        fi
+        if read -rt 5 _; then
+            break
+        fi
+    done
+    eject_if_loaded "$vm"
+}
+
+function ensure_agent_channel {
+    [[ "$(vsh dumpxml "$1")" == *org.qemu.guest_agent.0* ]] && return
+    local xml flags
+    xml="$(mktemp)"
+    echo "<channel type='unix'><target type='virtio' name='org.qemu.guest_agent.0'/></channel>" >"$xml"
+    read -ra flags <<<"$(live_flags "$1")"
+    vsh attach-device "$1" "$xml" "${flags[@]}" >/dev/null
+    rm -f "$xml"
+    say "added a guest agent channel to $1"
+}
+
+function bootstrap_script {
+    echo "set -euo pipefail"
+    declare -f guest_bootstrap
+    printf 'guest_bootstrap %q\n' "$(cat "$SSH_KEY.pub")"
+}
+
+function serve_bootstrap {
+    local vm="$1" gateway dir
+    gateway="$(vsh net-dumpxml default | grep -oP "<ip address='\K[^']+")"
+    dir="$(mktemp -d)"
+    bootstrap_script >"$dir/bootstrap"
+    local port=$BOOTSTRAP_PORT
+    while [[ -n "$(ss -ltnH "sport = :$port")" ]]; do
+        port=$((port + 1))
+    done
+    python3 -m http.server "$port" --bind "$gateway" --directory "$dir" >/dev/null 2>&1 &
+    local server=$! url="http://$gateway:$port/bootstrap" tries=0
+    trap 'kill '"$server"' 2>/dev/null || true; rm -rf '"$dir" EXIT
+    until curl -fsS -m 2 -o /dev/null "$url" 2>/dev/null; do
+        ((++tries < 20)) || fail "could not serve the bootstrap script on $url; set KIEKJE_LAB_PORT to a free port"
+        sleep 0.3
+    done
+    echo
+    echo "Open a terminal in $vm and type this line, then enter your password when sudo asks:"
+    echo
+    echo "    curl -fsSL $url | bash"
+    echo
+    echo "Without curl: wget -qO- $url | bash"
+    echo
+    say "waiting for SSH with your key (Ctrl-C to stop)"
+    until ssh_ready "$vm"; do
+        sleep 3
+    done
+    kill "$server" 2>/dev/null || true
+}
+
+function bootstrap_vm {
+    local vm="${1:-}"
+    require_running "$vm"
+    [[ -f "$SSH_KEY.pub" ]] || fail "no public key at $SSH_KEY.pub; create one with ssh-keygen -t ed25519 or set KIEKJE_LAB_KEY"
+    ensure_agent_channel "$vm"
+    local user
+    user="$(state_get "$vm" VM_USER)"
+    [[ -n "$user" ]] || user="$(agent_logged_in_user "$vm")"
+    if [[ -z "$user" ]]; then
+        read -rp "Login name of the user you created in $vm [$USER]: " user
+        user="${user:-$USER}"
+    fi
+    state_set "$vm" VM_USER "$user"
+
+    local address
+    address="$(vm_address "$vm")"
+    [[ -n "$address" ]] || fail "$vm has no network address; check that the guest finished booting and has networking"
+    if ssh_ready "$vm" || timeout 3 bash -c "</dev/tcp/$address/22" 2>/dev/null; then
+        say "running the bootstrap over SSH as $user@$address; SSH and sudo may ask for the guest password"
+        resolve_ssh "$vm"
+        ssh "${SSH_ARGS[@]}" -t "$SSH_TARGET" "bash -c $(printf %q "$(bootstrap_script)")" ||
+            fail "the bootstrap in $vm failed; see the output above"
+    else
+        serve_bootstrap "$vm"
+    fi
+    ssh_ready "$vm" || fail "$vm still refuses your key; check the bootstrap output in the guest and rerun kiekje-lab bootstrap $vm"
+    finish_step "$vm" bootstrap
+    say "bootstrap done, $vm is reachable as $SSH_TARGET"
+}
+
+function provision_vm {
+    local vm="${1:-}"
+    require_ssh "$vm"
+    local id like version family desktop release
+    release="$(remote "$vm" guest_os_release)" || fail "could not read /etc/os-release in $vm"
+    IFS='|' read -r id like version <<<"$release"
+    family="$(distro_family "$id" "$like")" ||
+        fail "unknown distro $id (like: ${like:-none}); add it to distro_family and PACKAGES in lab/kiekje-lab"
+    desktop="$(remote "$vm" guest_desktop)" || fail "could not detect the desktop in $vm"
+    state_set "$vm" DISTRO "$id-$version"
+    state_set "$vm" FAMILY "$family"
+    state_set "$vm" DESKTOP "$desktop"
+    local packages
+    read -ra packages <<<"${PACKAGES[$family]} ${PORTALS[$desktop]}"
+    say "installing build dependencies for $id $version ($family family, $desktop desktop)"
+    remote "$vm" guest_install_packages "$family" "${packages[@]}" ||
+        fail "installing packages in $vm failed; see the package manager output above"
+    say "installing the Rust toolchain with rustup"
+    remote "$vm" guest_install_rust || fail "installing Rust in $vm failed; see the rustup output above"
+    finish_step "$vm" provision
+}
+
+function share_virtiofs {
+    local vm="$1"
+    if [[ "$(vsh dumpxml "$vm")" != *"<target dir='kiekje'/>"* ]]; then
+        [[ -x "$VIRTIOFSD" ]] || fail "no virtiofsd at $VIRTIOFSD; install it with: sudo pacman -S virtiofsd"
+        say "adding a read-only share of $REPO to $vm; it restarts to attach it"
+        virt-xml -c "$LIBVIRT" "$vm" --edit --memorybacking source.type=memfd,access.mode=shared >/dev/null
+        virt-xml -c "$LIBVIRT" "$vm" --add-device \
+            --filesystem "type=mount,accessmode=passthrough,driver.type=virtiofs,source.dir=$REPO,target.dir=kiekje,readonly=yes" >/dev/null
+        stop_and_wait "$vm"
+        vsh start "$vm" >/dev/null
+        wait_for_ssh "$vm"
+    fi
+    remote "$vm" guest_mount_share || fail "mounting the share in $vm failed; see the output above"
+    state_set "$vm" SYNC virtiofs
+}
+
+function sync_vm {
+    local vm="${1:-}"
+    require_ssh "$vm"
+    if [[ "${2:-}" == "--virtiofs" ]]; then
+        share_virtiofs "$vm"
+    elif [[ "$(state_get "$vm" SYNC)" == "virtiofs" ]]; then
+        say "$vm reads the repo over virtiofs, nothing to copy"
+    else
+        resolve_ssh "$vm"
+        say "copying $REPO to $SSH_TARGET:kiekje-next"
+        rsync -a --delete --exclude /target/ --exclude /lab-results/ -e "$(rsync_shell)" "$REPO/" "$SSH_TARGET:kiekje-next/" ||
+            fail "copying the repo into $vm failed; see the rsync output above"
+        state_set "$vm" SYNC rsync
+    fi
+    finish_step "$vm" sync
+}
+
+function install_vm {
+    local vm="${1:-}"
+    require_ssh "$vm"
+    say "building a release build in $vm and installing it to ~/.local/bin"
+    remote "$vm" guest_install_kiekje || fail "building or installing Kiekje in $vm failed; see the output above"
+    finish_step "$vm" install
+}
+
+function wait_for_ssh {
+    local deadline=$((SECONDS + 180))
+    until ssh_ready "$1"; do
+        ((SECONDS < deadline)) || fail "$1 did not come back over SSH within 3 minutes; open its screen with kiekje-lab start $1"
+        sleep 3
+    done
+}
+
+function stop_and_wait {
+    local deadline=$((SECONDS + 120))
+    [[ "$(domain_state "$1")" == "shut off" ]] && return
+    vsh shutdown "$1" >/dev/null
+    until [[ "$(domain_state "$1")" == "shut off" ]]; do
+        ((SECONDS < deadline)) || fail "$1 did not shut down within 2 minutes; force it with: virsh -c $LIBVIRT destroy $1"
+        sleep 2
+    done
+}
+
+function has_snapshot {
+    vsh snapshot-info "$1" "$2" >/dev/null 2>&1
+}
+
+function snapshot_vm {
+    local vm="${1:-}" label="${2:-clean}"
+    require_domain "$vm"
+    if has_snapshot "$vm" "$label"; then
+        say "replacing the existing $label snapshot of $vm"
+        vsh snapshot-delete "$vm" "$label" >/dev/null
+    fi
+    local error
+    if ! error="$(vsh snapshot-create-as "$vm" "$label" "kiekje-lab $(date -Iseconds)" 2>&1)"; then
+        [[ "$(domain_state "$vm")" == "running" ]] || fail "snapshot failed: $error"
+        say "a live snapshot is not possible (${error#error: }), taking it with $vm shut down"
+        stop_and_wait "$vm"
+        vsh snapshot-create-as "$vm" "$label" "kiekje-lab $(date -Iseconds)" >/dev/null
+        vsh start "$vm" >/dev/null
+    fi
+    finish_step "$vm" snapshot
+    say "snapshot $label of $vm taken"
+}
+
+function reset_vm {
+    local vm="${1:-}" label="${2:-clean}"
+    require_domain "$vm"
+    has_snapshot "$vm" "$label" || fail "$vm has no $label snapshot; take one with: kiekje-lab snapshot $vm $label"
+    if [[ "$label" != "clean" ]]; then
+        local answer
+        read -rp "Revert $vm to $label and lose everything since? [y/N] " answer
+        [[ "$answer" == [yY] ]] || fail "not reverted"
+    fi
+    local start=$SECONDS
+    vsh snapshot-revert "$vm" "$label" --running >/dev/null
+    say "$vm is back at $label after $((SECONDS - start)) s"
+}
+
+function ssh_vm {
+    local vm="${1:-}"
+    require_ssh "$vm"
+    shift
+    resolve_ssh "$vm"
+    if (($#)) && [[ -t 0 ]]; then
+        exec ssh "${SSH_ARGS[@]}" -t "$SSH_TARGET" "$@"
+    fi
+    exec ssh "${SSH_ARGS[@]}" "$SSH_TARGET" "$@"
+}
+
+function rm_vm {
+    local vm="${1:-}"
+    require_domain "$vm"
+    local answer
+    read -rp "Delete $vm, its snapshots and its disk? Type the VM name to confirm: " answer
+    [[ "$answer" == "$vm" ]] || fail "$vm was not removed"
+    [[ "$(domain_state "$vm")" == "shut off" ]] || vsh destroy "$vm" >/dev/null
+    local disks
+    disks="$(vsh domblklist "$vm" --details | awk '$2 == "disk" {print $3}' | paste -sd,)"
+    local snapshot
+    while read -r snapshot; do
+        [[ -n "$snapshot" ]] && vsh snapshot-delete "$vm" "$snapshot" --metadata >/dev/null
+    done < <(vsh snapshot-list "$vm" --name 2>/dev/null)
+    if [[ -n "$disks" ]]; then
+        vsh undefine "$vm" --nvram --storage "$disks" >/dev/null
+    else
+        vsh undefine "$vm" --nvram >/dev/null
+    fi
+    rm -f "$(state_file "$vm")"
+    ssh-keygen -R "kiekje-lab-$vm" -f "$STATE_DIR/known_hosts" >/dev/null 2>&1 || true
+    say "$vm and its disk are gone; the ISO stays in place"
+}
+
+function step_banner {
+    echo
+    echo "== [$(($(step_index "$1") + 1))/${#STEPS[@]}] $1: $2"
+}
+
+function up_vm {
+    local vm="${1:-}"
+    [[ -n "$vm" ]] || fail "usage: kiekje-lab up <vm> [iso|url] [--ram 6G] [--cpus 4] [--disk 40G] [--no-3d]"
+    if ! domain_exists "$vm"; then
+        [[ -n "${2:-}" ]] || fail "$vm does not exist yet; pass an ISO: kiekje-lab up $vm <iso|url>"
+        step_banner new "create the VM and boot the installer"
+        new_vm "$@"
+    elif ! step_done "$vm" new; then
+        say "adopting the existing VM $vm"
+        state_set "$vm" STEP new
+    fi
+    if ! step_done "$vm" installed; then
+        step_banner installed "wait for the OS install and a login"
+        [[ "$(domain_state "$vm")" == "running" ]] || vsh start "$vm" >/dev/null
+        wait_for_install "$vm"
+        finish_step "$vm" installed
+    fi
+    [[ "$(domain_state "$vm")" == "running" ]] || start_vm "$vm"
+    if ! step_done "$vm" bootstrap; then
+        step_banner bootstrap "SSH, guest agent and your key"
+        bootstrap_vm "$vm"
+    fi
+    if ! step_done "$vm" provision; then
+        step_banner provision "build dependencies"
+        provision_vm "$vm"
+    fi
+    if ! step_done "$vm" sync; then
+        step_banner sync "copy the repo into the VM"
+        sync_vm "$vm"
+    fi
+    if ! step_done "$vm" install; then
+        step_banner install "build, install and doctor"
+        install_vm "$vm"
+    fi
+    if ! step_done "$vm" snapshot; then
+        step_banner snapshot "take the clean snapshot"
+        snapshot_vm "$vm" clean
+    fi
+    echo
+    say "$vm is ready. Test with: kiekje-lab run-vm $vm   Start over with: kiekje-lab reset $vm"
+}
+
+function check_tool {
+    local label="$1" fix="$2"
+    shift 2
+    if "$@" >/dev/null 2>&1; then
+        printf "ok    %s\n" "$label"
+    else
+        printf "miss  %-14s fix: %s\n" "$label" "$fix"
+        MISSING=1
+    fi
+}
+
+function doctor_host {
+    MISSING=0
+    check_tool kvm "sudo modprobe kvm_intel (or kvm_amd) and sudo usermod -aG kvm $USER, then log in again" test -w /dev/kvm
+    check_tool libvirtd "sudo pacman -S libvirt dnsmasq && sudo systemctl enable --now libvirtd.socket && sudo usermod -aG libvirt $USER" \
+        virsh -c "$LIBVIRT" version
+    check_tool network "sudo virsh net-start default && sudo virsh net-autostart default" \
+        bash -c "virsh -c $LIBVIRT net-info default | grep -E '^Active:\s+yes'"
+    check_tool virt-install "sudo pacman -S virt-install" command -v virt-install
+    check_tool virt-viewer "sudo pacman -S virt-viewer" command -v virt-viewer
+    check_tool qemu-img "sudo pacman -S qemu-img (kiekje-lab uses $QEMU_IMG)" test -x "$QEMU_IMG"
+    check_tool virtiofsd "sudo pacman -S virtiofsd" test -x "$VIRTIOFSD"
+    check_tool ovmf "sudo pacman -S edk2-ovmf" test -f "$OVMF_CODE" -a -f "$OVMF_VARS"
+    check_tool ssh "sudo pacman -S openssh" command -v ssh
+    check_tool ssh-key "ssh-keygen -t ed25519, or point KIEKJE_LAB_KEY at another key" test -f "$SSH_KEY.pub"
+    check_tool rsync "sudo pacman -S rsync" command -v rsync
+    check_tool curl "sudo pacman -S curl" command -v curl
+    check_tool setfacl "sudo pacman -S acl" command -v setfacl
+    check_tool osinfo "sudo pacman -S libosinfo" command -v osinfo-query
+    check_tool python3 "sudo pacman -S python" command -v python3
+    if [[ "$(command -v qemu-img 2>/dev/null)" != "$QEMU_IMG" ]]; then
+        echo "note  qemu-img on PATH is $(command -v qemu-img 2>/dev/null || echo missing); kiekje-lab calls $QEMU_IMG directly"
+    fi
+    ((MISSING == 0)) || fail "fix the missing items above and run kiekje-lab doctor-host again"
+    say "this host can run lab VMs; ISOs go in $ISO_DIR"
+}
+
+function list_vms {
+    local name clean
+    printf "%-20s %-10s %-16s %-18s %-9s %s\n" VM STATE ADDRESS DISTRO DESKTOP CLEAN
+    while read -r name; do
+        [[ -n "$name" ]] || continue
+        clean=no
+        has_snapshot "$name" clean && clean=yes
+        printf "%-20s %-10s %-16s %-18s %-9s %s\n" "$name" "$(domain_state "$name")" "$(vm_address "$name")" \
+            "$(state_get "$name" DISTRO)" "$(state_get "$name" DESKTOP)" "$clean"
+    done < <(vsh list --all --name)
+}
+
+function start_vm {
+    local vm="${1:?vm name}"
+    [[ "$(virsh -c "$LIBVIRT" domstate "$vm")" == "running" ]] || virsh -c "$LIBVIRT" start "$vm" >/dev/null
+    echo "kiekje-lab: waiting for $vm to get an address"
+    local deadline=$((SECONDS + 120))
+    until [[ -n "$(vm_address "$vm")" ]]; do
+        ((SECONDS < deadline)) || fail "$vm has no address after 2 minutes"
+        sleep 2
+    done
+    setsid -f virt-viewer -c "$LIBVIRT" "$vm" >/dev/null 2>&1
+    echo "kiekje-lab: $vm is up at $(vm_address "$vm")"
+}
+
+function run_in_vm {
+    local vm="${1:?vm name}"
+    shift
+    if [[ ! -f "$(state_file "$vm")" ]]; then
+        local address
+        address="$(vm_address "$vm")"
+        [[ -n "$address" ]] || fail "$vm is not running; use: kiekje-lab start $vm"
+        ssh -t -o StrictHostKeyChecking=accept-new "$VM_USER@$address" \
+            "bash -lc 'cd $VM_REPO && KIEKJE_LAB_CAPTURES=$CAPTURES lab/kiekje-lab run $*'"
+        return
+    fi
+    require_ssh "$vm"
+    resolve_ssh "$vm"
+    local status=0
+    ssh "${SSH_ARGS[@]}" -t "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH CARGO_TARGET_DIR=\$HOME/kiekje-target \
+KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && cd \$HOME/kiekje-next && lab/kiekje-lab run $*'" || status=$?
+    mkdir -p "$RESULTS"
+    rsync -a -e "$(rsync_shell)" "$SSH_TARGET:kiekje-results/" "$RESULTS/" ||
+        fail "could not copy results back from $vm:~/kiekje-results"
+    say "results copied to $RESULTS"
+    return "$status"
+}
+
+case "${1:-}" in
+env) print_env ;;
+run) run_tests "${2:-}" ;;
+results) show_results ;;
+vms) list_vms ;;
+start) start_vm "${2:-}" ;;
+run-vm) run_in_vm "${@:2}" ;;
+stop) virsh -c "$LIBVIRT" shutdown "${2:?vm name}" ;;
+doctor-host) doctor_host ;;
+new) new_vm "${@:2}" ;;
+iso) iso_vm "${@:2}" ;;
+up) up_vm "${@:2}" ;;
+bootstrap) bootstrap_vm "${2:-}" ;;
+provision) provision_vm "${2:-}" ;;
+sync) sync_vm "${@:2}" ;;
+install) install_vm "${2:-}" ;;
+snapshot) snapshot_vm "${@:2}" ;;
+reset) reset_vm "${@:2}" ;;
+ssh) ssh_vm "${@:2}" ;;
+rm) rm_vm "${2:-}" ;;
+*) fail "$USAGE" ;;
+esac

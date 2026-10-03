@@ -1,0 +1,8 @@
+session      wayland / GNOME
+it appears your Wayland compositor does not support the Session Lock protocol
+overlay      fullscreen windows (no layer-shell)
+monitor      Virtual-1 1280x800+0+0 scale 1
+portal       Screenshot      v2
+portal       ScreenCast      v5
+portal       GlobalShortcuts v1
+capture      xdg-desktop-portal      cursor no native no sandbox yes

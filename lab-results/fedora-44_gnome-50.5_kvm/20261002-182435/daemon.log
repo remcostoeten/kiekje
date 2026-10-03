@@ -1,0 +1,31 @@
+kiekje: using the GTK clipboard: the compositor does not offer ext_data_control_manager_v1
+=== fullscreen auto 1 ===
+kiekje: timing trigger -> instance: 2.1 ms
+kiekje: timing instance -> frames: 30005.9 ms
+kiekje: capture failed: timed out waiting for the backend
+=== fullscreen auto 2 ===
+kiekje: lab timeout waiting for the daemon
+=== fullscreen auto 3 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen auto 4 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen auto 5 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen portal 1 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen portal 2 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen portal 3 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen portal 4 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon
+=== fullscreen portal 5 ===
+kiekje: a capture is already running, ignoring this trigger
+kiekje: lab timeout waiting for the daemon

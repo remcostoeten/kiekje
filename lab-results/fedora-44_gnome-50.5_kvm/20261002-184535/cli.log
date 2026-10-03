@@ -1,0 +1,16 @@
+kiekje: wrote /home/kiek/.local/share/applications/dev.remcostoeten.KiekjeNext.desktop
+kiekje: not running
+
+(process:2734): GLib-GIO-WARNING **: 18:45:50.577: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:2790): GLib-GIO-WARNING **: 18:45:52.117: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:2820): GLib-GIO-WARNING **: 18:45:53.667: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:2841): GLib-GIO-WARNING **: 18:45:55.224: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:2863): GLib-GIO-WARNING **: 18:45:56.776: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:2888): GLib-GIO-WARNING **: 18:45:58.335: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().
+
+(process:2912): GLib-GIO-WARNING **: 18:45:59.887: Your application did not unregister from D-Bus before destruction. Consider using g_application_run().

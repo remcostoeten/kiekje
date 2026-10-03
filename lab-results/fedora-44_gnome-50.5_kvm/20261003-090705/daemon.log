@@ -1,0 +1,61 @@
+kiekje: using the GTK clipboard: the compositor does not offer ext_data_control_manager_v1
+=== fullscreen auto 1 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 376.1 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 2 ===
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 184.5 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 3 ===
+kiekje: timing trigger -> instance: 3.0 ms
+kiekje: timing instance -> frames: 173.2 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 4 ===
+kiekje: timing trigger -> instance: 2.3 ms
+kiekje: timing instance -> frames: 182.4 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen auto 5 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 175.7 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 1 ===
+kiekje: timing trigger -> instance: 1.9 ms
+kiekje: timing instance -> frames: 177.0 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 2 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 171.7 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 3 ===
+kiekje: timing trigger -> instance: 1.6 ms
+kiekje: timing instance -> frames: 172.5 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 4 ===
+kiekje: timing trigger -> instance: 2.0 ms
+kiekje: timing instance -> frames: 176.7 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard
+=== fullscreen portal 5 ===
+kiekje: timing trigger -> instance: 2.7 ms
+kiekje: timing instance -> frames: 176.2 ms
+kiekje: backend xdg-desktop-portal
+kiekje: frame Virtual-1 1280x800 for logical 1280x800+0+0 (Rgba)
+kiekje: copied 1280x800 to the GTK clipboard

@@ -1,0 +1,18 @@
+[package]
+name = "kiekje-next"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-channel = "2"
+gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
+gtk4-layer-shell = { version = "0.8", default-features = false }
+libc = "0.2.189"
+png = "0.18"
+rustix = { version = "1", features = ["event"] }
+smithay-client-toolkit = { version = "0.21", default-features = false }
+thiserror = "2"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
