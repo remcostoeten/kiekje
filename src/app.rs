@@ -3,25 +3,32 @@ use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::backends;
-use crate::capture::{BackendChoice, Capture, CaptureError, CaptureMode, LogicalRect, MonitorInfo};
+use crate::capture::mapping::SelectionPlan;
+use crate::capture::{
+    BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
+};
 use crate::clipboard::Clipboard;
 use crate::output::{self, Image};
-use crate::overlay;
+use crate::overlay::{self, Selection};
 use crate::shortcuts::{
     PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland_bind,
 };
+use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost, TrayOrigin};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
+const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
 
 struct Session {
     busy: Cell<bool>,
     clipboard: Option<Clipboard>,
     shortcuts: RefCell<Option<PortalGuard>>,
+    tray: RefCell<Option<Box<dyn TrayGuard>>>,
 }
 
 pub enum Command {
@@ -97,9 +104,11 @@ pub fn run(command: Command) -> glib::ExitCode {
         busy: Cell::new(false),
         clipboard,
         shortcuts: RefCell::new(None),
+        tray: RefCell::new(None),
     });
     install_actions(&app, &session);
     register_shortcuts(&app, &session);
+    start_tray(&app, &session);
     let hold = app.hold();
     let initial = match command {
         Command::Capture(request) => Some(request),
@@ -198,6 +207,94 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
     });
 }
 
+fn start_tray(app: &gtk::Application, session: &Rc<Session>) {
+    let host = SniTray;
+    let name = host.name();
+    let (commands, received) = async_channel::unbounded();
+    let (started_sender, started) = async_channel::bounded(1);
+    thread::spawn(move || {
+        // The receiver only disappears when the app is quitting.
+        let _ = started_sender.send_blocking(host.start(commands));
+    });
+
+    let weak_app = app.downgrade();
+    let weak_session = Rc::downgrade(session);
+    glib::spawn_future_local(async move {
+        match started.recv().await {
+            Ok(Ok(guard)) => {
+                println!("kiekje: tray shown through {name}");
+                match weak_session.upgrade() {
+                    Some(session) => {
+                        session.tray.replace(Some(Box::new(guard)));
+                    }
+                    None => guard.stop(),
+                }
+            }
+            Ok(Err(error)) => {
+                eprintln!("kiekje: tray is off: {error}");
+                return;
+            }
+            Err(_) => return,
+        }
+        while let Ok(command) = received.recv().await {
+            let (Some(app), Some(session)) = (weak_app.upgrade(), weak_session.upgrade()) else {
+                return;
+            };
+            handle_tray_command(&app, &session, command);
+        }
+    });
+}
+
+fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: TrayCommand) {
+    match command {
+        TrayCommand::Capture { mode, origin } => {
+            println!("kiekje: tray capture-{}", mode.as_str());
+            let request = Request {
+                mode,
+                backend: BackendChoice::Auto,
+                save: true,
+                trigger_us: glib::monotonic_time(),
+            };
+            match origin {
+                TrayOrigin::Icon => start_capture(app, request, session),
+                TrayOrigin::Menu => {
+                    let app = app.clone();
+                    let session = session.clone();
+                    glib::timeout_add_local_once(TRAY_MENU_CLOSE, move || {
+                        start_capture(&app, request, &session)
+                    });
+                }
+            }
+        }
+        TrayCommand::OpenCaptures => open_captures(),
+        TrayCommand::Quit => app.activate_action("quit", None),
+    }
+}
+
+fn open_captures() {
+    let directory = output::captures_dir();
+    glib::spawn_future_local(async move {
+        let target = directory.clone();
+        match gio::spawn_blocking(move || std::fs::create_dir_all(target)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                eprintln!("kiekje: could not create {}: {error}", directory.display());
+                return;
+            }
+            Err(_) => {
+                eprintln!("kiekje: the folder worker stopped");
+                return;
+            }
+        }
+        let uri = gio::File::for_path(&directory).uri();
+        if let Err(error) =
+            gio::AppInfo::launch_default_for_uri_future(&uri, gio::AppLaunchContext::NONE).await
+        {
+            eprintln!("kiekje: could not open {uri}: {error}");
+        }
+    });
+}
+
 fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
     let capture = gio::SimpleAction::new("capture", Some(&RequestVariant::static_variant_type()));
     let capture_session = session.clone();
@@ -216,7 +313,14 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
 
     let quit = gio::SimpleAction::new("quit", None);
     let quit_app = app.downgrade();
+    let quit_session = Rc::downgrade(session);
     quit.connect_activate(move |_, _| {
+        if let Some(guard) = quit_session
+            .upgrade()
+            .and_then(|session| session.tray.take())
+        {
+            guard.stop();
+        }
         if let Some(app) = quit_app.upgrade() {
             app.quit();
         }
@@ -302,22 +406,11 @@ fn handle_capture(
                 frames,
                 monitors,
                 move |selection| match selection {
-                    Some(selection) => {
-                        let rect = selection.rect;
-                        println!(
-                            "kiekje: selected {}x{}+{}+{} on {}",
-                            rect.width,
-                            rect.height,
-                            rect.x,
-                            rect.y,
-                            selection_frames[selection.frame_index].monitor.connector,
-                        );
+                    Some(Selection { plan }) => {
+                        log_selection(&selection_frames, plan);
                         deliver(
                             Box::new(move || {
-                                Some(output::crop(
-                                    &selection_frames[selection.frame_index],
-                                    selection.rect,
-                                ))
+                                Some(output::render_selection(&selection_frames, plan))
                             }),
                             request,
                             session,
@@ -444,6 +537,24 @@ pub fn monitor_info(monitor: &gdk::Monitor) -> MonitorInfo {
             width: geometry.width(),
             height: geometry.height(),
         },
+    }
+}
+
+fn log_selection(frames: &[Frame], plan: SelectionPlan) {
+    match plan {
+        SelectionPlan::Crop { frame_index, rect } => println!(
+            "kiekje: selected {}x{}+{}+{} on {}",
+            rect.width, rect.height, rect.x, rect.y, frames[frame_index].monitor.connector,
+        ),
+        SelectionPlan::Compose {
+            bounds,
+            width,
+            height,
+            ..
+        } => println!(
+            "kiekje: selected {width}x{height} across monitors from logical {}x{}{:+}{:+}",
+            bounds.width, bounds.height, bounds.x, bounds.y,
+        ),
     }
 }
 

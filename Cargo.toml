@@ -7,6 +7,7 @@ edition = "2024"
 async-channel = "2"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
 gtk4-layer-shell = { version = "0.8", default-features = false }
+ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
 libc = "0.2.189"
 png = "0.18"
 rustix = { version = "1", features = ["event"] }

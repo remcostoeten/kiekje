@@ -93,10 +93,10 @@ When GDK is not on Wayland or the compositor has no `zwlr_layer_shell_v1`, the o
 - Omarchy, Hyprland on real hardware, and X11. Hyprland 0.56.2 and Plasma 6.7.5 run in VMs with software rendering, see "KDE and Hyprland VMs" below.
 - Keyboard focus for the fullscreen overlay on GNOME when triggered by a real global shortcut.
 - Rotated monitors on KWin, the portal and real hardware. Sway and Hyprland virtual outputs pass, see "Layouts" below.
-- Two or more physical monitors outside KDE, and any multi-monitor layout on GNOME or KWin in a VM.
-- A selection across a monitor edge. The overlay keeps a drag on the monitor where it started, so this is a missing feature, not a passing test.
+- Two or more physical monitors outside KDE, and any multi-monitor layout on GNOME.
+- A selection across a monitor edge on real hardware, on Hyprland, Sway and GNOME, and on the fullscreen-window overlay without layer-shell. It passes on KWin in `test-kde`, see "Selection across monitors" below.
 - Global shortcuts on GNOME and on this KDE host. KDE and Hyprland pass in VMs, see "Global shortcuts" below.
-- Hiding the tray menu before capture. There is no tray yet.
+- The tray on Waybar, GNOME with the AppIndicator extension, and real hardware. It passes on Plasma in `test-kde`, see "Tray" below.
 
 ## GNOME 50 in a VM
 
@@ -249,6 +249,37 @@ The daemon registers `capture-region` (preferred `Print`) and `capture-fullscree
 
 Every lab run now writes a `shortcuts` line: `pass` with the bound triggers, `unavailable` when the session has no portal for it, or `unverified` when nothing came back within 15 s because the desktop is asking in a dialog.
 
+## Selection across monitors
+
+The overlay keeps the drag in desktop coordinates. Each surface adds its monitor's logical origin to the pointer position, and the Wayland implicit grab keeps motion going to the surface where the press started, so a drag continues past its edge. Every surface draws the part of the rectangle that falls on it, and the size label sits on the monitor under the rectangle's bottom-left corner.
+
+On release the selection is clipped to the monitors it touches. When the clipped rectangle fits one monitor it is cropped from that frame at native resolution, as before. Otherwise it is composed from every touched frame at the highest pixel density among them, with nearest-neighbour upscaling for the others and transparent pixels in gaps between monitors. `kiekje: selected WxH across monitors from logical ...` marks the second case in the log.
+
+Tested on 2026-10-03 in `test-kde` with a second virtio-gpu device, because the second head of one virtio-vga device stays disconnected without a SPICE client that opens it. Layout: Virtual-1 1280x800 at scale 1 and Virtual-2 1280x800 at scale 1.5 (GDK reports 853x533 logical) to its right. The domain keeps both GPUs and has a `multi` snapshot; `clean` still restores the one-monitor setup. With `lab_probe show` on screen, drags were sent through QEMU, whose tablet spans the whole desktop on KWin:
+
+| Drag | Result | Pattern check |
+| --- | --- | --- |
+| Virtual-1 into Virtual-2 | 602x302 from logical 401x201+1099+199 | 171 of 171 samples within 0.6/255 |
+| Virtual-2 back into Virtual-1 | 1202x602 from logical 801x401+899+99 | 171 of 171 samples within 0.6/255 |
+| Inside Virtual-1 | 427x241 native crop on Virtual-1 | not sampled |
+
+A screenshot of both QEMU heads mid-drag showed the rectangle on each monitor, meeting at the edge, with the label `1202 × 602` on Virtual-1.
+
+## Tray
+
+The daemon shows a StatusNotifierItem through `ksni`. Its `spawn` blocks on D-Bus, so it runs on a separate thread, and the tray only sends commands to the main loop over a channel. Left click opens the region overlay. The right-click menu is the native one drawn by the tray host: Capture region, Capture every screen, Open captures folder, Quit. Captures picked from the menu start 150 ms after the click so the menu is gone first. Quit removes the item and stops the daemon. Without a StatusNotifierWatcher the daemon logs `tray is off` and keeps running.
+
+Tested on 2026-10-03 on Plasma 6.7.5 in `test-kde`, clicking through QEMU:
+
+- The `camera-photo-symbolic` icon showed in the system tray and the menu opened on right click.
+- Left click painted the overlay in 78 ms; Escape canceled it.
+- Capture every screen from the menu saved a 3201x1200 stitched capture without the menu in it. With the delay set to 0 ms the menu was also absent in 3 of 3 captures, because Plasma closes the menu before it sends the click. The 150 ms stays as margin until Waybar and real hardware are measured.
+- Open captures folder failed with `Failed to find default application for content type 'inode/directory'` on the VM image, which has no file manager. After installing Dolphin in the guest it opened `~/Pictures/Kiekje`.
+- Quit from the menu ended the daemon and the icon disappeared.
+- The full lab run passed every check with the tray running; idle memory was 47 MB anonymous.
+
+The styled left-click popover from proposal section 10 is not built yet; left click captures a region until it exists.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
@@ -264,3 +295,4 @@ Every lab run now writes a `shortcuts` line: `pass` with the bound triggers, `un
 4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Open: the Hyprland managed `bind` include, rebinding from settings, and persisting a user's disabled shortcuts.
 5. Done: CLI clients that forward to the running instance, and `quit` with nothing running, now leave through `g_application_run` with a `handle-local-options` handler that exits at once. GLib no longer warns about the D-Bus registration.
 6. Partly done: Hyprland runs in `test-hypr`. Still open: an Omarchy session, and GNOME overlay focus when triggered by a real global shortcut.
+7. Done on KWin: selection across monitors and the StatusNotifierItem tray with its native menu, see "Selection across monitors" and "Tray". Open: the styled tray popover, and both features on Hyprland, Sway, GNOME and real hardware.

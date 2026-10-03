@@ -5,14 +5,18 @@ mod clipboard;
 mod desktop_file;
 mod doctor;
 mod help;
+mod mascot;
 mod output;
 mod overlay;
 mod shortcuts;
+mod style;
+mod tray;
 
 use gtk::glib;
 
 use app::{Command, Request};
 use capture::{BackendChoice, CaptureMode};
+use help::Topic;
 
 fn main() -> glib::ExitCode {
     let trigger_us = glib::monotonic_time();
@@ -21,12 +25,15 @@ fn main() -> glib::ExitCode {
 
     match arguments.first().map(String::as_str) {
         Some("capture") if is_help_request(&arguments[1..]) => {
-            help::print();
+            help::print(Topic::Capture);
             glib::ExitCode::SUCCESS
         }
         Some("capture") => match parse_capture(&arguments[1..], trigger_us) {
             Ok(request) => app::run(Command::Capture(request)),
-            Err(message) => usage_error(&message),
+            Err(message) => {
+                help::print_error(&message, Topic::Capture);
+                glib::ExitCode::FAILURE
+            }
         },
         Some("daemon") => app::run(Command::Daemon),
         Some("quit") => app::run(Command::Quit),
@@ -44,12 +51,18 @@ fn main() -> glib::ExitCode {
                 glib::ExitCode::FAILURE
             }
         },
-        Some("help" | "-h" | "--help") => {
-            help::print();
+        Some("help" | "-h" | "--help") | None => {
+            help::print(Topic::Overview);
             glib::ExitCode::SUCCESS
         }
-        Some(other) => usage_error(&format!("unknown command `{other}`")),
-        None => usage_error("missing command"),
+        Some("version" | "-V" | "--version") => {
+            help::print_version();
+            glib::ExitCode::SUCCESS
+        }
+        Some(other) => {
+            help::print_unknown_command(other);
+            glib::ExitCode::FAILURE
+        }
     }
 }
 
@@ -93,9 +106,4 @@ fn is_help_request(arguments: &[String]) -> bool {
     arguments
         .iter()
         .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
-}
-
-fn usage_error(message: &str) -> glib::ExitCode {
-    help::print_error(message);
-    glib::ExitCode::FAILURE
 }

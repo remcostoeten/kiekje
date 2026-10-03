@@ -55,6 +55,102 @@ pub fn logical_to_pixels(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SelectionPlan {
+    Crop {
+        frame_index: usize,
+        rect: PixelRect,
+    },
+    Compose {
+        bounds: LogicalRect,
+        ratio: f64,
+        width: u32,
+        height: u32,
+    },
+}
+
+impl SelectionPlan {
+    pub fn size(self) -> (u32, u32) {
+        match self {
+            Self::Crop { rect, .. } => (rect.width, rect.height),
+            Self::Compose { width, height, .. } => (width, height),
+        }
+    }
+}
+
+/// Decides how a desktop-wide logical selection becomes an image.
+///
+/// A selection inside one monitor crops that frame at its native resolution. A selection that
+/// crosses monitors is composed from every frame it touches at the highest density among them.
+/// `frames` holds each frame's logical rectangle and pixel size.
+///
+/// # Examples
+///
+/// ```ignore
+/// let frames = [(LogicalRect { x: 0, y: 0, width: 100, height: 100 }, (200, 200))];
+/// let plan = plan_selection(LogicalRect { x: 10, y: 10, width: 20, height: 20 }, &frames);
+/// assert_eq!(plan.map(SelectionPlan::size), Some((40, 40)));
+/// ```
+pub fn plan_selection(
+    selection: LogicalRect,
+    frames: &[(LogicalRect, (u32, u32))],
+) -> Option<SelectionPlan> {
+    let touched: Vec<_> = frames
+        .iter()
+        .filter_map(|(logical, size)| {
+            logical
+                .intersection(selection)
+                .map(|part| (part, density(*logical, *size)))
+        })
+        .collect();
+    let left = touched.iter().map(|(part, _)| part.x).min()?;
+    let top = touched.iter().map(|(part, _)| part.y).min()?;
+    let right = touched.iter().map(|(part, _)| part.right()).max()?;
+    let bottom = touched.iter().map(|(part, _)| part.bottom()).max()?;
+    let bounds = LogicalRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    };
+
+    if let Some((frame_index, (logical, size))) = frames
+        .iter()
+        .enumerate()
+        .find(|(_, (logical, _))| logical.contains(bounds))
+    {
+        let local = LogicalRect {
+            x: bounds.x - logical.x,
+            y: bounds.y - logical.y,
+            ..bounds
+        };
+        return logical_to_pixels(local, (logical.width, logical.height), *size)
+            .map(|rect| SelectionPlan::Crop { frame_index, rect });
+    }
+
+    let ratio = touched
+        .iter()
+        .map(|(_, ratio)| *ratio)
+        .fold(f64::MIN_POSITIVE, f64::max);
+    Some(SelectionPlan::Compose {
+        bounds,
+        ratio,
+        width: ((f64::from(bounds.width) * ratio).round() as u32).max(1),
+        height: ((f64::from(bounds.height) * ratio).round() as u32).max(1),
+    })
+}
+
+/// Pixels per logical pixel of a frame, measured horizontally.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(density(LogicalRect { x: 0, y: 0, width: 100, height: 50 }, (150, 75)), 1.5);
+/// ```
+pub fn density(logical: LogicalRect, size: (u32, u32)) -> f64 {
+    f64::from(size.0) / f64::from(logical.width.max(1))
+}
+
 /// Normalizes a drag from `start` to `end` into a rectangle with positive size.
 ///
 /// # Examples
@@ -154,6 +250,73 @@ mod tests {
             logical_to_pixels(rect(200, 200, 10, 10), (100, 100), (100, 100)),
             None
         );
+    }
+
+    #[test]
+    fn crops_natively_when_the_selection_fits_one_monitor() {
+        let frames = [
+            (rect(0, 0, 1920, 1080), (1920, 1080)),
+            (rect(1920, 0, 1280, 720), (2560, 1440)),
+        ];
+        assert_eq!(
+            plan_selection(rect(2000, 100, 100, 50), &frames),
+            Some(SelectionPlan::Crop {
+                frame_index: 1,
+                rect: PixelRect {
+                    x: 160,
+                    y: 200,
+                    width: 200,
+                    height: 100
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn composes_a_selection_across_monitors_at_the_highest_density() {
+        let frames = [
+            (rect(0, 0, 1920, 1080), (1920, 1080)),
+            (rect(1920, 0, 1280, 720), (2560, 1440)),
+        ];
+        assert_eq!(
+            plan_selection(rect(1820, 100, 200, 50), &frames),
+            Some(SelectionPlan::Compose {
+                bounds: rect(1820, 100, 200, 50),
+                ratio: 2.0,
+                width: 400,
+                height: 100
+            })
+        );
+    }
+
+    #[test]
+    fn clips_a_selection_to_the_monitors_it_touches() {
+        let frames = [
+            (rect(-1000, 0, 1000, 800), (1000, 800)),
+            (rect(0, 0, 1000, 500), (1000, 500)),
+        ];
+        assert_eq!(
+            plan_selection(rect(-100, 400, 300, 300), &frames).map(SelectionPlan::size),
+            Some((300, 300))
+        );
+        assert_eq!(
+            plan_selection(rect(-100, 700, 300, 300), &frames),
+            Some(SelectionPlan::Crop {
+                frame_index: 0,
+                rect: PixelRect {
+                    x: 900,
+                    y: 700,
+                    width: 100,
+                    height: 100
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_a_selection_outside_every_monitor() {
+        let frames = [(rect(0, 0, 100, 100), (100, 100))];
+        assert_eq!(plan_selection(rect(200, 200, 10, 10), &frames), None);
     }
 
     #[test]

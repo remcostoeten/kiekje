@@ -62,7 +62,9 @@ pub fn probe() -> Environment {
     let dbus = session_bus().ok();
     Environment {
         wayland_globals: wayland_globals(),
-        kwin_on_bus: dbus.as_ref().is_some_and(name_has_owner),
+        kwin_on_bus: dbus
+            .as_ref()
+            .is_some_and(|connection| name_has_owner(connection, KWIN_NAME)),
         portal_screenshot: dbus
             .as_ref()
             .and_then(|connection| portal_version(connection, "Screenshot")),
@@ -101,8 +103,15 @@ pub fn portal_version(connection: &DbusConnection, interface: &str) -> Option<u3
     proxy.get_property::<u32>("version").ok()
 }
 
-fn name_has_owner(connection: &DbusConnection) -> bool {
-    let Ok(name) = BusName::try_from(KWIN_NAME) else {
+/// Whether some process currently owns the well-known bus `name`.
+///
+/// # Examples
+///
+/// ```ignore
+/// let running = name_has_owner(&connection, "org.kde.KWin");
+/// ```
+pub fn name_has_owner(connection: &DbusConnection, name: &str) -> bool {
+    let Ok(name) = BusName::try_from(name) else {
         return false;
     };
     DBusProxy::new(connection)

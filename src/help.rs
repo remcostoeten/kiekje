@@ -1,11 +1,26 @@
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 use std::time::Duration;
 
-const NAME_WIDTH: usize = 12;
-const LABEL_WIDTH: usize = 26;
+use crate::mascot::{self, Pose};
+use crate::style::{Rgb, Style, mix, rgb_code};
 
-struct Style {
-    color: bool,
+const LABEL_WIDTH: usize = 26;
+const BINARY: &str = env!("CARGO_PKG_NAME");
+const COMMANDS: &[&str] = &[
+    "capture",
+    "daemon",
+    "quit",
+    "doctor",
+    "install-desktop-file",
+    "help",
+    "version",
+];
+const MAX_SUGGESTION_DISTANCE: usize = 2;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Topic {
+    Overview,
+    Capture,
 }
 
 struct Entry {
@@ -34,7 +49,7 @@ const SESSION: &[Entry] = &[
     Entry {
         name: "daemon",
         argument: "",
-        description: "Start the background instance and tray",
+        description: "Start the background instance",
         note: "",
     },
     Entry {
@@ -64,6 +79,27 @@ const SETUP: &[Entry] = &[
         description: "Show this overview",
         note: "(-h, --help)",
     },
+    Entry {
+        name: "version",
+        argument: "",
+        description: "Print the version",
+        note: "(-V, --version)",
+    },
+];
+
+const MODES: &[Entry] = &[
+    Entry {
+        name: "region",
+        argument: "",
+        description: "Freeze the screen and select an area",
+        note: "(default)",
+    },
+    Entry {
+        name: "fullscreen",
+        argument: "",
+        description: "Freeze the screen and keep all of it",
+        note: "",
+    },
 ];
 
 const FLAGS: &[Entry] = &[
@@ -89,77 +125,35 @@ const EXAMPLES: &[(&str, &str)] = &[
     ),
 ];
 
-impl Style {
-    fn detect(terminal: bool) -> Self {
-        let disabled = std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
-        Self {
-            color: terminal && !disabled,
-        }
+fn row(style: &Style, entry: &Entry, paint_name: fn(&Style, &str) -> String) -> String {
+    let (plain, painted) = if entry.argument.is_empty() {
+        (entry.name.to_owned(), paint_name(style, entry.name))
+    } else {
+        (
+            format!("{} {}", entry.name, entry.argument),
+            format!(
+                "{} {}",
+                paint_name(style, entry.name),
+                style.dim(entry.argument)
+            ),
+        )
+    };
+    let padding = " ".repeat(LABEL_WIDTH.saturating_sub(plain.chars().count()));
+    let mut line = format!("  {painted}{padding}{}", entry.description);
+    if !entry.note.is_empty() {
+        line.push(' ');
+        line.push_str(&style.dim(entry.note));
     }
-
-    fn paint(&self, code: &str, text: &str) -> String {
-        if self.color && !text.is_empty() {
-            format!("\x1b[{code}m{text}\x1b[0m")
-        } else {
-            text.to_owned()
-        }
-    }
-
-    fn accent(&self, text: &str) -> String {
-        self.paint("1;38;2;254;81;1", text)
-    }
-
-    fn bold(&self, text: &str) -> String {
-        self.paint("1", text)
-    }
-
-    fn dim(&self, text: &str) -> String {
-        self.paint("2", text)
-    }
-
-    fn flag(&self, text: &str) -> String {
-        self.paint("1;36", text)
-    }
-
-    fn error(&self, text: &str) -> String {
-        self.paint("1;31", text)
-    }
-
-    fn row(&self, entry: &Entry, paint_name: fn(&Self, &str) -> String) -> String {
-        let name_padding = if entry.argument.is_empty() {
-            String::new()
-        } else {
-            pad(entry.name.len(), NAME_WIDTH)
-        };
-        let label_len = entry.name.len() + name_padding.len() + entry.argument.len();
-        let mut line = format!(
-            "  {}{name_padding}{}{}{}",
-            paint_name(self, entry.name),
-            self.dim(entry.argument),
-            pad(label_len, LABEL_WIDTH),
-            entry.description,
-        );
-        if !entry.note.is_empty() {
-            line.push(' ');
-            line.push_str(&self.dim(entry.note));
-        }
-        line.push('\n');
-        line
-    }
-
-    fn group(&self, entries: &[Entry], paint_name: fn(&Self, &str) -> String) -> String {
-        entries
-            .iter()
-            .map(|entry| self.row(entry, paint_name))
-            .collect()
-    }
+    line.push('\n');
+    line
 }
 
-fn pad(len: usize, width: usize) -> String {
-    " ".repeat(width.saturating_sub(len))
+fn group(style: &Style, entries: &[Entry], paint_name: fn(&Style, &str) -> String) -> String {
+    entries
+        .iter()
+        .map(|entry| row(style, entry, paint_name))
+        .collect()
 }
-
-type Rgb = (u8, u8, u8);
 
 const WORDMARK: [&str; 3] = [
     "╦╔═ ╦ ╔═╗ ╦╔═   ╦ ╔═╗",
@@ -168,52 +162,37 @@ const WORDMARK: [&str; 3] = [
 ];
 
 const ACCENT: Rgb = (254, 81, 1);
-const EMBER: Rgb = (110, 50, 20);
 const UNLIT: Rgb = (40, 20, 10);
-const FRAME_INNER: usize = 32;
-const MAX_SPREAD: usize = 4;
-const MIN_ARM: usize = 2;
-const WORDMARK_INSET: usize = 6;
-const ANIMATION_FRAMES: u32 = 54;
+const INDENT: usize = 2;
+const MASCOT_GAP: usize = 4;
+const CAPTION_ROW: usize = 4;
+const GLOW_END: f32 = 0.5;
+const HOP_START: f32 = 0.45;
+const HOP_END: f32 = 0.68;
+const HOP_HEIGHT: usize = 2;
+const BLINK_START: f32 = 0.8;
+const BLINK_END: f32 = 0.95;
+const ANIMATION_FRAMES: u32 = 72;
 const FRAME_INTERVAL: Duration = Duration::from_millis(16);
-
-fn mix(from: Rgb, to: Rgb, amount: f32) -> Rgb {
-    let amount = amount.clamp(0.0, 1.0);
-    let channel =
-        |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * amount).round() as u8;
-    (
-        channel(from.0, to.0),
-        channel(from.1, to.1),
-        channel(from.2, to.2),
-    )
-}
 
 fn ease_out(progress: f32) -> f32 {
     1.0 - (1.0 - progress.clamp(0.0, 1.0)).powi(4)
 }
 
-fn rgb_code(color: Rgb, bold: bool) -> String {
-    let weight = if bold { "1;" } else { "" };
-    format!("{weight}38;2;{};{};{}", color.0, color.1, color.2)
+fn phase(progress: f32, start: f32, end: f32) -> f32 {
+    ((progress - start) / (end - start)).clamp(0.0, 1.0)
 }
 
-fn viewfinder_edge(
-    style: &Style,
-    left: char,
-    right: char,
-    spread: usize,
-    arm: usize,
-    color: Rgb,
-) -> String {
-    let width = FRAME_INNER + 2 * spread;
-    let arm = arm.min(width / 2);
-    let segment = format!(
-        "{left}{}{}{}{right}",
-        "─".repeat(arm),
-        " ".repeat(width - 2 * arm),
-        "─".repeat(arm),
-    );
-    style.paint(&rgb_code(color, false), &segment)
+fn mascot_pose(progress: f32) -> Pose {
+    let hop = phase(progress, HOP_START, HOP_END);
+    let height = HOP_HEIGHT.min(mascot::headroom()) as f32;
+    let blink = phase(progress, BLINK_START, BLINK_END);
+    Pose {
+        lift: (height * (hop * std::f32::consts::PI).sin()).round() as usize,
+        glow: progress / GLOW_END,
+        lid: 1.0 - (blink * 2.0 - 1.0).abs(),
+        unlit: UNLIT,
+    }
 }
 
 fn wordmark_row(style: &Style, row: &str, progress: f32) -> String {
@@ -231,47 +210,49 @@ fn wordmark_row(style: &Style, row: &str, progress: f32) -> String {
         .collect()
 }
 
-fn intro_lines(style: &Style, progress: f32) -> Vec<String> {
-    let eased = ease_out(progress);
-    let spread = (MAX_SPREAD as f32 * (1.0 - eased)).round() as usize;
-    let full_arm = (FRAME_INNER + 2 * spread) / 2;
-    let arm = (MIN_ARM as f32 + (full_arm - MIN_ARM) as f32 * (1.0 - eased)).round() as usize;
-    let frame_color = mix(EMBER, ACCENT, eased);
-    let indent = " ".repeat(2 + MAX_SPREAD - spread);
-    let side = style.paint(&rgb_code(frame_color, false), "│");
-    let side_row = format!(
-        "{indent}{side}{}{side}",
-        " ".repeat(FRAME_INNER + 2 * spread)
-    );
-    let wordmark_indent = " ".repeat(2 + MAX_SPREAD + 1 + WORDMARK_INSET);
-    let wordmark_progress = (progress - 0.3) / 0.7;
+fn caption(style: &Style, progress: f32) -> Vec<String> {
+    let wordmark_progress = (progress - 0.25) / 0.75;
+    let mut lines: Vec<String> = WORDMARK
+        .iter()
+        .map(|row| wordmark_row(style, row, wordmark_progress))
+        .collect();
+    lines.push(String::new());
+    lines.push(style.bold("Screenshots for KDE Plasma and Hyprland."));
+    lines.push(style.dim(&format!("v{}", env!("CARGO_PKG_VERSION"))));
+    lines
+}
 
-    let mut lines = vec![
-        format!(
-            "{indent}{}",
-            viewfinder_edge(style, '┌', '┐', spread, arm, frame_color)
-        ),
-        side_row.clone(),
-    ];
-    lines.extend(WORDMARK.iter().map(|row| {
-        format!(
-            "{wordmark_indent}{}",
-            wordmark_row(style, row, wordmark_progress)
-        )
-    }));
-    lines.push(side_row);
-    lines.push(format!(
-        "{indent}{}",
-        viewfinder_edge(style, '└', '┘', spread, arm, frame_color)
-    ));
+fn intro_lines(style: &Style, progress: f32) -> Vec<String> {
+    let indent = " ".repeat(INDENT);
+    let caption = caption(style, progress);
+    let mut lines: Vec<String> = if style.color {
+        let gap = " ".repeat(MASCOT_GAP);
+        mascot::rows(style, mascot_pose(progress))
+            .into_iter()
+            .enumerate()
+            .map(|(index, body)| {
+                let text = index
+                    .checked_sub(CAPTION_ROW)
+                    .and_then(|offset| caption.get(offset))
+                    .map_or("", String::as_str);
+                format!("{indent}{body}{gap}{text}")
+            })
+            .collect()
+    } else {
+        caption
+            .iter()
+            .map(|line| {
+                if line.is_empty() {
+                    String::new()
+                } else {
+                    format!("{indent}{line}")
+                }
+            })
+            .collect()
+    };
     lines.push(String::new());
     lines.push(format!(
-        "  {}  {}",
-        style.bold("Screenshots for KDE Plasma and Hyprland."),
-        style.dim(&format!("v{}", env!("CARGO_PKG_VERSION"))),
-    ));
-    lines.push(format!(
-        "  {}",
+        "{indent}{}",
         style.dim("The frame freezes when you press the shortcut, then you pick what to keep.")
     ));
     lines.push(String::new());
@@ -306,85 +287,171 @@ fn animate_intro(style: &Style) -> std::io::Result<()> {
     Ok(())
 }
 
-fn render(style: &Style, with_intro: bool) -> String {
-    let binary = env!("CARGO_PKG_NAME");
-    let mut text = String::new();
-
-    if with_intro {
-        text.push_str(&intro(style));
-    }
-
-    text.push_str(&format!(
-        "{} {} {} {}\n\n",
+fn usage(style: &Style, topic: Topic) -> String {
+    let (command, arguments) = match topic {
+        Topic::Overview => ("<command>", "[...flags]"),
+        Topic::Capture => ("capture", "[region|fullscreen] [...flags]"),
+    };
+    format!(
+        "{} {} {} {}\n",
         style.bold("Usage:"),
-        style.bold(binary),
-        style.bold("<command>"),
-        style.flag("[...flags]"),
-    ));
+        style.bold(BINARY),
+        style.bold(command),
+        style.flag(arguments),
+    )
+}
 
-    text.push_str(&format!("{}\n", style.bold("Commands:")));
-    text.push_str(&style.group(CAPTURE, Style::accent));
-    text.push('\n');
-    text.push_str(&style.group(SESSION, Style::bold));
-    text.push('\n');
-    text.push_str(&style.group(SETUP, Style::bold));
-    text.push('\n');
-
-    text.push_str(&format!("{}\n", style.bold("Capture flags:")));
-    text.push_str(&style.group(FLAGS, Style::flag));
-    text.push('\n');
-
-    text.push_str(&format!("{}\n", style.bold("Examples:")));
+fn examples(style: &Style) -> String {
+    let mut text = format!("{}\n", style.bold("Examples:"));
     for (summary, command) in EXAMPLES {
         text.push_str(&format!(
-            "  {}\n  {} {binary} {command}\n\n",
+            "  {}\n  {} {BINARY} {command}\n\n",
             style.dim(summary),
             style.dim("$"),
         ));
     }
-
-    text.push_str(&format!(
-        "Run {} to see which capture backends this session offers.\n",
-        style.bold(&format!("{binary} doctor")),
-    ));
-
     text
 }
 
-/// Prints the command overview to stdout.
+fn render(style: &Style, topic: Topic, with_intro: bool) -> String {
+    let mut text = String::new();
+    if with_intro {
+        text.push_str(&intro(style));
+    }
+    text.push_str(&usage(style, topic));
+    text.push('\n');
+
+    match topic {
+        Topic::Overview => {
+            text.push_str(&format!("{}\n", style.bold("Commands:")));
+            text.push_str(&group(style, CAPTURE, Style::accent));
+            text.push('\n');
+            text.push_str(&group(style, SESSION, Style::bold));
+            text.push('\n');
+            text.push_str(&group(style, SETUP, Style::bold));
+            text.push('\n');
+            text.push_str(&format!("{}\n", style.bold("Capture flags:")));
+        }
+        Topic::Capture => {
+            text.push_str(&format!("{}\n", style.bold("Modes:")));
+            text.push_str(&group(style, MODES, Style::accent));
+            text.push('\n');
+            text.push_str(&format!("{}\n", style.bold("Flags:")));
+        }
+    }
+    text.push_str(&group(style, FLAGS, Style::flag));
+    text.push('\n');
+    text.push_str(&examples(style));
+    text.push_str(&format!(
+        "Run {} to see which capture backends this session offers.\n",
+        style.bold(&format!("{BINARY} doctor")),
+    ));
+    text
+}
+
+fn render_error(style: &Style, message: &str, topic: Topic, hint: Option<&str>) -> String {
+    let more = match topic {
+        Topic::Overview => format!("{BINARY} help"),
+        Topic::Capture => format!("{BINARY} capture --help"),
+    };
+    let mut text = format!("{} {message}\n", style.error("error:"));
+    if let Some(hint) = hint {
+        text.push_str(&format!("       {hint}\n"));
+    }
+    text.push('\n');
+    text.push_str(&usage(style, topic));
+    text.push_str(&format!("Run {} for details.\n", style.bold(&more)));
+    text
+}
+
+fn distance(left: &str, right: &str) -> usize {
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    for (row, left_char) in left.chars().enumerate() {
+        let mut current = vec![row + 1];
+        for (column, right_char) in right.iter().enumerate() {
+            let substitution = previous[column] + usize::from(left_char != *right_char);
+            current.push(
+                substitution
+                    .min(previous[column + 1] + 1)
+                    .min(current[column] + 1),
+            );
+        }
+        previous = current;
+    }
+    previous[right.len()]
+}
+
+fn suggest(input: &str) -> Option<&'static str> {
+    COMMANDS
+        .iter()
+        .map(|command| (distance(input, command), *command))
+        .filter(|(distance, _)| *distance <= MAX_SUGGESTION_DISTANCE)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, command)| command)
+}
+
+/// Prints the overview or the help for one command to stdout.
 ///
-/// On a color terminal the intro animates for about a second; `NO_COLOR` or a pipe prints it static.
+/// The overview animates its intro for about a second on a color terminal; `NO_COLOR` or a
+/// pipe prints it static.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// help::print();
+/// help::print(help::Topic::Capture);
 /// ```
-pub fn print() {
-    let style = Style::detect(std::io::stdout().is_terminal());
-    if !style.color {
-        print!("{}", render(&style, true));
+pub fn print(topic: Topic) {
+    let style = Style::stdout();
+    if topic != Topic::Overview || !style.color {
+        print!("{}", render(&style, topic, topic == Topic::Overview));
         return;
     }
     if animate_intro(&style).is_err() {
         return;
     }
-    print!("{}", render(&style, false));
+    print!("{}", render(&style, topic, false));
 }
 
-/// Prints an error followed by the command overview to stderr.
+/// Prints the binary name and version to stdout.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// help::print_error("missing command");
+/// help::print_version();
 /// ```
-pub fn print_error(message: &str) {
-    let style = Style::detect(std::io::stderr().is_terminal());
+pub fn print_version() {
+    println!("{BINARY} {}", env!("CARGO_PKG_VERSION"));
+}
+
+/// Prints an error with the usage line for `topic` to stderr.
+///
+/// # Examples
+///
+/// ```ignore
+/// help::print_error("unknown mode `box`", help::Topic::Capture);
+/// ```
+pub fn print_error(message: &str, topic: Topic) {
+    eprint!("{}", render_error(&Style::stderr(), message, topic, None));
+}
+
+/// Prints an unknown-command error, suggesting the closest command when one is near.
+///
+/// # Examples
+///
+/// ```ignore
+/// help::print_unknown_command("doctr");
+/// ```
+pub fn print_unknown_command(input: &str) {
+    let hint = suggest(input).map(|command| format!("did you mean `{command}`?"));
     eprint!(
-        "{} {message}\n\n{}",
-        style.error("error:"),
-        render(&style, false)
+        "{}",
+        render_error(
+            &Style::stderr(),
+            &format!("unknown command `{input}`"),
+            Topic::Overview,
+            hint.as_deref(),
+        )
     );
 }
 
@@ -392,37 +459,77 @@ pub fn print_error(message: &str) {
 mod tests {
     use super::*;
 
+    const PLAIN: Style = Style { color: false };
+
     #[test]
     fn renders_plain_text_without_escape_codes() {
-        let text = render(&Style { color: false }, true);
+        let text = render(&PLAIN, Topic::Overview, true);
         assert!(!text.contains('\x1b'));
         assert!(text.contains("Commands:"));
     }
 
     #[test]
     fn aligns_descriptions_to_one_column() {
-        let style = Style { color: false };
-        for entry in CAPTURE.iter().chain(SESSION).chain(SETUP).chain(FLAGS) {
-            let row = style.row(entry, Style::bold);
-            assert_eq!(row.find(entry.description), Some(2 + LABEL_WIDTH));
+        for entry in CAPTURE
+            .iter()
+            .chain(SESSION)
+            .chain(SETUP)
+            .chain(MODES)
+            .chain(FLAGS)
+        {
+            let line = row(&PLAIN, entry, Style::bold);
+            assert_eq!(line.find(entry.description), Some(2 + LABEL_WIDTH));
         }
     }
 
     #[test]
-    fn settles_the_viewfinder_on_corner_marks() {
-        let lines = intro_lines(&Style { color: false }, 1.0);
-        let indent = " ".repeat(2 + MAX_SPREAD);
-        let gap = " ".repeat(FRAME_INNER - 2 * MIN_ARM);
-        assert_eq!(lines[0], format!("{indent}┌──{gap}──┐"));
-        assert_eq!(lines[6], format!("{indent}└──{gap}──┘"));
+    fn keeps_capture_help_to_modes_and_flags() {
+        let text = render(&PLAIN, Topic::Capture, false);
+        assert!(text.contains("Modes:"));
+        assert!(text.contains("--backend"));
+        assert!(!text.contains("install-desktop-file"));
+    }
+
+    #[test]
+    fn suggests_the_nearest_command_for_a_typo() {
+        assert_eq!(suggest("doctr"), Some("doctor"));
+        assert_eq!(suggest("captrue"), Some("capture"));
+        assert_eq!(suggest("screenshot"), None);
+    }
+
+    #[test]
+    fn prints_a_short_error_instead_of_the_full_overview() {
+        let text = render_error(&PLAIN, "unknown command `x`", Topic::Overview, None);
+        assert!(text.starts_with("error: unknown command `x`\n"));
+        assert!(!text.contains("Commands:"));
+    }
+
+    #[test]
+    fn fits_the_caption_beside_the_mascot() {
+        assert!(CAPTION_ROW + caption(&PLAIN, 1.0).len() <= mascot::ROWS);
+    }
+
+    #[test]
+    fn rests_the_mascot_with_open_eyes() {
+        let pose = mascot_pose(1.0);
+        assert_eq!((pose.lift, pose.lid), (0, 0.0));
+        assert!(pose.glow >= 1.0);
+    }
+
+    #[test]
+    fn hops_without_clipping_the_mascot() {
+        let highest = (0..=ANIMATION_FRAMES)
+            .map(|frame| mascot_pose(frame as f32 / ANIMATION_FRAMES as f32).lift)
+            .max();
+        assert_eq!(highest, Some(HOP_HEIGHT));
+        assert!(HOP_HEIGHT <= mascot::headroom());
     }
 
     #[test]
     fn keeps_every_intro_frame_the_same_height() {
-        let style = Style { color: false };
-        let height = intro_lines(&style, 1.0).len();
+        let height = intro_lines(&PLAIN, 1.0).len();
         assert!((0..=ANIMATION_FRAMES).all(|frame| {
-            intro_lines(&style, frame as f32 / ANIMATION_FRAMES as f32).len() == height
+            intro_lines(&PLAIN, frame as f32 / ANIMATION_FRAMES as f32).len() == height
         }));
     }
 }

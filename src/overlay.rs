@@ -6,16 +6,15 @@ use gtk::prelude::*;
 use gtk::{cairo, gdk, glib, graphene};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-use crate::capture::Frame;
-use crate::capture::mapping::{PixelRect, logical_to_pixels, rect_from_drag};
+use crate::capture::mapping::{SelectionPlan, plan_selection, rect_from_drag};
+use crate::capture::{Frame, LogicalRect};
 
 const ACCENT: (f64, f64, f64) = (254.0 / 255.0, 81.0 / 255.0, 1.0 / 255.0);
 const DIM: f64 = 0.45;
 const MIN_SELECTION: i32 = 3;
 
 pub struct Selection {
-    pub frame_index: usize,
-    pub rect: PixelRect,
+    pub plan: SelectionPlan,
 }
 
 struct Drag {
@@ -29,6 +28,7 @@ type PaintCallback = Box<dyn FnOnce()>;
 
 struct Shared {
     frames: Arc<Vec<Frame>>,
+    geometry: Vec<(LogicalRect, (u32, u32))>,
     drag: RefCell<Option<Drag>>,
     windows: RefCell<Vec<gtk::Window>>,
     areas: RefCell<Vec<gtk::DrawingArea>>,
@@ -40,8 +40,8 @@ struct Shared {
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
 ///
 /// Surfaces are layer-shell overlays when the compositor supports it and fullscreen windows
-/// otherwise. Escape cancels. `on_done` runs once with the selection in frame pixels, or
-/// `None` when canceled.
+/// otherwise. A drag may cross monitor edges. Escape cancels. `on_done` runs once with the plan
+/// that turns the selection into an image, or `None` when canceled.
 ///
 /// # Examples
 ///
@@ -55,8 +55,13 @@ pub fn show(
     on_done: impl FnOnce(Option<Selection>) + 'static,
     on_first_paint: impl FnOnce() + 'static,
 ) {
+    let geometry = frames
+        .iter()
+        .map(|frame| (frame.monitor.logical, (frame.width, frame.height)))
+        .collect();
     let shared = Rc::new(Shared {
         frames: frames.clone(),
+        geometry,
         drag: RefCell::new(None),
         windows: RefCell::new(Vec::new()),
         areas: RefCell::new(Vec::new()),
@@ -172,12 +177,15 @@ fn build_surface(
     });
 
     let drag = gtk::GestureDrag::new();
+    let origin = shared.frames[frame_index].monitor.logical;
+    let to_desktop = move |x: f64, y: f64| (f64::from(origin.x) + x, f64::from(origin.y) + y);
     let begin_shared = shared.clone();
     drag.connect_drag_begin(move |_, x, y| {
+        let start = to_desktop(x, y);
         begin_shared.drag.replace(Some(Drag {
             frame_index,
-            start: (x, y),
-            current: (x, y),
+            start,
+            current: start,
         }));
         redraw(&begin_shared);
     });
@@ -194,20 +202,13 @@ fn build_surface(
             return;
         };
         let rect = rect_from_drag(drag.start, (drag.start.0 + dx, drag.start.1 + dy));
-        if rect.width < MIN_SELECTION || rect.height < MIN_SELECTION {
-            redraw(&end_shared);
-            return;
+        let plan = (rect.width >= MIN_SELECTION && rect.height >= MIN_SELECTION)
+            .then(|| plan_selection(rect, &end_shared.geometry))
+            .flatten();
+        match plan {
+            Some(plan) => finish(&end_shared, Some(Selection { plan })),
+            None => redraw(&end_shared),
         }
-        let frame = &end_shared.frames[drag.frame_index];
-        let monitor_size = (frame.monitor.logical.width, frame.monitor.logical.height);
-        let selection =
-            logical_to_pixels(rect, monitor_size, (frame.width, frame.height)).map(|rect| {
-                Selection {
-                    frame_index: drag.frame_index,
-                    rect,
-                }
-            });
-        finish(&end_shared, selection);
     });
     area.add_controller(drag);
 
@@ -257,14 +258,15 @@ fn draw(shared: &Shared, frame_index: usize, context: &cairo::Context, width: i3
     context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
 
     let drag = shared.drag.borrow();
-    let Some(drag) = drag.as_ref().filter(|drag| drag.frame_index == frame_index) else {
+    let Some(drag) = drag.as_ref() else {
         report(context.fill());
         return;
     };
     let rect = rect_from_drag(drag.start, drag.current);
+    let origin = shared.frames[frame_index].monitor.logical;
     let (x, y, w, h) = (
-        f64::from(rect.x),
-        f64::from(rect.y),
+        f64::from(rect.x - origin.x),
+        f64::from(rect.y - origin.y),
         f64::from(rect.width),
         f64::from(rect.height),
     );
@@ -277,19 +279,29 @@ fn draw(shared: &Shared, frame_index: usize, context: &cairo::Context, width: i3
     context.rectangle(x + 0.5, y + 0.5, (w - 1.0).max(0.0), (h - 1.0).max(0.0));
     report(context.stroke());
 
-    let frame = &shared.frames[frame_index];
-    let monitor_size = (frame.monitor.logical.width, frame.monitor.logical.height);
-    let Some(pixels) = logical_to_pixels(rect, monitor_size, (frame.width, frame.height)) else {
+    if label_frame(shared, rect, drag.frame_index) != frame_index {
+        return;
+    }
+    let Some(plan) = plan_selection(rect, &shared.geometry) else {
         return;
     };
+    let (pixels_wide, pixels_high) = plan.size();
     draw_size_label(
         context,
-        &format!("{} × {}", pixels.width, pixels.height),
+        &format!("{pixels_wide} × {pixels_high}"),
         x,
         y + h,
         width,
         height,
     );
+}
+
+fn label_frame(shared: &Shared, rect: LogicalRect, fallback: usize) -> usize {
+    shared
+        .geometry
+        .iter()
+        .position(|(logical, _)| logical.contains_point(rect.x, rect.bottom() - 1))
+        .unwrap_or(fallback)
 }
 
 fn draw_size_label(

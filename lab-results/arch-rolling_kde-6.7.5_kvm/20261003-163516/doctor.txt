@@ -1,0 +1,27 @@
+kiekje-next doctor  v0.1.0
+
+Session
+  type              wayland
+  desktop           KDE
+  overlay           layer-shell
+  daemon            not running
+  kwin access       desktop file installed
+
+Monitors
+  Virtual-1         1280x800 at 0,0, scale 1
+
+Portals
+  Screenshot        v2
+  ScreenCast        v5
+  GlobalShortcuts   v2
+
+Capture backends
+                            cursor  native  sandbox
+  ● kwin-screenshot2        yes     yes     no
+  ● xdg-desktop-portal      no      no      yes
+  ○ ext-image-copy-capture  not offered by the compositor
+  ○ wlr-screencopy          not offered by the compositor
+  Auto tries the available backends from top to bottom.
+
+No problems found.
+

@@ -93,6 +93,40 @@ pub struct LogicalRect {
     pub height: i32,
 }
 
+impl LogicalRect {
+    pub fn right(self) -> i32 {
+        self.x + self.width
+    }
+
+    pub fn bottom(self) -> i32 {
+        self.y + self.height
+    }
+
+    pub fn contains(self, other: Self) -> bool {
+        other.x >= self.x
+            && other.y >= self.y
+            && other.right() <= self.right()
+            && other.bottom() <= self.bottom()
+    }
+
+    pub fn contains_point(self, x: i32, y: i32) -> bool {
+        x >= self.x && y >= self.y && x < self.right() && y < self.bottom()
+    }
+
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = self.right().min(other.right());
+        let bottom = self.bottom().min(other.bottom());
+        (right > left && bottom > top).then_some(Self {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MonitorInfo {
     pub connector: String,

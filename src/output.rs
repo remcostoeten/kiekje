@@ -7,8 +7,8 @@ use std::thread;
 use gtk::{gdk, glib};
 
 use crate::backends::portal::bounding_box;
-use crate::capture::mapping::PixelRect;
-use crate::capture::{CaptureMode, Frame, PixelFormat};
+use crate::capture::mapping::{PixelRect, SelectionPlan, density};
+use crate::capture::{CaptureMode, Frame, LogicalRect, PixelFormat};
 
 pub struct Image {
     pub width: u32,
@@ -57,25 +57,74 @@ struct Placement<'a> {
     frame: &'a Frame,
     left: u32,
     top: u32,
-    width: u32,
-    height: u32,
+    rows: Vec<usize>,
     columns: Vec<usize>,
+    contiguous: bool,
 }
 
 impl Placement<'_> {
-    fn fill_row(&self, y: u32, row: &mut [u8]) {
-        if y < self.top || y >= self.top + self.height {
-            return;
+    fn new(
+        frame: &Frame,
+        bounds: LogicalRect,
+        ratio: f64,
+        size: (u32, u32),
+    ) -> Option<Placement<'_>> {
+        let logical = frame.monitor.logical;
+        let part = logical.intersection(bounds)?;
+        let to_target = |offset: i32, limit: u32| {
+            ((f64::from(offset) * ratio).round().max(0.0) as u32).min(limit)
+        };
+        let left = to_target(part.x - bounds.x, size.0);
+        let right = to_target(part.right() - bounds.x, size.0);
+        let top = to_target(part.y - bounds.y, size.1);
+        let bottom = to_target(part.bottom() - bounds.y, size.1);
+        if right <= left || bottom <= top {
+            return None;
         }
+        let columns = source_indices(
+            part.x - logical.x,
+            part.width,
+            logical.width,
+            frame.width,
+            right - left,
+        );
+        let rows = source_indices(
+            part.y - logical.y,
+            part.height,
+            logical.height,
+            frame.height,
+            bottom - top,
+        );
+        let contiguous = columns.windows(2).all(|pair| pair[1] == pair[0] + 1);
+        Some(Placement {
+            frame,
+            left,
+            top,
+            rows,
+            columns,
+            contiguous,
+        })
+    }
+
+    fn fill_row(&self, y: u32, row: &mut [u8]) {
+        let Some(&source_y) = y
+            .checked_sub(self.top)
+            .and_then(|offset| self.rows.get(offset as usize))
+        else {
+            return;
+        };
         let frame = self.frame;
-        let source_y =
-            (u64::from(y - self.top) * u64::from(frame.height) / u64::from(self.height)) as usize;
         let source_row = &frame.data[source_y * frame.stride..];
         let start = self.left as usize * 4;
-        let row_bytes = self.width as usize * 4;
+        let row_bytes = self.columns.len() * 4;
         let target_row = &mut row[start..start + row_bytes];
-        if self.width == frame.width {
-            convert_row(frame.format, &source_row[..row_bytes], target_row);
+        if self.contiguous {
+            let source_start = self.columns[0] * 4;
+            convert_row(
+                frame.format,
+                &source_row[source_start..source_start + row_bytes],
+                target_row,
+            );
             return;
         }
         for (target, &source) in target_row
@@ -84,6 +133,7 @@ impl Placement<'_> {
             .iter_mut()
             .zip(&self.columns)
         {
+            let source = source * 4;
             let pixel = [
                 source_row[source],
                 source_row[source + 1],
@@ -93,6 +143,17 @@ impl Placement<'_> {
             *target = frame.format.to_rgba(pixel);
         }
     }
+}
+
+fn source_indices(offset: i32, span: i32, logical: i32, pixels: u32, targets: u32) -> Vec<usize> {
+    let (offset, span, logical) = (offset as u64, span as u64, logical.max(1) as u64);
+    let (pixels, targets) = (u64::from(pixels), u64::from(targets));
+    (0..targets)
+        .map(|target| {
+            let source = (offset * targets + target * span) * pixels / (logical * targets);
+            source.min(pixels.saturating_sub(1)) as usize
+        })
+        .collect()
 }
 
 /// Composes all monitor frames into one RGBA image laid out like the desktop.
@@ -110,32 +171,38 @@ pub fn stitch(frames: &[Frame]) -> Option<Image> {
     let bounds = bounding_box(&monitors)?;
     let ratio = frames
         .iter()
-        .map(|frame| f64::from(frame.width) / f64::from(frame.monitor.logical.width.max(1)))
+        .map(|frame| density(frame.monitor.logical, (frame.width, frame.height)))
         .fold(1.0_f64, f64::max);
-
     let width = (f64::from(bounds.width) * ratio).round() as u32;
     let height = (f64::from(bounds.height) * ratio).round() as u32;
+    Some(compose(frames, bounds, ratio, (width, height)))
+}
+
+/// Turns a desktop-wide selection into an image, following its [`SelectionPlan`].
+///
+/// # Examples
+///
+/// ```ignore
+/// let image = render_selection(&frames, plan);
+/// ```
+pub fn render_selection(frames: &[Frame], plan: SelectionPlan) -> Image {
+    match plan {
+        SelectionPlan::Crop { frame_index, rect } => crop(&frames[frame_index], rect),
+        SelectionPlan::Compose {
+            bounds,
+            ratio,
+            width,
+            height,
+        } => compose(frames, bounds, ratio, (width, height)),
+    }
+}
+
+fn compose(frames: &[Frame], bounds: LogicalRect, ratio: f64, size: (u32, u32)) -> Image {
+    let (width, height) = size;
     let stride = width as usize * 4;
     let placements: Vec<Placement> = frames
         .iter()
-        .map(|frame| {
-            let logical = frame.monitor.logical;
-            let left = (f64::from(logical.x - bounds.x) * ratio).round() as u32;
-            let top = (f64::from(logical.y - bounds.y) * ratio).round() as u32;
-            let width = ((f64::from(logical.width) * ratio).round() as u32).min(width - left);
-            let height = ((f64::from(logical.height) * ratio).round() as u32).min(height - top);
-            let columns = (0..u64::from(width))
-                .map(|x| (x * u64::from(frame.width) / u64::from(width)) as usize * 4)
-                .collect();
-            Placement {
-                frame,
-                left,
-                top,
-                width,
-                height,
-                columns,
-            }
-        })
+        .filter_map(|frame| Placement::new(frame, bounds, ratio, size))
         .collect();
 
     let mut data = vec![0u8; stride * height as usize];
@@ -155,13 +222,13 @@ pub fn stitch(frames: &[Frame]) -> Option<Image> {
         }
     });
 
-    Some(Image {
+    Image {
         width,
         height,
         stride,
         format: PixelFormat::Rgba,
         data,
-    })
+    }
 }
 
 /// Encodes an image as an 8-bit RGBA PNG in memory, converting its pixels in place first.
@@ -267,7 +334,7 @@ pub fn captures_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capture::{LogicalRect, MonitorInfo};
+    use crate::capture::MonitorInfo;
 
     fn frame(x: i32, width: u32, value: u8) -> Frame {
         Frame {
@@ -306,6 +373,50 @@ mod tests {
         assert_eq!(&image.data[0..4], &[0, 0, 10, 255]);
         assert_eq!(&image.data[12..16], &[0, 0, 20, 255]);
         assert_eq!(&image.data[16 + 8..16 + 12], &[0, 0, 20, 255]);
+    }
+
+    #[test]
+    fn composes_a_selection_across_two_frames() {
+        let image = render_selection(
+            &[frame(0, 2, 10), frame(1, 1, 20)],
+            SelectionPlan::Compose {
+                bounds: LogicalRect {
+                    x: 0,
+                    y: 0,
+                    width: 2,
+                    height: 1,
+                },
+                ratio: 2.0,
+                width: 4,
+                height: 2,
+            },
+        );
+        let pixels: Vec<u8> = image.data.chunks(4).map(|pixel| pixel[2]).collect();
+        assert_eq!(pixels, vec![10, 10, 20, 20, 10, 10, 20, 20]);
+    }
+
+    #[test]
+    fn composes_only_the_selected_part_of_each_frame() {
+        let mut left = frame(0, 4, 0);
+        left.monitor.logical.width = 4;
+        left.monitor.logical.height = 4;
+        left.height = 4;
+        left.data = (0..16).flat_map(|value| [value, 0, 0, 0]).collect();
+        let image = render_selection(
+            &[left],
+            SelectionPlan::Compose {
+                bounds: LogicalRect {
+                    x: 1,
+                    y: 2,
+                    width: 2,
+                    height: 1,
+                },
+                ratio: 1.0,
+                width: 2,
+                height: 1,
+            },
+        );
+        assert_eq!(image.data, vec![0, 0, 9, 255, 0, 0, 10, 255]);
     }
 
     #[test]

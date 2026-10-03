@@ -221,7 +221,7 @@ function probe_path {
 }
 
 function backends_from_doctor {
-    awk '$1 == "capture" {print $2}' "$1" | while read -r kind; do
+    awk '$1 == "●" {print $2}' "$1" | while read -r kind; do
         case "$kind" in
         kwin-screenshot2) echo kwin ;;
         ext-image-copy-capture | wlr-screencopy) echo wlroots ;;
