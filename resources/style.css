@@ -358,3 +358,8 @@ window.settings-window {
   border: 1px solid var(--accent);
   background-color: var(--accent-wash);
 }
+
+.settings .about-name {
+  font-size: 20px;
+  font-weight: 600;
+}
