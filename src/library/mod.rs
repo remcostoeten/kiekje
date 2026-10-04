@@ -6,6 +6,8 @@ use thiserror::Error;
 
 use crate::capture::CaptureMode;
 
+pub mod thumbs;
+
 const SCHEMA: &[&str] = &["CREATE TABLE captures (
         id INTEGER PRIMARY KEY,
         path TEXT NOT NULL UNIQUE,
@@ -167,6 +169,24 @@ impl Library {
         Ok(captures)
     }
 
+    /// Returns the paths of every capture that is still on disk.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// thumbs::prune(&thumbs::dir(), &library.present()?)?;
+    /// ```
+    pub fn present(&self) -> Result<Vec<PathBuf>, LibraryError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT path FROM captures WHERE missing = 0")?;
+        let paths = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .map(|path| path.map(PathBuf::from))
+            .collect::<Result<_, _>>()?;
+        Ok(paths)
+    }
+
     /// Marks every capture whose file is gone as missing, and clears the mark when it is back.
     ///
     /// Returns how many records changed state. Stats every file, so call it off the GTK main thread.
@@ -309,6 +329,7 @@ mod tests {
         std::fs::write(folder.join("mid.png"), b"png").unwrap();
         assert_eq!(library.check_missing().unwrap(), 1);
         assert_eq!(names(&library), ["new.png", "mid.png", "old.png"]);
+        assert_eq!(library.present().unwrap().len(), 3);
         std::fs::remove_dir_all(folder).unwrap();
     }
 

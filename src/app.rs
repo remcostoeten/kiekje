@@ -15,7 +15,7 @@ use crate::capture::{
 };
 use crate::clipboard::Clipboard;
 use crate::config::{self, Notifications};
-use crate::library::{self, Library, NewCapture};
+use crate::library::{self, Library, NewCapture, thumbs};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
@@ -920,14 +920,32 @@ fn record(path: &std::path::Path, mode: CaptureMode, width: u32, height: u32, by
 fn check_library() {
     glib::spawn_future_local(async {
         let checked = gio::spawn_blocking(|| {
-            Library::open(&library::path()).and_then(|mut library| library.check_missing())
+            let mut library = Library::open(&library::path())?;
+            let changed = library.check_missing()?;
+            Ok::<_, library::LibraryError>((changed, library.present()?))
         })
         .await;
-        match checked {
-            Ok(Ok(0)) => {}
-            Ok(Ok(changed)) => println!("kiekje: {changed} library entries changed missing state"),
-            Ok(Err(error)) => eprintln!("kiekje: library check failed: {error}"),
-            Err(_) => eprintln!("kiekje: the library worker stopped"),
+        let present = match checked {
+            Ok(Ok((changed, present))) => {
+                if changed > 0 {
+                    println!("kiekje: {changed} library entries changed missing state");
+                }
+                present
+            }
+            Ok(Err(error)) => {
+                eprintln!("kiekje: library check failed: {error}");
+                return;
+            }
+            Err(_) => {
+                eprintln!("kiekje: the library worker stopped");
+                return;
+            }
+        };
+        let pruned = gio::spawn_blocking(move || thumbs::prune(&thumbs::dir(), &present)).await;
+        match pruned {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => eprintln!("kiekje: thumbnail cache cleanup failed: {error}"),
+            Err(_) => eprintln!("kiekje: the thumbnail worker stopped"),
         }
     });
 }
