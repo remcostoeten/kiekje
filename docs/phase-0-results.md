@@ -328,6 +328,18 @@ Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12 built from source, i
 
 Unverified: closing on a click outside (virtual pointer clicks didn't reach clients in the container), tray click coordinates from Plasma and Waybar, Geist fonts (not bundled yet, so it falls back to the system sans and mono), and every real desktop.
 
+## Shortcut recorder and settings
+
+`[shortcuts]` in the config holds one trigger per action in the XDG format, such as `capture-region = "SHIFT+LOGO+s"`; an empty string turns the shortcut off. The rules live in one place and apply to the file and the recorder alike: a key needs Ctrl, Alt or Super (Shift alone doesn't count) except Print, desktop combos like Alt+Tab are refused, and two actions can't share a trigger. A config that breaks a rule is reported and the defaults are used, as with any invalid config.
+
+The triggers are what Kiekje suggests to the GlobalShortcuts portal and what it writes to the managed Hyprland include, so an action turned off gets no `bind` line.
+
+`kiekje settings`, or Settings in the tray popover, opens a settings window with a Shortcuts section. On Hyprland, clicking a shortcut records the next key combo: Escape cancels and Backspace turns it off. The recorder stores the key as it is without Shift, so a combo with Shift names the key, not the symbol it types. A saved change rewrites `config.toml` (keeping the rest of the file) and the include, which Hyprland reloads by itself. Where the portal owns the keys (KDE, GNOME), the rows show the desktop's bindings, read-only, and say to change them in the desktop's shortcut settings, because the portal only takes Kiekje's suggestion once. When shortcuts are off, the window says why.
+
+Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12 in a cloud container, with the shortcut host forced to Hyprland in a local build (sway has no GlobalShortcuts portal): recording `s` showed the Ctrl, Alt or Super rule and kept recording; Ctrl+Alt+K saved to both files; the same combo on the other action showed `Ctrl+Alt+K is already set for Capture a region.` and saved nothing; Backspace turned it off and removed its `bind` line; Reset restored the default. Without the override the rows were disabled with the portal error.
+
+Unverified: recording on a real Hyprland session, including Super combos the compositor might grab first, Hyprland reloading the include, and the read-only view on Plasma and GNOME.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
@@ -340,7 +352,7 @@ Unverified: closing on a click outside (virtual pointer clicks didn't reach clie
 
    The warm-up itself takes 222 to 313 ms on the main thread right after start. A trigger in that window waits for it, which is no slower than a cold overlay. The extra memory is the same driver cost every daemon paid after its first region capture anyway. A daemon started by `capture` skips the warm-up, because its first overlay does the same work.
 3. Done: memory growth came from the glibc heap, see above.
-4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Done: the Hyprland managed `bind` include. Open: rebinding from settings, and persisting a user's disabled shortcuts.
+4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Done: the Hyprland managed `bind` include. Done: rebinding from settings on Hyprland and turning shortcuts off, see "Shortcut recorder and settings". Open: `ConfigureShortcuts` on portal v2 desktops.
 5. Done: CLI clients that forward to the running instance, and `quit` with nothing running, now leave through `g_application_run` with a `handle-local-options` handler that exits at once. GLib no longer warns about the D-Bus registration.
 6. Partly done: Hyprland runs in `test-hypr`. Still open: an Omarchy session, and GNOME overlay focus when triggered by a real global shortcut.
 7. Done on KWin: selection across monitors and the StatusNotifierItem tray with its native menu, see "Selection across monitors" and "Tray". Done: the styled tray popover, see "Tray popover". Open: all three on Hyprland, Sway, GNOME and real hardware.

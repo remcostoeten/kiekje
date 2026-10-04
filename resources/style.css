@@ -34,7 +34,7 @@ window.kiekje-popover {
   color: var(--muted);
 }
 
-.popover-panel button {
+.panel button {
   background: none;
   background-color: transparent;
   color: var(--fg);
@@ -45,29 +45,29 @@ window.kiekje-popover {
   transition: background-color 120ms ease-out, transform 120ms ease-out;
 }
 
-.popover-panel button:hover {
+.panel button:hover {
   background-color: var(--wash);
 }
 
-.popover-panel button:active {
+.panel button:active {
   transform: scale(0.98);
 }
 
-.popover-panel button:focus-visible {
+.panel button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
-.popover-panel button.primary {
+.panel button.primary {
   border: 1px solid var(--accent);
   background-color: var(--accent-wash);
 }
 
-.popover-panel button.primary:hover {
+.panel button.primary:hover {
   background-color: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
-.popover-panel button.ghost {
+.panel button.ghost {
   border-color: transparent;
 }
 
@@ -84,7 +84,7 @@ window.kiekje-popover {
   color: var(--muted);
 }
 
-.popover-panel button.thumbnail {
+.panel button.thumbnail {
   padding: 0;
   min-width: 64px;
   min-height: 44px;
@@ -97,9 +97,42 @@ window.kiekje-popover {
   color: var(--muted);
 }
 
-.popover-panel separator.rule {
+.panel separator.rule {
   background: none;
   border-top: 1px dashed var(--line);
   min-height: 0;
   margin: 4px 0;
+}
+
+window.settings-window {
+  background-color: var(--bg);
+}
+
+.settings {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 20px;
+}
+
+.note {
+  color: var(--muted);
+}
+
+.problem {
+  color: var(--fg);
+  border-left: 2px solid var(--accent);
+  padding-left: 8px;
+}
+
+.panel button.trigger {
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 140px;
+}
+
+.panel button.trigger.recording {
+  border: 1px solid var(--accent);
+  background-color: var(--accent-wash);
 }

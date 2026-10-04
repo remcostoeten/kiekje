@@ -5,7 +5,7 @@ use gtk::gio::{self, DBusCallFlags, DBusSignalFlags, SignalSubscription};
 use gtk::glib::{Variant, variant::ObjectPath};
 use gtk::prelude::*;
 
-use super::{Binding, ShortcutAction, ShortcutError, ShortcutRegistrar};
+use super::{Binding, ShortcutAction, ShortcutError, ShortcutRegistrar, Shortcuts};
 
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -18,6 +18,7 @@ type Results = HashMap<String, Variant>;
 
 pub struct PortalShortcuts {
     connection: gio::DBusConnection,
+    shortcuts: Shortcuts,
 }
 
 pub struct PortalGuard {
@@ -25,8 +26,11 @@ pub struct PortalGuard {
 }
 
 impl PortalShortcuts {
-    pub fn new(connection: gio::DBusConnection) -> Self {
-        Self { connection }
+    pub fn new(connection: gio::DBusConnection, shortcuts: Shortcuts) -> Self {
+        Self {
+            connection,
+            shortcuts,
+        }
     }
 
     async fn version(&self) -> Result<u32, ShortcutError> {
@@ -142,16 +146,15 @@ impl PortalShortcuts {
         let shortcuts: Vec<(String, Results)> = ShortcutAction::ALL
             .into_iter()
             .map(|action| {
-                (
-                    action.id().to_owned(),
-                    HashMap::from([
-                        ("description".to_owned(), action.description().to_variant()),
-                        (
-                            "preferred_trigger".to_owned(),
-                            action.preferred_trigger().to_variant(),
-                        ),
-                    ]),
-                )
+                let mut options =
+                    HashMap::from([("description".to_owned(), action.description().to_variant())]);
+                if let Some(trigger) = self.shortcuts.slot(action).trigger() {
+                    options.insert(
+                        "preferred_trigger".to_owned(),
+                        trigger.to_string().to_variant(),
+                    );
+                }
+                (action.id().to_owned(), options)
             })
             .collect();
         let results = self

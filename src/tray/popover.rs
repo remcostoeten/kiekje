@@ -23,6 +23,7 @@ const PANEL_WIDTH: i32 = 320;
 pub enum Pick {
     Capture(CaptureMode),
     OpenCaptures,
+    Settings,
     Quit,
 }
 
@@ -244,7 +245,7 @@ fn panel(
         .orientation(gtk::Orientation::Vertical)
         .spacing(8)
         .width_request(PANEL_WIDTH)
-        .css_classes(["popover-panel"])
+        .css_classes(["panel", "popover-panel"])
         .build();
     panel.append(&caps("Kiekje"));
 
@@ -278,9 +279,12 @@ fn panel(
         .spacing(6)
         .homogeneous(true)
         .build();
-    let folder = action_button("Open folder", None, "ghost");
+    let folder = action_button("Folder", None, "ghost");
     connect_pick(&folder, window, picked, Pick::OpenCaptures);
     footer.append(&folder);
+    let settings = action_button("Settings", None, "ghost");
+    connect_pick(&settings, window, picked, Pick::Settings);
+    footer.append(&settings);
     let quit = action_button("Quit", None, "ghost");
     let quit_pick = on_pick.clone();
     let quit_window = window.downgrade();

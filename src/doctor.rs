@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use gtk::prelude::*;
 
@@ -11,6 +11,7 @@ use crate::config::{self, Config};
 use crate::desktop_file;
 use crate::overlay;
 use crate::shortcuts::hyprland;
+use crate::storage;
 use crate::style::{Style, pad};
 
 const BINARY: &str = env!("CARGO_PKG_NAME");
@@ -288,7 +289,7 @@ fn problems(report: &Report) -> Vec<Problem> {
             severity: Severity::Warning,
             message: format!(
                 "{} points at another binary, so KWin may refuse ScreenShot2",
-                tilde(path)
+                storage::tilde(path)
             ),
             fix: reinstall,
         }),
@@ -308,7 +309,7 @@ fn problems(report: &Report) -> Vec<Problem> {
             fix: Some(format!(
                 "add `{}` to {}",
                 hyprland::source_line(&hyprland::include_path()),
-                tilde(&hyprland::main_config_path())
+                storage::tilde(&hyprland::main_config_path())
             )),
         }),
         Some(HyprlandBinds::Sourced) | None => {}
@@ -319,19 +320,11 @@ fn problems(report: &Report) -> Vec<Problem> {
             message: format!("The config can't be used, so defaults apply: {error}"),
             fix: Some(format!(
                 "fix {} or delete it to get the defaults back",
-                tilde(&report.config_path)
+                storage::tilde(&report.config_path)
             )),
         });
     }
     found
-}
-
-fn tilde(path: &Path) -> String {
-    let home = gtk::glib::home_dir();
-    match path.strip_prefix(&home) {
-        Ok(relative) => format!("~/{}", relative.display()),
-        Err(_) => path.display().to_string(),
-    }
 }
 
 fn field(style: &Style, label: &str, value: &str) -> String {
@@ -381,7 +374,7 @@ fn render(report: &Report, style: &Style) -> String {
     text.push('\n');
 
     text.push_str(&format!("{}\n", style.bold("Storage")));
-    let path = tilde(&report.config_path);
+    let path = storage::tilde(&report.config_path);
     let (status, effective) = match &report.config {
         Ok(Some(config)) => (path, config.clone()),
         Ok(None) => (
@@ -397,7 +390,7 @@ fn render(report: &Report, style: &Style) -> String {
     text.push_str(&field(
         style,
         "folder",
-        &tilde(&effective.storage.captures_dir()),
+        &storage::tilde(&effective.storage.captures_dir()),
     ));
     text.push_str(&field(
         style,

@@ -19,11 +19,13 @@ use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
 use crate::shortcuts::{
-    PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, display_trigger, hyprland,
+    PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar, Shortcuts,
+    hyprland,
 };
 use crate::storage::{self, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
+use crate::ui::settings;
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
@@ -37,6 +39,8 @@ struct Session {
     shortcuts: RefCell<Option<PortalGuard>>,
     tray: RefCell<Option<Box<dyn TrayGuard>>>,
     popover: RefCell<Option<gtk::Window>>,
+    settings: RefCell<Option<gtk::Window>>,
+    shortcut_host: RefCell<ShortcutHost>,
     shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
 }
 
@@ -44,6 +48,7 @@ pub enum Command {
     Daemon,
     Quit,
     Menu,
+    Settings,
     Capture(Request),
 }
 
@@ -132,6 +137,8 @@ pub fn run(command: Command) -> glib::ExitCode {
         shortcuts: RefCell::new(None),
         tray: RefCell::new(None),
         popover: RefCell::new(None),
+        settings: RefCell::new(None),
+        shortcut_host: RefCell::new(ShortcutHost::Starting),
         shortcut_labels: RefCell::new(Vec::new()),
     });
     install_actions(&app, &session);
@@ -143,6 +150,7 @@ pub fn run(command: Command) -> glib::ExitCode {
     app.connect_activate(move |app| match initial.take() {
         Some(Command::Capture(request)) => start_capture(app, request, &session),
         Some(Command::Menu) => toggle_menu(app, &session, None),
+        Some(Command::Settings) => open_settings(app, &session),
         Some(Command::Daemon | Command::Quit) | None => {
             glib::idle_add_local_once(overlay::warm_up);
         }
@@ -158,6 +166,7 @@ fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
         Command::Daemon => println!("kiekje: already running"),
         Command::Quit => app.activate_action("quit", None),
         Command::Menu => app.activate_action("menu", None),
+        Command::Settings => app.activate_action("settings", None),
         Command::Capture(request) => app.activate_action("capture", Some(&request.to_variant())),
     }
     if let Some(connection) = app.dbus_connection()
@@ -178,9 +187,11 @@ fn exit_without_running(app: &gtk::Application, code: glib::ExitCode) -> glib::E
 fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
     let Some(connection) = app.dbus_connection() else {
         eprintln!("kiekje: no session bus, global shortcuts are off");
+        session
+            .shortcut_host
+            .replace(ShortcutHost::Off("there is no session bus".to_owned()));
         return;
     };
-    let registrar = PortalShortcuts::new(connection);
     let weak_app = app.downgrade();
     let weak_session = Rc::downgrade(session);
     let on_activated = move |action: ShortcutAction| {
@@ -192,6 +203,10 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
     };
     let session = Rc::downgrade(session);
     glib::spawn_future_local(async move {
+        let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
+            .await
+            .unwrap_or_default();
+        let registrar = PortalShortcuts::new(connection, shortcuts.clone());
         match registrar.bind(on_activated).await {
             Ok((guard, bindings)) => {
                 let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
@@ -210,8 +225,9 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                         }
                         None if on_hyprland => {
                             unbound = true;
-                            labels
-                                .push((mode, display_trigger(binding.action.preferred_trigger())));
+                            if let Some(trigger) = shortcuts.slot(binding.action).trigger() {
+                                labels.push((mode, trigger.label()));
+                            }
                         }
                         None => println!(
                             "kiekje: shortcut {} registered through {} without a trigger; assign one in the desktop settings",
@@ -221,24 +237,36 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                     }
                 }
                 if unbound {
-                    install_hyprland_binds();
+                    install_hyprland_binds(shortcuts);
                 }
                 if let Some(session) = session.upgrade() {
+                    session.shortcut_host.replace(if on_hyprland {
+                        ShortcutHost::Hyprland
+                    } else {
+                        ShortcutHost::Desktop(registrar.name())
+                    });
                     session.shortcut_labels.replace(labels);
                     session.shortcuts.replace(Some(guard));
                 }
             }
-            Err(error) => eprintln!("kiekje: global shortcuts are off: {error}"),
+            Err(error) => {
+                eprintln!("kiekje: global shortcuts are off: {error}");
+                if let Some(session) = session.upgrade() {
+                    session
+                        .shortcut_host
+                        .replace(ShortcutHost::Off(error.to_string()));
+                }
+            }
         }
     });
 }
 
-fn install_hyprland_binds() {
-    glib::spawn_future_local(async {
+fn install_hyprland_binds(shortcuts: Shortcuts) {
+    glib::spawn_future_local(async move {
         let include = hyprland::include_path();
         let target = include.clone();
         let written = gio::spawn_blocking(move || {
-            let changed = hyprland::write_include(&target, APP_ID)?;
+            let changed = hyprland::write_include(&target, APP_ID, &shortcuts)?;
             let sourced =
                 hyprland::is_sourced(&hyprland::main_config_path(), &target, &glib::home_dir());
             Ok::<_, std::io::Error>((changed, sourced))
@@ -358,6 +386,7 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
                     capture_after_menu(&app, &session, mode);
                 }
                 Pick::OpenCaptures => open_captures(),
+                Pick::Settings => open_settings(&app, &session),
                 Pick::Quit => app.activate_action("quit", None),
             }
         });
@@ -458,6 +487,76 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         }
     });
     app.add_action(&menu);
+
+    let settings = gio::SimpleAction::new("settings", None);
+    let settings_app = app.downgrade();
+    let settings_session = Rc::downgrade(session);
+    settings.connect_activate(move |_, _| {
+        if let (Some(app), Some(session)) = (settings_app.upgrade(), settings_session.upgrade()) {
+            open_settings(&app, &session);
+        }
+    });
+    app.add_action(&settings);
+}
+
+fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
+    if let Some(open) = session.settings.borrow().as_ref() {
+        open.present();
+        return;
+    }
+    let app = app.clone();
+    let session = session.clone();
+    glib::spawn_future_local(async move {
+        let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
+            .await
+            .unwrap_or_default();
+        if session.settings.borrow().is_some() {
+            return;
+        }
+        let bound = ShortcutAction::ALL
+            .into_iter()
+            .filter_map(|action| {
+                let mode = action_mode(action);
+                session
+                    .shortcut_labels
+                    .borrow()
+                    .iter()
+                    .find(|(bound, _)| *bound == mode)
+                    .map(|(_, label)| (action, label.clone()))
+            })
+            .collect();
+        let model = settings::Model {
+            shortcuts,
+            host: session.shortcut_host.borrow().clone(),
+            bound,
+        };
+        let saved_session = Rc::downgrade(&session);
+        let window = settings::show(&app, model, move |shortcuts| {
+            if let Some(session) = saved_session.upgrade() {
+                session.shortcut_labels.replace(hyprland_labels(shortcuts));
+            }
+        });
+        let closed_session = Rc::downgrade(&session);
+        window.connect_close_request(move |_| {
+            if let Some(session) = closed_session.upgrade() {
+                session.settings.take();
+            }
+            glib::Propagation::Proceed
+        });
+        session.settings.replace(Some(window));
+    });
+}
+
+fn hyprland_labels(shortcuts: &Shortcuts) -> Vec<(CaptureMode, String)> {
+    ShortcutAction::ALL
+        .into_iter()
+        .filter_map(|action| {
+            shortcuts
+                .slot(action)
+                .trigger()
+                .map(|trigger| (action_mode(action), trigger.label()))
+        })
+        .collect()
 }
 
 fn start_capture(app: &gtk::Application, request: Request, session: &Rc<Session>) {

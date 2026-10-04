@@ -29,6 +29,20 @@ pub fn default_captures_dir() -> PathBuf {
 /// ```ignore
 /// let naming = Naming { mode, stamp: now(), width, height };
 /// ```
+/// Shows `path` with the home folder as `~`, the way people write it in config files.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(tilde(&glib::home_dir().join(".config")), "~/.config");
+/// ```
+pub fn tilde(path: &Path) -> String {
+    match path.strip_prefix(glib::home_dir()) {
+        Ok(relative) => format!("~/{}", relative.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 pub fn now() -> Stamp {
     match glib::DateTime::now_local() {
         Ok(now) => Stamp {

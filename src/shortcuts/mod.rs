@@ -1,10 +1,13 @@
 pub mod hyprland;
 mod portal;
+mod trigger;
 
 use gtk::glib;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use portal::{PortalGuard, PortalShortcuts};
+pub use trigger::{Modifiers, Recorded, Slot, Trigger, record};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShortcutAction {
@@ -33,14 +36,14 @@ impl ShortcutAction {
         }
     }
 
-    /// The trigger suggested to the desktop, in the XDG shortcuts format.
+    /// The trigger an action gets until the user picks another, in the XDG shortcuts format.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// assert_eq!(ShortcutAction::CaptureRegion.preferred_trigger(), "Print");
+    /// assert_eq!(ShortcutAction::CaptureRegion.default_trigger(), "Print");
     /// ```
-    pub fn preferred_trigger(self) -> &'static str {
+    pub fn default_trigger(self) -> &'static str {
         match self {
             Self::CaptureRegion => "Print",
             Self::CaptureFullscreen => "SHIFT+Print",
@@ -48,49 +51,104 @@ impl ShortcutAction {
     }
 }
 
-/// The `hyprland.conf` line that sends the preferred trigger to this shortcut.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ShortcutHost {
+    Starting,
+    Off(String),
+    Desktop(&'static str),
+    Hyprland,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Shortcuts {
+    pub capture_region: Slot,
+    pub capture_fullscreen: Slot,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("{} is set for both `{}` and `{}`", trigger.label(), first.id(), second.id())]
+pub struct Conflict {
+    pub trigger: Trigger,
+    pub first: ShortcutAction,
+    pub second: ShortcutAction,
+}
+
+impl Default for Shortcuts {
+    fn default() -> Self {
+        let slot = |action: ShortcutAction| {
+            Trigger::parse(action.default_trigger()).map_or(Slot::Off, Slot::Key)
+        };
+        Self {
+            capture_region: slot(ShortcutAction::CaptureRegion),
+            capture_fullscreen: slot(ShortcutAction::CaptureFullscreen),
+        }
+    }
+}
+
+impl Shortcuts {
+    pub fn slot(&self, action: ShortcutAction) -> &Slot {
+        match action {
+            ShortcutAction::CaptureRegion => &self.capture_region,
+            ShortcutAction::CaptureFullscreen => &self.capture_fullscreen,
+        }
+    }
+
+    pub fn set(&mut self, action: ShortcutAction, slot: Slot) {
+        match action {
+            ShortcutAction::CaptureRegion => self.capture_region = slot,
+            ShortcutAction::CaptureFullscreen => self.capture_fullscreen = slot,
+        }
+    }
+
+    /// Finds the first trigger that two actions share.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if let Some(conflict) = shortcuts.conflict() {
+    ///     eprintln!("kiekje: {conflict}");
+    /// }
+    /// ```
+    pub fn conflict(&self) -> Option<Conflict> {
+        let assigned: Vec<(ShortcutAction, &Trigger)> = ShortcutAction::ALL
+            .into_iter()
+            .filter_map(|action| self.slot(action).trigger().map(|trigger| (action, trigger)))
+            .collect();
+        assigned
+            .iter()
+            .enumerate()
+            .find_map(|(index, (first, trigger))| {
+                assigned[index + 1..]
+                    .iter()
+                    .find(|(_, other)| other == trigger)
+                    .map(|(second, _)| Conflict {
+                        trigger: (*trigger).clone(),
+                        first: *first,
+                        second: *second,
+                    })
+            })
+    }
+}
+
+/// The `hyprland.conf` line that sends `trigger` to this shortcut.
 ///
-/// Hyprland's portal registers shortcuts without a key, so the user adds this bind.
+/// Hyprland's portal registers shortcuts without a key, so Kiekje writes this bind.
 ///
 /// # Examples
 ///
 /// ```ignore
 /// assert_eq!(
-///     hyprland_bind(ShortcutAction::CaptureFullscreen, "dev.example.App"),
+///     hyprland_bind(ShortcutAction::CaptureFullscreen, &Trigger::parse("SHIFT+Print")?, "dev.example.App"),
 ///     "bind = SHIFT, Print, global, dev.example.App:capture-fullscreen"
 /// );
 /// ```
-pub fn hyprland_bind(action: ShortcutAction, app_id: &str) -> String {
-    let trigger = action.preferred_trigger();
-    let (modifiers, key) = trigger.rsplit_once('+').unwrap_or(("", trigger));
+pub fn hyprland_bind(action: ShortcutAction, trigger: &Trigger, app_id: &str) -> String {
+    let (modifiers, key) = trigger.hyprland();
     format!(
-        "bind = {}, {key}, global, {app_id}:{}",
-        modifiers.replace('+', " "),
+        "bind = {modifiers}, {key}, global, {app_id}:{}",
         action.id()
     )
-}
-
-/// Turns an XDG trigger like `SHIFT+Print` into the `Shift+Print` shown in menus.
-///
-/// # Examples
-///
-/// ```ignore
-/// assert_eq!(display_trigger("CTRL+SHIFT+s"), "Ctrl+Shift+S");
-/// ```
-pub fn display_trigger(trigger: &str) -> String {
-    trigger
-        .split('+')
-        .map(|part| {
-            let mut characters = part.chars();
-            characters.next().map_or_else(String::new, |first| {
-                first
-                    .to_uppercase()
-                    .chain(characters.flat_map(char::to_lowercase))
-                    .collect()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join("+")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,21 +204,38 @@ mod tests {
     }
 
     #[test]
-    fn shows_triggers_in_title_case() {
-        assert_eq!(display_trigger("SHIFT+Print"), "Shift+Print");
-        assert_eq!(display_trigger("CTRL+SHIFT+s"), "Ctrl+Shift+S");
-        assert_eq!(display_trigger("Print"), "Print");
-    }
-
-    #[test]
-    fn writes_a_hyprland_bind_for_each_preferred_trigger() {
+    fn writes_a_hyprland_bind_for_each_default_trigger() {
+        let shortcuts = Shortcuts::default();
+        let bind = |action| {
+            hyprland_bind(
+                action,
+                shortcuts.slot(action).trigger().unwrap(),
+                "dev.example.App",
+            )
+        };
         assert_eq!(
-            hyprland_bind(ShortcutAction::CaptureRegion, "dev.example.App"),
+            bind(ShortcutAction::CaptureRegion),
             "bind = , Print, global, dev.example.App:capture-region"
         );
         assert_eq!(
-            hyprland_bind(ShortcutAction::CaptureFullscreen, "dev.example.App"),
+            bind(ShortcutAction::CaptureFullscreen),
             "bind = SHIFT, Print, global, dev.example.App:capture-fullscreen"
         );
+    }
+
+    #[test]
+    fn finds_a_trigger_shared_by_two_actions() {
+        let mut shortcuts = Shortcuts::default();
+        assert_eq!(shortcuts.conflict(), None);
+        shortcuts.set(
+            ShortcutAction::CaptureFullscreen,
+            shortcuts.capture_region.clone(),
+        );
+        let conflict = shortcuts.conflict().unwrap();
+        assert_eq!(conflict.first, ShortcutAction::CaptureRegion);
+        assert_eq!(conflict.second, ShortcutAction::CaptureFullscreen);
+        shortcuts.set(ShortcutAction::CaptureRegion, Slot::Off);
+        shortcuts.set(ShortcutAction::CaptureFullscreen, Slot::Off);
+        assert_eq!(shortcuts.conflict(), None);
     }
 }
