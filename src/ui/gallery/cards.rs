@@ -5,6 +5,7 @@ use gtk::{gdk, gio, glib};
 
 use super::{Gallery, actions};
 use crate::library::Capture;
+use crate::storage;
 
 const CARD_WIDTH: i32 = 220;
 const CARD_HEIGHT: i32 = 140;
@@ -214,6 +215,14 @@ pub(super) fn empty_state(text: &str) -> gtk::Box {
 }
 
 fn meta_text(capture: &Capture) -> String {
+    if capture.missing {
+        let folder = capture
+            .path
+            .parent()
+            .map(storage::tilde)
+            .unwrap_or_default();
+        return format!("Missing from {folder}");
+    }
     let date = glib::DateTime::from_unix_local(capture.created_us / 1_000_000)
         .and_then(|date| date.format("%Y-%m-%d %H:%M"))
         .map(String::from)

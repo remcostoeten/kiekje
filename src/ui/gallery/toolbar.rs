@@ -32,9 +32,16 @@ pub(super) enum Change {
     Period(Period),
     Sort(Sort),
     View(View),
+    Missing(bool),
 }
 
-pub(super) fn build(on_change: impl Fn(Change) + 'static) -> (gtk::Box, gtk::SearchEntry) {
+pub(super) struct Parts {
+    pub(super) bar: gtk::Box,
+    pub(super) search: gtk::SearchEntry,
+    pub(super) missing: gtk::ToggleButton,
+}
+
+pub(super) fn build(on_change: impl Fn(Change) + 'static) -> Parts {
     let on_change: Rc<dyn Fn(Change)> = Rc::new(on_change);
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -85,8 +92,22 @@ pub(super) fn build(on_change: impl Fn(Change) + 'static) -> (gtk::Box, gtk::Sea
         &on_change,
         Change::Period,
     ));
+    let missing = gtk::ToggleButton::builder()
+        .css_classes(["chip"])
+        .halign(gtk::Align::End)
+        .hexpand(true)
+        .visible(false)
+        .tooltip_text("Captures whose file was moved or deleted outside Kiekje")
+        .build();
+    let missing_change = on_change.clone();
+    missing.connect_toggled(move |toggle| missing_change(Change::Missing(toggle.is_active())));
+    filters.append(&missing);
     bar.append(&filters);
-    (bar, search)
+    Parts {
+        bar,
+        search,
+        missing,
+    }
 }
 
 fn chips<T: Copy + 'static>(

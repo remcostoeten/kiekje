@@ -93,12 +93,14 @@ pub struct Query {
     pub kind: Kind,
     pub period: Period,
     pub sort: Sort,
+    pub missing: bool,
 }
 
 /// Returns the captures that match `query`, in its sort order.
 ///
 /// Text matches any part of the file name, ignoring case. A repeated region counts as a region.
-/// Periods are rolling windows ending at `now_us`.
+/// Periods are rolling windows ending at `now_us`. Only missing captures show when
+/// `query.missing` is set, and only present ones otherwise.
 ///
 /// # Examples
 ///
@@ -110,6 +112,7 @@ pub fn apply<'a>(captures: &'a [Capture], query: &Query, now_us: i64) -> Vec<&'a
     let since = query.period.since(now_us);
     let mut shown: Vec<&Capture> = captures
         .iter()
+        .filter(|capture| capture.missing == query.missing)
         .filter(|capture| query.kind.matches(capture.mode))
         .filter(|capture| since.is_none_or(|since| capture.created_us >= since))
         .filter(|capture| needle.is_empty() || name(capture).contains(&needle))
@@ -233,6 +236,18 @@ mod tests {
     }
 
     #[test]
+    fn shows_missing_captures_only_when_asked() {
+        let mut captures = sample();
+        captures[1].missing = true;
+        assert_eq!(ids(&apply(&captures, &Query::default(), 0)), [4, 3, 1]);
+        let query = Query {
+            missing: true,
+            ..Query::default()
+        };
+        assert_eq!(ids(&apply(&captures, &query, 0)), [2]);
+    }
+
+    #[test]
     fn combines_every_filter() {
         let captures = sample();
         let query = Query {
@@ -240,6 +255,7 @@ mod tests {
             kind: Kind::Fullscreen,
             period: Period::Week,
             sort: Sort::Oldest,
+            missing: false,
         };
         assert_eq!(ids(&apply(&captures, &query, 35 * DAY_US)), [4]);
     }
