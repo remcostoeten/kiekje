@@ -326,7 +326,7 @@ Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12 built from source, i
 - The panel draws in the top-right corner at 320 px wide, with the tokens from the stylesheet and four cropped thumbnails.
 - Escape closed it. Down then Return picked Capture every screen, and the saved capture had no popover in it.
 
-Unverified: closing on a click outside (virtual pointer clicks didn't reach clients in the container), tray click coordinates from Plasma and Waybar, Geist fonts (not bundled yet, so it falls back to the system sans and mono), and every real desktop.
+Unverified: closing on a click outside (virtual pointer clicks didn't reach clients in the container), tray click coordinates from Plasma and Waybar, and every real desktop.
 
 ## Shortcut recorder and settings
 
@@ -339,6 +339,12 @@ The triggers are what Kiekje suggests to the GlobalShortcuts portal and what it 
 Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12 in a cloud container, with the shortcut host forced to Hyprland in a local build (sway has no GlobalShortcuts portal): recording `s` showed the Ctrl, Alt or Super rule and kept recording; Ctrl+Alt+K saved to both files; the same combo on the other action showed `Ctrl+Alt+K is already set for Capture a region.` and saved nothing; Backspace turned it off and removed its `bind` line; Reset restored the default. Without the override the rows were disabled with the portal error.
 
 Unverified: recording on a real Hyprland session, including Super combos the compositor might grab first, Hyprland reloading the include, and the read-only view on Plasma and GNOME.
+
+## Bundled fonts
+
+Geist and Geist Mono 1.7.2 (variable TTFs, SIL OFL 1.1, licence in `resources/fonts/OFL.txt`) live in `resources/fonts`. At startup the primary instance registers them with fontconfig for this process only, through `FcConfigAppFontAddFile`, before any text is laid out; nothing is installed for the user. It looks in `$XDG_DATA_HOME/kiekje/fonts`, then each `$XDG_DATA_DIRS/kiekje/fonts`, then the source tree, so packages must install them to `/usr/share/kiekje/fonts`. A missing file is logged, the UI falls back to the system font, and `doctor` shows it with a fix. `pango_font_map_add_font_file` would avoid the fontconfig call but needs Pango 1.56, and CI's Ubuntu 24.04 has 1.52.
+
+Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12: the popover and settings window render in Geist and Geist Mono, and `doctor` reports both fonts. Unverified: a packaged install reading `/usr/share/kiekje/fonts`.
 
 ## Follow-up for Phase 1
 

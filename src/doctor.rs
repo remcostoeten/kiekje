@@ -13,6 +13,7 @@ use crate::overlay;
 use crate::shortcuts::hyprland;
 use crate::storage;
 use crate::style::{Style, pad};
+use crate::ui::fonts::{self, FontError};
 
 const BINARY: &str = env!("CARGO_PKG_NAME");
 const LABEL_WIDTH: usize = 18;
@@ -81,6 +82,7 @@ struct Report {
     config_path: PathBuf,
     config: Result<Option<Config>, String>,
     hyprland: Option<HyprlandBinds>,
+    fonts: Vec<Result<PathBuf, FontError>>,
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -153,6 +155,7 @@ fn collect() -> Report {
         }),
         config_path,
         hyprland: std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").map(|_| hyprland_binds()),
+        fonts: fonts::locate(&fonts::search_dirs()),
     }
 }
 
@@ -314,6 +317,20 @@ fn problems(report: &Report) -> Vec<Problem> {
         }),
         Some(HyprlandBinds::Sourced) | None => {}
     }
+    let missing: Vec<String> = report
+        .fonts
+        .iter()
+        .filter_map(|found| found.as_ref().err().map(ToString::to_string))
+        .collect();
+    if !missing.is_empty() {
+        found.push(Problem {
+            severity: Severity::Warning,
+            message: format!("{}, so the UI uses the system font", missing.join("; ")),
+            fix: Some(
+                "reinstall the package, which puts the fonts in /usr/share/kiekje/fonts".into(),
+            ),
+        });
+    }
     if let Err(error) = &report.config {
         found.push(Problem {
             severity: Severity::Warning,
@@ -387,6 +404,12 @@ fn render(report: &Report, style: &Style) -> String {
         ),
     };
     text.push_str(&field(style, "config", &status));
+    let fonts = if report.fonts.iter().all(Result::is_ok) {
+        "Geist and Geist Mono".to_owned()
+    } else {
+        style.warn("missing, system font used")
+    };
+    text.push_str(&field(style, "fonts", &fonts));
     text.push_str(&field(
         style,
         "folder",
@@ -505,6 +528,10 @@ mod tests {
             config_path: PathBuf::from("/etc/kiekje/config.toml"),
             config: Ok(None),
             hyprland: None,
+            fonts: fonts::FILES
+                .iter()
+                .map(|file| Ok(PathBuf::from(file)))
+                .collect(),
         }
     }
 
@@ -566,6 +593,16 @@ mod tests {
         assert!(text.contains("/etc/kiekje/config.toml (invalid)"));
         assert!(text.contains("! The config can't be used, so defaults apply: unknown token"));
         assert!(text.contains("fix /etc/kiekje/config.toml or delete it"));
+    }
+
+    #[test]
+    fn warns_when_a_bundled_font_is_missing() {
+        let mut missing = report();
+        missing.fonts[1] = Err(FontError::Missing(fonts::FILES[1]));
+        let text = render(&missing, &PLAIN);
+        assert!(text.contains("missing, system font used"));
+        assert!(text.contains("! GeistMono-Variable.ttf is not installed in any kiekje/fonts folder, so the UI uses the system font"));
+        assert!(!render(&report(), &PLAIN).contains("system font"));
     }
 
     #[test]
