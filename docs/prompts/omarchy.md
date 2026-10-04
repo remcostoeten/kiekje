@@ -16,7 +16,7 @@ Talk to Remco in plain Dutch in your final message. Code, commits, docs and the 
 
 Works and verified (mostly in VMs, Hyprland only in `test-hypr` with software rendering and in a nested Hyprland window):
 
-- Single instance daemon, CLI forwarding over D-Bus, `kiekje-next doctor`.
+- Single instance daemon, CLI forwarding over D-Bus, `kiekje doctor`.
 - Capture backends: KWin ScreenShot2, `ext-image-copy-capture`, `wlr-screencopy`, portal. Backend chosen at runtime.
 - Layer-shell overlay with the frozen frame, warm-up at daemon start, Escape cancel, drag to select, size label.
 - Selection across monitors, verified on KWin only.
@@ -37,8 +37,8 @@ Work through this list in order. Each item is done only when it is implemented, 
 1. **Build and environment**
    - `cargo build --release`, `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings` and `cargo test` pass.
    - Missing system packages are installed with `sudo pacman -S --needed <pkgs>` (GTK4, gtk4-layer-shell, xdg-desktop-portal-hyprland, etc). Never run `pacman -Syu` or any full upgrade. Never install from the AUR without need; if you must, use the AUR helper Omarchy ships (`yay`).
-   - Install the binary to `~/.local/bin/kiekje-next` and its desktop file the same way the lab's `install` step does (see `lab/kiekje-lab`, function for `install`, and `src/desktop_file.rs`).
-   - `kiekje-next doctor` on this machine reports the right backends, layer-shell, data control, GlobalShortcuts and the tray watcher. Fix anything it gets wrong about Omarchy. Record its output.
+   - Install the binary to `~/.local/bin/kiekje` and its desktop file the same way the lab's `install` step does (see `lab/kiekje-lab`, function for `install`, and `src/desktop_file.rs`).
+   - `kiekje doctor` on this machine reports the right backends, layer-shell, data control, GlobalShortcuts and the tray watcher. Fix anything it gets wrong about Omarchy. Record its output.
 
 2. **Capture on real hardware**
    - Fullscreen capture on every connected monitor, with the real scales this machine uses (fractional scale if it has one). Check pixels are sharp and at native resolution, and colors are right (no BGR/RGB swap, no premultiplied alpha artefacts). Check with your own eyes by reading the saved PNG.
@@ -48,7 +48,7 @@ Work through this list in order. Each item is done only when it is implemented, 
    - Latency: trigger to frame and trigger to overlay painted, p50 and p95 over at least 30 runs per backend, release build, with the machine (CPU, GPU, driver), Hyprland version and Omarchy version stated. Never write an estimate as a measurement.
 
 3. **Global shortcuts on Hyprland**
-   - Build the managed bind include that is still open: Kiekje writes its own file (for example `~/.config/hypr/kiekje.conf`) with `bind = ..., global, dev.remcostoeten.KiekjeNext:capture-region` style lines, written atomically, and makes sure Hyprland sources it. Adding the `source = ` line to the user's config must be idempotent, must back up the file it edits first, and must never touch other lines. Find out how Omarchy structures `~/.config/hypr/` (it has its own `bindings.conf` and default `Print` binds for `omarchy-cmd-screenshot`) and fit in instead of fighting it.
+   - Build the managed bind include that is still open: Kiekje writes its own file (for example `~/.config/hypr/kiekje.conf`) with `bind = ..., global, dev.remcostoeten.Kiekje:capture-region` style lines, written atomically, and makes sure Hyprland sources it. Adding the `source = ` line to the user's config must be idempotent, must back up the file it edits first, and must never touch other lines. Find out how Omarchy structures `~/.config/hypr/` (it has its own `bindings.conf` and default `Print` binds for `omarchy-cmd-screenshot`) and fit in instead of fighting it.
    - Conflicts: Omarchy already binds `Print` and friends. Detect the conflict, do not silently steal the key, and report it through `doctor` and the log with a fix hint. Pick a sensible default that does not clash, record the choice in the PR. Do not remove or edit Omarchy's own binds.
    - Verify with real key presses (use `wtype`/`ydotool` or `hyprctl dispatch global` only as a second check; at least one path must go through the real Hyprland keybind). Region and fullscreen both trigger.
    - Unit tests for the include writer: generation, idempotent source line, conflict detection.
@@ -67,7 +67,7 @@ Work through this list in order. Each item is done only when it is implemented, 
 6. **Robustness on this machine**
    - Monitor hot-unplug or disable during selection (`hyprctl keyword monitor <name>,disable` then restore the exact previous line): no crash, clear message.
    - Double trigger while the overlay is open is dropped and logged.
-   - Quit from tray and from `kiekje-next quit` stops everything; no leftover process (`pgrep -a kiekje`).
+   - Quit from tray and from `kiekje quit` stops everything; no leftover process (`pgrep -a kiekje`).
    - Idle memory after 10 region captures, anonymous and PSS, measured.
    - Run the daemon for the rest of the session in the background and use it; note anything odd.
 

@@ -7,6 +7,9 @@ use gtk::glib;
 
 use crate::app::APP_ID;
 
+const PROTOTYPE_ID: &str = "dev.remcostoeten.KiekjeNext";
+const FALLBACK_ICON: &str = "camera-photo";
+
 /// Writes the desktop entry that lets KWin grant this executable ScreenShot2 access, then
 /// refreshes the KDE service cache.
 ///
@@ -21,8 +24,9 @@ pub fn install() -> io::Result<PathBuf> {
     fs::create_dir_all(&directory)?;
     let path = directory.join(format!("{APP_ID}.desktop"));
     let temporary = path.with_extension("desktop.tmp");
-    fs::write(&temporary, entry(&executable))?;
+    fs::write(&temporary, entry(&executable, FALLBACK_ICON))?;
     fs::rename(&temporary, &path)?;
+    remove_prototype(&directory);
 
     match Command::new("kbuildsycoca6").output() {
         Ok(output) if !output.status.success() => {
@@ -39,23 +43,33 @@ pub fn install() -> io::Result<PathBuf> {
     Ok(path)
 }
 
+fn remove_prototype(directory: &Path) {
+    let stale = directory.join(format!("{PROTOTYPE_ID}.desktop"));
+    match fs::remove_file(&stale) {
+        Ok(()) => eprintln!("kiekje: removed the old {}", stale.display()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!("kiekje: could not remove {}: {error}", stale.display()),
+    }
+}
+
 pub fn installed_path() -> PathBuf {
     glib::user_data_dir()
         .join("applications")
         .join(format!("{APP_ID}.desktop"))
 }
 
-pub fn entry(executable: &Path) -> String {
+pub fn entry(executable: &Path, icon: &str) -> String {
     format!(
         "[Desktop Entry]\n\
          Type=Application\n\
-         Name=Kiekje Next\n\
-         Comment=Screenshot prototype\n\
+         Name=Kiekje\n\
+         Comment=Capture, mark up and keep screenshots\n\
          Exec={} capture region\n\
-         Icon=camera-photo\n\
+         Icon={}\n\
          Terminal=false\n\
          X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2\n",
-        quote_exec(&executable.to_string_lossy())
+        quote_exec(&executable.to_string_lossy()),
+        icon
     )
 }
 
@@ -107,8 +121,14 @@ mod tests {
 
     #[test]
     fn entry_declares_the_restricted_interface() {
-        let entry = entry(Path::new("/usr/bin/kiekje-next"));
-        assert!(entry.contains("Exec=/usr/bin/kiekje-next capture region\n"));
+        let entry = entry(Path::new("/usr/bin/kiekje"), FALLBACK_ICON);
+        assert!(entry.contains("Exec=/usr/bin/kiekje capture region\n"));
         assert!(entry.contains("X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2\n"));
+    }
+
+    #[test]
+    fn packaged_entry_matches_the_generated_one() {
+        let packaged = include_str!("../packaging/dev.remcostoeten.Kiekje.desktop");
+        assert_eq!(packaged, entry(Path::new("/usr/bin/kiekje"), APP_ID));
     }
 }

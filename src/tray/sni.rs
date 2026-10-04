@@ -52,7 +52,7 @@ impl TrayGuard for SniGuard {
 
 impl Tray for Item {
     fn id(&self) -> String {
-        "kiekje-next".into()
+        env!("CARGO_PKG_NAME").into()
     }
 
     fn title(&self) -> String {
