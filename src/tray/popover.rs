@@ -373,10 +373,10 @@ fn load_recent(row: &gtk::Box) {
             let cache = thumbs::dir();
             recent_captures()
                 .into_iter()
-                .filter_map(|path| match thumbs::load(&cache, &path) {
-                    Ok(png) => Some((path, png)),
+                .filter_map(|path| match thumbs::texture(&cache, &path) {
+                    Ok(texture) => Some((path, texture)),
                     Err(error) => {
-                        eprintln!("kiekje: no thumbnail for {}: {error}", path.display());
+                        eprintln!("kiekje: no thumbnail: {error}");
                         None
                     }
                 })
@@ -400,18 +400,9 @@ fn load_recent(row: &gtk::Box) {
             );
             return;
         }
-        let mut shown = 0;
-        for (path, png) in thumbnails {
-            match gdk::Texture::from_bytes(&glib::Bytes::from_owned(png)) {
-                Ok(texture) => {
-                    row.append(&thumbnail_button(path, &texture));
-                    shown += 1;
-                }
-                Err(error) => eprintln!(
-                    "kiekje: thumbnail for {} unreadable: {error}",
-                    path.display()
-                ),
-            }
+        let shown = thumbnails.len();
+        for (path, texture) in thumbnails {
+            row.append(&thumbnail_button(path, &texture));
         }
         for _ in shown..RECENT_COUNT {
             row.append(&gtk::Box::new(gtk::Orientation::Horizontal, 0));

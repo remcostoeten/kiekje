@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use gtk::gdk_pixbuf::Pixbuf;
-use gtk::glib;
+use gtk::{gdk, glib};
 use thiserror::Error;
 
 use crate::storage;
@@ -21,6 +21,8 @@ pub enum ThumbError {
     Decode { path: PathBuf, source: glib::Error },
     #[error("could not scale {}: {reason}", path.display())]
     Resize { path: PathBuf, reason: String },
+    #[error("the thumbnail of {} is unreadable: {source}", path.display())]
+    Texture { path: PathBuf, source: glib::Error },
 }
 
 /// Returns `$XDG_CACHE_HOME/kiekje/thumbs`.
@@ -58,6 +60,23 @@ pub fn load(cache: &Path, source: &Path) -> Result<Vec<u8>, ThumbError> {
         );
     }
     Ok(png)
+}
+
+/// Returns the thumbnail for `source` as a texture ready to show, decoded on the calling thread.
+///
+/// Same caching as [`load`]. Touches the disk and decodes, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let texture = gio::spawn_blocking(move || thumbs::texture(&thumbs::dir(), &path)).await;
+/// ```
+pub fn texture(cache: &Path, source: &Path) -> Result<gdk::Texture, ThumbError> {
+    let png = load(cache, source)?;
+    gdk::Texture::from_bytes(&glib::Bytes::from_owned(png)).map_err(|error| ThumbError::Texture {
+        path: source.to_path_buf(),
+        source: error,
+    })
 }
 
 /// Deletes cached thumbnails whose source files changed or are gone.
