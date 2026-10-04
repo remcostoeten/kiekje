@@ -7,7 +7,7 @@ use std::cell::Cell;
 
 use gtk::{gdk, gio};
 
-const RESOURCE_PREFIX: &str = "/dev/remcostoeten/KiekjeNext";
+const RESOURCE_PREFIX: &str = "/dev/remcostoeten/Kiekje";
 
 thread_local! {
     static LOADED: Cell<bool> = const { Cell::new(false) };

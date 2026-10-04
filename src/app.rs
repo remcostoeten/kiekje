@@ -29,7 +29,7 @@ use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 use crate::ui::{fonts, gallery, settings};
 
-pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
+pub const APP_ID: &str = "dev.remcostoeten.Kiekje";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
 
 struct Session {
@@ -182,7 +182,7 @@ pub fn run(command: Command) -> glib::ExitCode {
         }
     });
 
-    let code = app.run_with_args(&["kiekje-next"]);
+    let code = app.run_with_args(&[env!("CARGO_PKG_NAME")]);
     drop(hold);
     code
 }
@@ -208,7 +208,7 @@ fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
 fn exit_without_running(app: &gtk::Application, code: glib::ExitCode) -> glib::ExitCode {
     // Only g_application_run releases the D-Bus registration; dropping a registered app makes GLib warn.
     app.connect_handle_local_options(move |_, _| ControlFlow::Break(code));
-    app.run_with_args(&["kiekje-next"])
+    app.run_with_args(&[env!("CARGO_PKG_NAME")])
 }
 
 fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {

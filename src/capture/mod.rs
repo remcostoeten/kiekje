@@ -251,13 +251,11 @@ pub struct Capture {
 
 #[derive(Debug, Error)]
 pub enum CaptureError {
-    #[error(
-        "KWin refused ScreenShot2 access; run `kiekje-next install-desktop-file` and try again"
-    )]
+    #[error("KWin refused ScreenShot2 access; run `kiekje install-desktop-file` and try again")]
     Unauthorized,
     #[error("the portal request was canceled")]
     Canceled,
-    #[error("no region was selected yet; run `kiekje-next capture region` first")]
+    #[error("no region was selected yet; run `kiekje capture region` first")]
     NoLastRegion,
     #[error("backend unavailable: {0}")]
     Unavailable(String),

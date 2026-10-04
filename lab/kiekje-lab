@@ -213,7 +213,7 @@ function print_env {
 }
 
 function binary_path {
-    echo "${CARGO_TARGET_DIR:-$REPO/target}/release/kiekje-next"
+    echo "${CARGO_TARGET_DIR:-$REPO/target}/release/kiekje"
 }
 
 function probe_path {
@@ -680,7 +680,7 @@ function run_tests {
     echo "kiekje-lab: logging to $RUN"
     apply_layout "$layout"
 
-    (cd "$REPO" && cargo build --release --bin kiekje-next --example lab_probe 2>&1 | tail -n 3) >"$RUN/build.log" ||
+    (cd "$REPO" && cargo build --release --bin kiekje --example lab_probe 2>&1 | tail -n 3) >"$RUN/build.log" ||
         fail "build failed, see $RUN/build.log"
     BIN="$(binary_path)"
     PROBE="$(probe_path)"
@@ -1046,16 +1046,16 @@ function guest_install_kiekje {
     export PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="$HOME/kiekje-target"
     cd "$HOME/kiekje-next"
     cargo build --release 2>&1 | tail -n 5
-    [[ -x "$CARGO_TARGET_DIR/release/kiekje-next" ]] || fail "the release build failed"
-    install -Dm755 "$CARGO_TARGET_DIR/release/kiekje-next" "$HOME/.local/bin/kiekje-next"
-    "$HOME/.local/bin/kiekje-next" quit >/dev/null 2>&1 || true
-    "$HOME/.local/bin/kiekje-next" install-desktop-file
+    [[ -x "$CARGO_TARGET_DIR/release/kiekje" ]] || fail "the release build failed"
+    install -Dm755 "$CARGO_TARGET_DIR/release/kiekje" "$HOME/.local/bin/kiekje"
+    "$HOME/.local/bin/kiekje" quit >/dev/null 2>&1 || true
+    "$HOME/.local/bin/kiekje" install-desktop-file
     if [[ "$(systemctl --user show-environment 2>/dev/null)" =~ (^|$'\n')(WAYLAND_DISPLAY|DISPLAY)= ]]; then
         import_session_env
     else
         echo "kiekje-lab: no graphical session yet, so doctor runs without one"
     fi
-    "$HOME/.local/bin/kiekje-next" doctor || true
+    "$HOME/.local/bin/kiekje" doctor || true
 }
 
 function distro_family {

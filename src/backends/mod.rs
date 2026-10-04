@@ -94,7 +94,7 @@ pub fn capture(
         }
     }
     Err(CaptureError::Unavailable(format!(
-        "no `{}` capture backend in this session; run `kiekje-next doctor`",
+        "no `{}` capture backend in this session; run `kiekje doctor`",
         choice.as_str()
     )))
 }

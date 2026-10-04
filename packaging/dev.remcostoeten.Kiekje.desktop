@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kiekje
+Comment=Capture, mark up and keep screenshots
+Exec=/usr/bin/kiekje capture region
+Icon=dev.remcostoeten.Kiekje
+Terminal=false
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
