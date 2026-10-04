@@ -6,7 +6,7 @@ use gtk::{gio, glib};
 
 use super::{caps, note};
 use crate::capture::CaptureMode;
-use crate::config::{self, Config, Folder, Notifications, Storage};
+use crate::config::{self, AfterSelection, Capture, Config, Folder, Notifications, Storage};
 use crate::storage::{self, Naming, Template, template::DEFAULT_TEMPLATE};
 
 type Change = Box<dyn FnOnce(&mut Config) + Send>;
@@ -25,6 +25,7 @@ pub(super) struct General {
     saved_filename: RefCell<String>,
     enabled: gtk::CheckButton,
     sound: gtk::CheckButton,
+    edit: gtk::CheckButton,
     problem: gtk::Label,
 }
 
@@ -32,8 +33,19 @@ pub(super) fn append(
     content: &gtk::Box,
     storage: &Storage,
     notifications: Notifications,
+    capture: Capture,
 ) -> Weak<General> {
     let (changes, receiver) = async_channel::unbounded::<Change>();
+
+    content.append(&caps("Capture"));
+    let edit = gtk::CheckButton::builder()
+        .label("Edit a region on screen before copying and saving it")
+        .active(capture.after_selection == AfterSelection::Edit)
+        .build();
+    content.append(&edit);
+    content.append(&note(
+        "Enter accepts, Esc cancels. Off: a region is copied and saved when you let go.",
+    ));
 
     content.append(&caps("Saving"));
     let folder = gtk::Label::builder()
@@ -91,6 +103,7 @@ pub(super) fn append(
         saved_filename: RefCell::new(storage.filename.to_string()),
         enabled,
         sound,
+        edit,
         problem,
     });
     general.show_preview();
@@ -179,6 +192,26 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             Box::new(move |config| config.notifications.sound = on),
         );
     });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.edit.connect_toggled(move |check| {
+        let after = after_selection(check.is_active());
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Box::new(move |config| config.capture.after_selection = after),
+        );
+    });
+}
+
+fn after_selection(on: bool) -> AfterSelection {
+    if on {
+        AfterSelection::Edit
+    } else {
+        AfterSelection::Finish
+    }
 }
 
 fn pick_folder(button: &gtk::Button, general: Weak<General>, changes: Changes) {
@@ -281,6 +314,8 @@ impl General {
         self.filename.set_text(&config.storage.filename.to_string());
         self.enabled.set_active(config.notifications.enabled);
         self.sound.set_active(config.notifications.sound);
+        self.edit
+            .set_active(config.capture.after_selection == AfterSelection::Edit);
         self.quiet.set(false);
     }
 

@@ -13,6 +13,38 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         .spacing(8)
         .build();
 
+    let top = tools(editor);
+    top.append(&spacer());
+    history(editor, &top);
+    bar.append(&top);
+
+    let bottom = styles(editor);
+    bottom.append(&spacer());
+    for (label, tooltip, primary, run) in [
+        (
+            "Copy",
+            "Copy the image (Ctrl+C)",
+            false,
+            Editor::copy as fn(&Rc<Editor>),
+        ),
+        ("Save", "Save as a new file (Ctrl+S)", true, Editor::save),
+    ] {
+        let button = action(label, tooltip);
+        if primary {
+            button.add_css_class("primary");
+        }
+        bottom.append(&button);
+        on_click(editor, &button, run);
+    }
+    bar.append(&bottom);
+    gtk::ScrolledWindow::builder()
+        .child(&bar)
+        .vscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .build()
+}
+
+pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
     let top = row();
     let mut group: Option<gtk::ToggleButton> = None;
     let mut tools = Vec::new();
@@ -34,7 +66,10 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         tools.push((tool, button));
     }
     editor.tools.replace(tools);
-    top.append(&spacer());
+    top
+}
+
+pub(super) fn history(editor: &Rc<Editor>, row: &gtk::Box) {
     for (button, run) in [
         (&editor.undo, Editor::undo as fn(&Editor)),
         (&editor.redo, Editor::redo),
@@ -46,10 +81,11 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
                 run(&editor);
             }
         });
-        top.append(button);
+        row.append(button);
     }
-    bar.append(&top);
+}
 
+pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
     let mut group: Option<gtk::ToggleButton> = None;
     for color in Color::ALL {
@@ -78,34 +114,16 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         });
         bottom.append(&button);
     }
-    bottom.append(&spacer());
-    for (label, tooltip, primary, run) in [
-        (
-            "Copy",
-            "Copy the image (Ctrl+C)",
-            false,
-            Editor::copy as fn(&Rc<Editor>),
-        ),
-        ("Save", "Save as a new file (Ctrl+S)", true, Editor::save),
-    ] {
-        let button = action(label, tooltip);
-        if primary {
-            button.add_css_class("primary");
+    bottom
+}
+
+pub(super) fn on_click(editor: &Rc<Editor>, button: &gtk::Button, run: fn(&Rc<Editor>)) {
+    let target = Rc::downgrade(editor);
+    button.connect_clicked(move |_| {
+        if let Some(editor) = target.upgrade() {
+            run(&editor);
         }
-        let target = Rc::downgrade(editor);
-        button.connect_clicked(move |_| {
-            if let Some(editor) = target.upgrade() {
-                run(&editor);
-            }
-        });
-        bottom.append(&button);
-    }
-    bar.append(&bottom);
-    gtk::ScrolledWindow::builder()
-        .child(&bar)
-        .vscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .build()
+    });
 }
 
 pub(super) fn action(label: &str, tooltip: &str) -> gtk::Button {
@@ -116,7 +134,7 @@ pub(super) fn action(label: &str, tooltip: &str) -> gtk::Button {
         .build()
 }
 
-fn row() -> gtk::Box {
+pub(super) fn row() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)

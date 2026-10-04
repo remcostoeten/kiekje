@@ -14,8 +14,8 @@ use crate::capture::{
     BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
 };
 use crate::clipboard::Clipboard;
-use crate::config::{self, Notifications};
-use crate::editor;
+use crate::config::{self, AfterSelection, Notifications};
+use crate::editor::{self, Finish};
 use crate::library::{self, Library, NewCapture, thumbs};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
@@ -643,6 +643,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             shortcuts: config.shortcuts,
             storage: config.storage,
             notifications: config.notifications,
+            capture: config.capture,
             host: session.shortcut_host.borrow().clone(),
             bound,
         };
@@ -724,7 +725,9 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
 
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
-        let notifications = config::load().notifications;
+        let config = config::load();
+        let notifications = config.notifications;
+        let inline = config.capture.after_selection == AfterSelection::Edit;
         let result = match request.mode {
             CaptureMode::Repeat => match known_region.or_else(last_region::load) {
                 Some(region) => backends::capture(request.backend, &infos, false)
@@ -736,13 +739,13 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             }
         };
         // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking((result, notifications, glib::monotonic_time()));
+        let _ = sender.send_blocking((result, notifications, inline, glib::monotonic_time()));
     });
 
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let Ok((result, notifications, captured_us)) = receiver.recv().await else {
+        let Ok((result, notifications, inline, captured_us)) = receiver.recv().await else {
             session.busy.set(false);
             return;
         };
@@ -751,7 +754,8 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         log_timing("instance -> frames", received_us, captured_us);
         match result {
             Ok((capture, region)) => {
-                handle_capture(&app, request, capture, region, &monitors, session)
+                let edit = request.edit || inline;
+                handle_capture(&app, request, capture, region, &monitors, edit, session)
             }
             Err(CaptureError::Canceled) => {
                 println!("kiekje: capture canceled");
@@ -777,6 +781,7 @@ fn handle_capture(
     capture: Capture,
     region: Option<LogicalRect>,
     monitors: &[gdk::Monitor],
+    edit: bool,
     session: Rc<Session>,
 ) {
     println!("kiekje: backend {}", capture.backend);
@@ -823,6 +828,7 @@ fn handle_capture(
                 app,
                 frames,
                 monitors,
+                edit,
                 move |selection| match selection {
                     Outcome::Selected(Selection { rect, plan }) => {
                         remember_region(&session, rect);
@@ -834,6 +840,15 @@ fn handle_capture(
                             request,
                             session,
                         )
+                    }
+                    Outcome::Edited {
+                        selection: Selection { rect, plan },
+                        image,
+                        finish,
+                    } => {
+                        remember_region(&session, rect);
+                        log_selection(&selection_frames, plan);
+                        finish_edit(image, finish, request, session);
                     }
                     Outcome::Canceled => {
                         println!("kiekje: selection canceled, nothing saved");
@@ -986,6 +1001,133 @@ fn annotate(render: Render, request: Request, session: Rc<Session>) {
     });
 }
 
+fn finish_edit(image: Image, finish: Finish, request: Request, session: Rc<Session>) {
+    let request = Request {
+        edit: false,
+        ..request
+    };
+    match finish {
+        Finish::Accept => deliver(Box::new(move || Some(image)), request, session),
+        Finish::Copy => deliver(
+            Box::new(move || Some(image)),
+            Request {
+                save: false,
+                ..request
+            },
+            session,
+        ),
+        Finish::Save => save_only(image, request, session),
+        Finish::SaveAs => save_as(image, request, session),
+    }
+}
+
+fn save_only(image: Image, request: Request, session: Rc<Session>) {
+    glib::spawn_future_local(async move {
+        match gio::spawn_blocking(move || store(image, request, None, false)).await {
+            Ok(notice) => finish_delivery(&session, notice),
+            Err(_) => {
+                eprintln!("kiekje: the save worker stopped");
+                session.busy.set(false);
+            }
+        }
+    });
+}
+
+fn save_as(image: Image, request: Request, session: Rc<Session>) {
+    let (width, height) = (image.width, image.height);
+    glib::spawn_future_local(async move {
+        let suggested = gio::spawn_blocking(move || {
+            let storage = config::load().storage;
+            let base = storage.filename.render(&Naming {
+                mode: request.mode,
+                stamp: storage::now(),
+                width,
+                height,
+            });
+            (storage.captures_dir(), base)
+        })
+        .await;
+        let Ok((folder, base)) = suggested else {
+            eprintln!("kiekje: the settings worker stopped, nothing saved");
+            session.busy.set(false);
+            return;
+        };
+        let dialog = gtk::FileDialog::builder()
+            .title("Save the capture")
+            .modal(true)
+            .initial_name(format!("{base}.png"))
+            .initial_folder(&gio::File::for_path(&folder))
+            .build();
+        let chosen = dialog.save_future(None::<&gtk::Window>).await;
+        let path = match chosen {
+            Ok(file) => file.path(),
+            Err(error) if error.matches(gtk::DialogError::Dismissed) => {
+                println!("kiekje: save as canceled, nothing saved");
+                session.busy.set(false);
+                return;
+            }
+            Err(error) => {
+                eprintln!("kiekje: the save dialog failed: {error}");
+                notify(
+                    &session,
+                    Notice::SaveFailed {
+                        reason: format!("the save dialog failed: {error}"),
+                        copied: false,
+                    },
+                );
+                session.busy.set(false);
+                return;
+            }
+        };
+        let Some(path) = path else {
+            notify(
+                &session,
+                Notice::SaveFailed {
+                    reason: "that location is not on this computer".into(),
+                    copied: false,
+                },
+            );
+            session.busy.set(false);
+            return;
+        };
+        let stored = gio::spawn_blocking(move || store_at(image, request.mode, &path)).await;
+        match stored {
+            Ok(notice) => finish_delivery(&session, notice),
+            Err(_) => {
+                eprintln!("kiekje: the save worker stopped");
+                session.busy.set(false);
+            }
+        }
+    });
+}
+
+fn store_at(image: Image, mode: CaptureMode, path: &std::path::Path) -> Notice {
+    let (width, height) = (image.width, image.height);
+    let png = match output::encode_png(image) {
+        Ok(png) => png,
+        Err(error) => {
+            eprintln!("kiekje: png encode failed: {error}");
+            return Notice::SaveFailed {
+                reason: format!("could not encode the image: {error}"),
+                copied: false,
+            };
+        }
+    };
+    let target = Target {
+        folder: path
+            .parent()
+            .map_or_else(storage::default_captures_dir, std::path::Path::to_path_buf),
+        base: path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "kiekje".to_owned()),
+        mode,
+        width,
+        height,
+    };
+    write_png(&png, target, false)
+}
+
 fn empty_notice() -> Notice {
     eprintln!("kiekje: nothing to deliver");
     Notice::CaptureFailed {
@@ -1098,17 +1240,42 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
         };
     }
     let storage = config::load().storage;
-    let directory = storage.captures_dir();
     let base = storage.filename.render(&Naming {
         mode: request.mode,
         stamp: storage::now(),
         width,
         height,
     });
-    match storage::save_png(&png, &directory, &base) {
+    let target = Target {
+        folder: storage.captures_dir(),
+        base,
+        mode: request.mode,
+        width,
+        height,
+    };
+    write_png(&png, target, copied)
+}
+
+struct Target {
+    folder: std::path::PathBuf,
+    base: String,
+    mode: CaptureMode,
+    width: u32,
+    height: u32,
+}
+
+fn write_png(png: &[u8], target: Target, copied: bool) -> Notice {
+    let Target {
+        folder,
+        base,
+        mode,
+        width,
+        height,
+    } = target;
+    match storage::save_png(png, &folder, &base) {
         Ok(path) => {
             println!("kiekje: saved {}", path.display());
-            record(&path, request.mode, width, height, png.len());
+            record(&path, mode, width, height, png.len());
             Notice::Saved {
                 path,
                 width,
@@ -1119,7 +1286,7 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
         Err(error) => {
             eprintln!("kiekje: save failed: {error}");
             Notice::SaveFailed {
-                reason: format!("could not write to {}: {error}", directory.display()),
+                reason: format!("could not write to {}: {error}", folder.display()),
                 copied,
             }
         }

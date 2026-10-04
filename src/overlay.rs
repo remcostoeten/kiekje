@@ -3,16 +3,19 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gtk::prelude::*;
-use gtk::{cairo, gdk, glib, graphene};
+use gtk::{cairo, gdk, gio, glib, graphene};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::capture::mapping::{SelectionPlan, plan_selection, rect_from_drag};
-use crate::capture::{Frame, LogicalRect};
+use crate::capture::{CaptureMode, Frame, LogicalRect};
+use crate::editor::{Ending, Finish, Inline};
+use crate::output::{self, Image};
 
 const ACCENT: (f64, f64, f64) = (254.0 / 255.0, 81.0 / 255.0, 1.0 / 255.0);
 const DIM: f64 = 0.45;
 const MIN_SELECTION: i32 = 3;
 
+#[derive(Clone, Copy)]
 pub struct Selection {
     pub rect: LogicalRect,
     pub plan: SelectionPlan,
@@ -20,6 +23,11 @@ pub struct Selection {
 
 pub enum Outcome {
     Selected(Selection),
+    Edited {
+        selection: Selection,
+        image: Image,
+        finish: Finish,
+    },
     Canceled,
     MonitorLost(String),
 }
@@ -36,9 +44,13 @@ type PaintCallback = Box<dyn FnOnce()>;
 struct Shared {
     frames: Arc<Vec<Frame>>,
     geometry: Vec<(LogicalRect, (u32, u32))>,
+    edit: bool,
     drag: RefCell<Option<Drag>>,
+    chosen: Cell<Option<LogicalRect>>,
+    inline: RefCell<Option<Inline>>,
     windows: RefCell<Vec<gtk::Window>>,
     areas: RefCell<Vec<gtk::DrawingArea>>,
+    surfaces: RefCell<Vec<(usize, gtk::Overlay)>>,
     finished: Cell<bool>,
     on_done: RefCell<Option<DoneCallback>>,
     watched: RefCell<Vec<(gdk::Monitor, glib::SignalHandlerId)>>,
@@ -48,18 +60,21 @@ struct Shared {
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
 ///
 /// Surfaces are layer-shell overlays when the compositor supports it and fullscreen windows
-/// otherwise. A drag may cross monitor edges. Escape cancels, and unplugging a monitor that shows
-/// a frame ends the selection. `on_done` runs once with the outcome.
+/// otherwise. A drag may cross monitor edges. With `edit`, a selection inside one monitor stays
+/// on screen with the annotation tools until the user accepts or cancels. Escape cancels, and
+/// unplugging a monitor that shows a frame ends the selection. `on_done` runs once with the
+/// outcome.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// overlay::show(&app, frames, monitors, |selection| println!("{}", selection.is_some()), || {});
+/// overlay::show(&app, frames, monitors, false, |outcome| {}, || {});
 /// ```
 pub fn show(
     app: &gtk::Application,
     frames: Arc<Vec<Frame>>,
     monitors: &[gdk::Monitor],
+    edit: bool,
     on_done: impl FnOnce(Outcome) + 'static,
     on_first_paint: impl FnOnce() + 'static,
 ) {
@@ -70,9 +85,13 @@ pub fn show(
     let shared = Rc::new(Shared {
         frames: frames.clone(),
         geometry,
+        edit,
         drag: RefCell::new(None),
+        chosen: Cell::new(None),
+        inline: RefCell::new(None),
         windows: RefCell::new(Vec::new()),
         areas: RefCell::new(Vec::new()),
+        surfaces: RefCell::new(Vec::new()),
         finished: Cell::new(false),
         on_done: RefCell::new(Some(Box::new(on_done))),
         watched: RefCell::new(Vec::new()),
@@ -190,7 +209,11 @@ fn build_surface(
     let origin = shared.frames[frame_index].monitor.logical;
     let to_desktop = move |x: f64, y: f64| (f64::from(origin.x) + x, f64::from(origin.y) + y);
     let begin_shared = shared.clone();
-    drag.connect_drag_begin(move |_, x, y| {
+    drag.connect_drag_begin(move |gesture, x, y| {
+        if begin_shared.chosen.get().is_some() {
+            gesture.set_state(gtk::EventSequenceState::Denied);
+            return;
+        }
         let start = to_desktop(x, y);
         begin_shared.drag.replace(Some(Drag {
             frame_index,
@@ -216,6 +239,9 @@ fn build_surface(
             .then(|| plan_selection(rect, &end_shared.geometry))
             .flatten();
         match plan {
+            Some(plan @ SelectionPlan::Crop { frame_index, .. }) if end_shared.edit => {
+                begin_edit(&end_shared, Selection { rect, plan }, frame_index);
+            }
             Some(plan) => finish(&end_shared, Outcome::Selected(Selection { rect, plan })),
             None => redraw(&end_shared),
         }
@@ -224,7 +250,11 @@ fn build_surface(
 
     let keys = gtk::EventControllerKey::new();
     let key_shared = shared.clone();
-    keys.connect_key_pressed(move |_, key, _, _| {
+    keys.connect_key_pressed(move |_, key, _, state| {
+        let inline = key_shared.inline.borrow().clone();
+        if let Some(inline) = inline {
+            return inline.key(key, state);
+        }
         if key == gdk::Key::Escape {
             finish(&key_shared, Outcome::Canceled);
             return glib::Propagation::Stop;
@@ -247,6 +277,7 @@ fn build_surface(
     });
 
     shared.areas.borrow_mut().push(area);
+    shared.surfaces.borrow_mut().push((frame_index, overlay));
     shared.windows.borrow_mut().push(window.clone());
     window.present();
 }
@@ -268,11 +299,17 @@ fn draw(shared: &Shared, frame_index: usize, context: &cairo::Context, width: i3
     context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
 
     let drag = shared.drag.borrow();
-    let Some(drag) = drag.as_ref() else {
-        report(context.fill());
-        return;
+    let (rect, dragged_on) = match (drag.as_ref(), shared.chosen.get()) {
+        (Some(drag), _) => (
+            rect_from_drag(drag.start, drag.current),
+            Some(drag.frame_index),
+        ),
+        (None, Some(rect)) => (rect, None),
+        (None, None) => {
+            report(context.fill());
+            return;
+        }
     };
-    let rect = rect_from_drag(drag.start, drag.current);
     let origin = shared.frames[frame_index].monitor.logical;
     let (x, y, w, h) = (
         f64::from(rect.x - origin.x),
@@ -286,10 +323,16 @@ fn draw(shared: &Shared, frame_index: usize, context: &cairo::Context, width: i3
 
     context.set_source_rgb(ACCENT.0, ACCENT.1, ACCENT.2);
     context.set_line_width(1.0);
-    context.rectangle(x + 0.5, y + 0.5, (w - 1.0).max(0.0), (h - 1.0).max(0.0));
+    match dragged_on {
+        Some(_) => context.rectangle(x + 0.5, y + 0.5, (w - 1.0).max(0.0), (h - 1.0).max(0.0)),
+        None => context.rectangle(x - 0.5, y - 0.5, w + 1.0, h + 1.0),
+    }
     report(context.stroke());
 
-    if label_frame(shared, rect, drag.frame_index) != frame_index {
+    let Some(dragged_on) = dragged_on else {
+        return;
+    };
+    if label_frame(shared, rect, dragged_on) != frame_index {
         return;
     }
     let Some(plan) = plan_selection(rect, &shared.geometry) else {
@@ -347,6 +390,74 @@ fn draw_size_label(
     report(context.show_text(text));
 }
 
+fn begin_edit(shared: &Rc<Shared>, selection: Selection, frame_index: usize) {
+    shared.chosen.set(Some(selection.rect));
+    for area in shared.areas.borrow().iter() {
+        area.set_cursor_from_name(Some("default"));
+    }
+    redraw(shared);
+    let frames = shared.frames.clone();
+    let plan = selection.plan;
+    let weak = Rc::downgrade(shared);
+    glib::spawn_future_local(async move {
+        let rendered = gio::spawn_blocking(move || output::render_selection(&frames, plan)).await;
+        let Some(shared) = weak.upgrade().filter(|shared| !shared.finished.get()) else {
+            return;
+        };
+        let Ok(image) = rendered else {
+            eprintln!("kiekje: the render worker stopped, finishing without editing");
+            finish(&shared, Outcome::Selected(selection));
+            return;
+        };
+        let ending = Rc::downgrade(&shared);
+        let opened = Inline::open(image, CaptureMode::Region, move |end| {
+            let Some(shared) = ending.upgrade() else {
+                return;
+            };
+            match end {
+                Ending::Canceled => finish(&shared, Outcome::Canceled),
+                Ending::Finished { image, finish: how } => finish(
+                    &shared,
+                    Outcome::Edited {
+                        selection,
+                        image,
+                        finish: how,
+                    },
+                ),
+            }
+        })
+        .await;
+        if shared.finished.get() {
+            return;
+        }
+        let inline = match opened {
+            Ok(inline) => inline,
+            Err(error) => {
+                eprintln!("kiekje: inline editing is unavailable, finishing without it: {error}");
+                finish(&shared, Outcome::Selected(selection));
+                return;
+            }
+        };
+        let surfaces = shared.surfaces.borrow();
+        let Some((_, surface)) = surfaces.iter().find(|(index, _)| *index == frame_index) else {
+            drop(surfaces);
+            finish(&shared, Outcome::Selected(selection));
+            return;
+        };
+        let monitor = shared.frames[frame_index].monitor.logical;
+        let layer = gtk::Fixed::new();
+        surface.add_overlay(&layer);
+        let local = LogicalRect {
+            x: selection.rect.x - monitor.x,
+            y: selection.rect.y - monitor.y,
+            ..selection.rect
+        };
+        inline.mount(&layer, local, (monitor.width, monitor.height));
+        drop(surfaces);
+        shared.inline.replace(Some(inline));
+    });
+}
+
 fn redraw(shared: &Shared) {
     for area in shared.areas.borrow().iter() {
         area.queue_draw();
@@ -379,6 +490,8 @@ fn finish(shared: &Shared, outcome: Outcome) {
         window.close();
     }
     shared.areas.borrow_mut().clear();
+    shared.surfaces.borrow_mut().clear();
+    shared.inline.borrow_mut().take();
 }
 
 fn report(result: Result<(), cairo::Error>) {

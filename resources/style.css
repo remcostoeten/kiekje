@@ -321,6 +321,30 @@ window.settings-window {
   outline-offset: 2px;
 }
 
+.editor.inline .canvas {
+  background: none;
+  border: none;
+  border-radius: 0;
+}
+
+.editor.inline entry {
+  background-color: var(--bg);
+}
+
+.inline-bar {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+
+.inline-bar .action-label {
+  padding: 0 8px;
+}
+
 .panel button.chip.swatch {
   padding: 5px 6px;
 }

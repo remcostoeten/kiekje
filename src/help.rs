@@ -151,7 +151,7 @@ const FLAGS: &[Entry] = &[
     Entry {
         name: "--edit",
         argument: "",
-        description: "Open the result in the annotation editor",
+        description: "Annotate before keeping: a region on screen, other modes in the editor",
         note: "",
     },
     Entry {
