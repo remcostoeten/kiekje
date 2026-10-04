@@ -346,6 +346,12 @@ Geist and Geist Mono 1.7.2 (variable TTFs, SIL OFL 1.1, licence in `resources/fo
 
 Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12: the popover and settings window render in Geist and Geist Mono, and `doctor` reports both fonts. Unverified: a packaged install reading `/usr/share/kiekje/fonts`.
 
+## Changing portal shortcuts from settings
+
+Where the GlobalShortcuts portal is version 2 or newer, the settings window shows a Change in desktop settings button. It calls `ConfigureShortcuts` on Kiekje's session, so the desktop opens its own dialog. The daemon listens for `ShortcutsChanged` on that session: it logs each new trigger, updates the popover labels, and refreshes the open settings window. On version 1 the button is hidden and the note says to use the desktop's shortcut settings. Reset only shows where Kiekje owns the keys (Hyprland).
+
+Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12, against a small fake portal on the session bus (version 2, answering CreateSession and BindShortcuts, then emitting ShortcutsChanged with `Ctrl+Alt+P` 300 ms after ConfigureShortcuts). The button sent ConfigureShortcuts, the daemon logged the change, and the open window showed `Ctrl+Alt+P`. Unverified: the real KDE and GNOME dialogs, and which portal versions they ship.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
@@ -358,7 +364,7 @@ Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12: the popover and set
 
    The warm-up itself takes 222 to 313 ms on the main thread right after start. A trigger in that window waits for it, which is no slower than a cold overlay. The extra memory is the same driver cost every daemon paid after its first region capture anyway. A daemon started by `capture` skips the warm-up, because its first overlay does the same work.
 3. Done: memory growth came from the glibc heap, see above.
-4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Done: the Hyprland managed `bind` include. Done: rebinding from settings on Hyprland and turning shortcuts off, see "Shortcut recorder and settings". Open: `ConfigureShortcuts` on portal v2 desktops.
+4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Done: the Hyprland managed `bind` include. Done: rebinding from settings on Hyprland and turning shortcuts off, see "Shortcut recorder and settings". Done: `ConfigureShortcuts` on portal v2 desktops, see "Changing portal shortcuts from settings".
 5. Done: CLI clients that forward to the running instance, and `quit` with nothing running, now leave through `g_application_run` with a `handle-local-options` handler that exits at once. GLib no longer warns about the D-Bus registration.
 6. Partly done: Hyprland runs in `test-hypr`. Still open: an Omarchy session, and GNOME overlay focus when triggered by a real global shortcut.
 7. Done on KWin: selection across monitors and the StatusNotifierItem tray with its native menu, see "Selection across monitors" and "Tray". Done: the styled tray popover, see "Tray popover". Open: all three on Hyprland, Sway, GNOME and real hardware.

@@ -22,7 +22,11 @@ pub struct PortalShortcuts {
 }
 
 pub struct PortalGuard {
+    connection: gio::DBusConnection,
+    session: String,
+    version: u32,
     _activated: SignalSubscription,
+    changed: Option<SignalSubscription>,
 }
 
 impl PortalShortcuts {
@@ -171,18 +175,109 @@ impl PortalShortcuts {
             .get("shortcuts")
             .and_then(|shortcuts| shortcuts.get::<Vec<(String, Results)>>())
             .unwrap_or_default();
-        Ok(ShortcutAction::ALL
-            .into_iter()
-            .map(|action| Binding {
-                action,
-                trigger: bound
-                    .iter()
-                    .find(|(id, _)| id == action.id())
-                    .and_then(|(_, details)| details.get("trigger_description"))
-                    .and_then(|trigger| trigger.str().map(str::to_owned))
-                    .filter(|trigger| !trigger.is_empty()),
-            })
-            .collect())
+        Ok(bindings_from(&bound))
+    }
+}
+
+fn bindings_from(bound: &[(String, Results)]) -> Vec<Binding> {
+    ShortcutAction::ALL
+        .into_iter()
+        .map(|action| Binding {
+            action,
+            trigger: bound
+                .iter()
+                .find(|(id, _)| id == action.id())
+                .and_then(|(_, details)| details.get("trigger_description"))
+                .and_then(|trigger| trigger.str().map(str::to_owned))
+                .filter(|trigger| !trigger.is_empty()),
+        })
+        .collect()
+}
+
+impl PortalGuard {
+    /// Reports whether the desktop can open its own dialog for changing these shortcuts.
+    ///
+    /// `ConfigureShortcuts` arrived in version 2 of the GlobalShortcuts portal.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let configurable = guard.can_configure();
+    /// ```
+    pub fn can_configure(&self) -> bool {
+        self.version >= 2
+    }
+
+    /// Asks the desktop to open its dialog for changing Kiekje's shortcuts.
+    ///
+    /// The portal answers right away; new triggers arrive later through `watch_changes`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// glib::spawn_future_local(guard.configure());
+    /// ```
+    pub fn configure(&self) -> impl Future<Output = Result<(), ShortcutError>> + 'static {
+        let connection = self.connection.clone();
+        let session = self.session.clone();
+        let version = self.version;
+        async move {
+            if version < 2 {
+                return Err(ShortcutError::Unavailable(format!(
+                    "ConfigureShortcuts needs portal version 2, this desktop has {version}"
+                )));
+            }
+            let handle = ObjectPath::try_from(session.clone())
+                .map_err(|_| ShortcutError::Reply(format!("{session} is not an object path")))?;
+            connection
+                .call_future(
+                    Some(DESTINATION),
+                    PORTAL_PATH,
+                    INTERFACE,
+                    "ConfigureShortcuts",
+                    Some(&Variant::tuple_from_iter([
+                        handle.to_variant(),
+                        "".to_variant(),
+                        Results::new().to_variant(),
+                    ])),
+                    None,
+                    DBusCallFlags::NONE,
+                    -1,
+                )
+                .await?;
+            Ok(())
+        }
+    }
+
+    /// Calls `on_changed` with the new triggers whenever the user changes them in the desktop.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// guard.watch_changes(|bindings| println!("{bindings:?}"));
+    /// ```
+    pub fn watch_changes(&mut self, on_changed: impl Fn(Vec<Binding>) + 'static) {
+        let session = self.session.clone();
+        self.changed = Some(self.connection.subscribe_to_signal(
+            Some(DESTINATION),
+            Some(INTERFACE),
+            Some("ShortcutsChanged"),
+            Some(PORTAL_PATH),
+            None,
+            DBusSignalFlags::NONE,
+            move |signal| {
+                let Some((handle, bound)) = signal
+                    .parameters
+                    .get::<(ObjectPath, Vec<(String, Results)>)>()
+                else {
+                    eprintln!("kiekje: ignored a malformed ShortcutsChanged signal");
+                    return;
+                };
+                if handle.as_str() == session {
+                    on_changed(bindings_from(&bound));
+                }
+            },
+        ));
     }
 }
 
@@ -230,9 +325,45 @@ impl ShortcutRegistrar for PortalShortcuts {
         let bindings = self.bind_shortcuts(&session).await?;
         Ok((
             PortalGuard {
+                connection: self.connection.clone(),
+                session,
+                version,
                 _activated: activated,
+                changed: None,
             },
             bindings,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn details(trigger: &str) -> Results {
+        HashMap::from([("trigger_description".to_owned(), trigger.to_variant())])
+    }
+
+    #[test]
+    fn reads_each_action_trigger_and_treats_empty_as_unbound() {
+        let bound = vec![
+            ("capture-region".to_owned(), details("Ctrl+Alt+P")),
+            ("capture-fullscreen".to_owned(), details("")),
+            ("capture-window".to_owned(), details("Alt+W")),
+        ];
+        let bindings = bindings_from(&bound);
+        assert_eq!(
+            bindings,
+            vec![
+                Binding {
+                    action: ShortcutAction::CaptureRegion,
+                    trigger: Some("Ctrl+Alt+P".into()),
+                },
+                Binding {
+                    action: ShortcutAction::CaptureFullscreen,
+                    trigger: None,
+                },
+            ]
+        );
     }
 }

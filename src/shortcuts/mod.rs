@@ -55,7 +55,10 @@ impl ShortcutAction {
 pub enum ShortcutHost {
     Starting,
     Off(String),
-    Desktop(&'static str),
+    Desktop {
+        name: &'static str,
+        configurable: bool,
+    },
     Hyprland,
 }
 
