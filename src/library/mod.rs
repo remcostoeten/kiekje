@@ -241,6 +241,17 @@ impl Library {
             .execute("DELETE FROM captures WHERE missing = 1", [])?)
     }
 
+    /// Removes every record and returns how many there were. Files on disk are not touched.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let forgotten = library.clear()?;
+    /// ```
+    pub fn clear(&self) -> Result<usize, LibraryError> {
+        Ok(self.connection.execute("DELETE FROM captures", [])?)
+    }
+
     /// Returns the paths of every capture that is still on disk.
     ///
     /// # Examples
@@ -365,6 +376,20 @@ mod tests {
         drop(library);
         let reopened = Library::open(&path).unwrap();
         assert_eq!(reopened.recent(5).unwrap()[0].path, folder.join("a.png"));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn clears_every_record_and_keeps_the_files() {
+        let folder = scratch("clear");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        for name in ["a.png", "b.png"] {
+            std::fs::write(folder.join(name), b"png").unwrap();
+            library.insert(&capture(&folder.join(name), 1)).unwrap();
+        }
+        assert_eq!(library.clear().unwrap(), 2);
+        assert!(library.all().unwrap().is_empty());
+        assert!(folder.join("a.png").is_file());
         std::fs::remove_dir_all(folder).unwrap();
     }
 

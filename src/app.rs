@@ -648,6 +648,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
         };
         let saved_session = Rc::downgrade(&session);
         let configure_session = Rc::downgrade(&session);
+        let cleared_session = Rc::downgrade(&session);
         let (window, handle) = settings::show(
             &app,
             model,
@@ -659,6 +660,13 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             move || {
                 if let Some(session) = configure_session.upgrade() {
                     configure_shortcuts(&session);
+                }
+            },
+            move || {
+                if let Some(session) = cleared_session.upgrade()
+                    && let Some(gallery) = session.gallery_handle.borrow().as_ref()
+                {
+                    gallery.reload();
                 }
             },
         );

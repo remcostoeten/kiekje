@@ -214,7 +214,7 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 **Phase 3: V1 release**
 
 - About and update check.
-- Danger zone.
+- Danger zone. Done: reset settings, clear gallery, clear thumbnails.
 - AUR, deb, rpm and tarball packages.
 - CI with clippy, tests and fmt.
 

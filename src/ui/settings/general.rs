@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use gtk::prelude::*;
@@ -15,18 +15,24 @@ type Changes = async_channel::Sender<Change>;
 const PREVIEW_WIDTH: u32 = 1920;
 const PREVIEW_HEIGHT: u32 = 1080;
 
-struct General {
+pub(super) struct General {
+    quiet: Cell<bool>,
     folder: gtk::Label,
     default_folder: gtk::Button,
     filename: gtk::Entry,
     default_filename: gtk::Button,
     preview: gtk::Label,
     saved_filename: RefCell<String>,
+    enabled: gtk::CheckButton,
     sound: gtk::CheckButton,
     problem: gtk::Label,
 }
 
-pub(super) fn append(content: &gtk::Box, storage: &Storage, notifications: Notifications) {
+pub(super) fn append(
+    content: &gtk::Box,
+    storage: &Storage,
+    notifications: Notifications,
+) -> Weak<General> {
     let (changes, receiver) = async_channel::unbounded::<Change>();
 
     content.append(&caps("Saving"));
@@ -76,17 +82,20 @@ pub(super) fn append(content: &gtk::Box, storage: &Storage, notifications: Notif
     content.append(&problem);
 
     let general = Rc::new(General {
+        quiet: Cell::new(false),
         folder,
         default_folder,
         filename,
         default_filename,
         preview,
         saved_filename: RefCell::new(storage.filename.to_string()),
+        enabled,
         sound,
         problem,
     });
     general.show_preview();
-    connect(&general, &choose, &enabled, &changes);
+    connect(&general, &choose, &changes);
+    let handle = Rc::downgrade(&general);
 
     glib::spawn_future_local(async move {
         while let Ok(change) = receiver.recv().await {
@@ -98,14 +107,10 @@ pub(super) fn append(content: &gtk::Box, storage: &Storage, notifications: Notif
             }
         }
     });
+    handle
 }
 
-fn connect(
-    general: &Rc<General>,
-    choose: &gtk::Button,
-    enabled: &gtk::CheckButton,
-    changes: &Changes,
-) {
+fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
     choose.connect_clicked(move |button| pick_folder(button, weak.clone(), sender.clone()));
@@ -148,19 +153,27 @@ fn connect(
 
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    enabled.connect_toggled(move |check| {
+    general.enabled.connect_toggled(move |check| {
         let on = check.is_active();
-        if let Some(general) = weak.upgrade() {
-            general.sound.set_sensitive(on);
+        let Some(general) = weak.upgrade() else {
+            return;
+        };
+        general.sound.set_sensitive(on);
+        if general.quiet.get() {
+            return;
         }
         send(
             &sender,
             Box::new(move |config| config.notifications.enabled = on),
         );
     });
+    let weak = Rc::downgrade(general);
     let sender = changes.clone();
     general.sound.connect_toggled(move |check| {
         let on = check.is_active();
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
         send(
             &sender,
             Box::new(move |config| config.notifications.sound = on),
@@ -260,6 +273,15 @@ impl General {
         self.default_filename
             .set_visible(filename != DEFAULT_TEMPLATE);
         self.saved_filename.replace(filename);
+    }
+
+    pub(super) fn reset(&self, config: &Config) {
+        self.quiet.set(true);
+        self.saved(config);
+        self.filename.set_text(&config.storage.filename.to_string());
+        self.enabled.set_active(config.notifications.enabled);
+        self.sound.set_active(config.notifications.sound);
+        self.quiet.set(false);
     }
 
     fn complain(&self, message: &str) {
