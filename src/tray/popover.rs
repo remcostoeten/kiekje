@@ -1,8 +1,6 @@
 use std::cell::RefCell;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::SystemTime;
 
 use gtk::gdk_pixbuf::Pixbuf;
 use gtk::prelude::*;
@@ -10,6 +8,7 @@ use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::capture::{CaptureMode, LogicalRect};
+use crate::library::{self, Library};
 use crate::overlay;
 use crate::ui;
 
@@ -48,7 +47,6 @@ pub struct Placement {
 
 pub struct Content {
     pub shortcuts: Vec<(CaptureMode, String)>,
-    pub captures_dir: PathBuf,
 }
 
 type PickCallback = Rc<dyn Fn(Pick)>;
@@ -94,22 +92,6 @@ pub fn place(click: Option<(i32, i32)>, monitors: &[LogicalRect]) -> Placement {
             Horizontal::Right
         },
     }
-}
-
-/// Returns up to `count` paths, newest first.
-///
-/// # Examples
-///
-/// ```ignore
-/// let recent = newest(entries, 4);
-/// ```
-pub fn newest(mut entries: Vec<(PathBuf, SystemTime)>, count: usize) -> Vec<PathBuf> {
-    entries.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
-    entries
-        .into_iter()
-        .take(count)
-        .map(|(path, _)| path)
-        .collect()
 }
 
 /// Opens the styled tray popover and calls `on_pick` with what the user chose.
@@ -182,7 +164,7 @@ pub fn show(
     });
 
     window.present();
-    load_recent(&recent, content.captures_dir);
+    load_recent(&recent);
     window
 }
 
@@ -366,11 +348,11 @@ fn recent_strip(row: &gtk::Box) -> gtk::ScrolledWindow {
         .build()
 }
 
-fn load_recent(row: &gtk::Box, directory: PathBuf) {
+fn load_recent(row: &gtk::Box) {
     let row = row.downgrade();
     glib::spawn_future_local(async move {
         let loaded = gio::spawn_blocking(move || {
-            recent_captures(&directory)
+            recent_captures()
                 .into_iter()
                 .filter_map(|path| match thumbnail_png(&path) {
                     Ok(png) => Some((path, png)),
@@ -399,14 +381,21 @@ fn load_recent(row: &gtk::Box, directory: PathBuf) {
             );
             return;
         }
+        let mut shown = 0;
         for (path, png) in thumbnails {
             match gdk::Texture::from_bytes(&glib::Bytes::from_owned(png)) {
-                Ok(texture) => row.append(&thumbnail_button(path, &texture)),
+                Ok(texture) => {
+                    row.append(&thumbnail_button(path, &texture));
+                    shown += 1;
+                }
                 Err(error) => eprintln!(
                     "kiekje: thumbnail for {} unreadable: {error}",
                     path.display()
                 ),
             }
+        }
+        for _ in shown..RECENT_COUNT {
+            row.append(&gtk::Box::new(gtk::Orientation::Horizontal, 0));
         }
     });
 }
@@ -445,37 +434,22 @@ fn thumbnail_button(path: PathBuf, texture: &gdk::Texture) -> gtk::Button {
     button
 }
 
-fn recent_captures(directory: &Path) -> Vec<PathBuf> {
-    let entries = match fs::read_dir(directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+fn recent_captures() -> Vec<PathBuf> {
+    match Library::open(&library::path()).and_then(|library| library.recent(RECENT_COUNT)) {
+        Ok(captures) => captures
+            .into_iter()
+            .map(|capture| capture.path)
+            .filter(|path| path.is_file())
+            .collect(),
         Err(error) => {
-            eprintln!("kiekje: could not list {}: {error}", directory.display());
-            return Vec::new();
+            eprintln!("kiekje: recent captures unavailable: {error}");
+            Vec::new()
         }
-    };
-    let pngs = entries
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension == "png")
-        })
-        .filter_map(|entry| {
-            let modified = entry
-                .metadata()
-                .and_then(|metadata| metadata.modified())
-                .ok()?;
-            Some((entry.path(), modified))
-        })
-        .collect();
-    newest(pngs, RECENT_COUNT)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
 
     use super::*;
 
@@ -520,19 +494,5 @@ mod tests {
         assert_eq!(place(None, &monitors), fallback);
         assert_eq!(place(Some((0, 0)), &monitors), fallback);
         assert_eq!(place(Some((9000, 9000)), &monitors), fallback);
-    }
-
-    #[test]
-    fn keeps_the_newest_captures_first() {
-        let at = |seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
-        let entries = vec![
-            (PathBuf::from("a.png"), at(1)),
-            (PathBuf::from("c.png"), at(3)),
-            (PathBuf::from("b.png"), at(2)),
-        ];
-        assert_eq!(
-            newest(entries, 2),
-            vec![PathBuf::from("c.png"), PathBuf::from("b.png")]
-        );
     }
 }

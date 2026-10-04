@@ -352,6 +352,12 @@ Where the GlobalShortcuts portal is version 2 or newer, the settings window show
 
 Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12, against a small fake portal on the session bus (version 2, answering CreateSession and BindShortcuts, then emitting ShortcutsChanged with `Ctrl+Alt+P` 300 ms after ConfigureShortcuts). The button sent ConfigureShortcuts, the daemon logged the change, and the open window showed `Ctrl+Alt+P`. Unverified: the real KDE and GNOME dialogs, and which portal versions they ship.
 
+## Capture library
+
+Phase 2 starts with the metadata store. Every saved capture gets a row in `$XDG_DATA_HOME/kiekje/library.db` (SQLite through bundled `rusqlite`, WAL mode): path, mode, size in pixels and bytes, and creation time. The row is written on the capture worker right after the file, and a failed write is logged without affecting the capture. The schema is versioned with `user_version`, and a database from a newer build is refused rather than changed. At daemon start a worker checks every row against disk and sets or clears its missing flag. The popover's Recent row now reads the four newest rows that are not missing, instead of listing the captures folder, so files that aren't Kiekje's no longer show up. Captures saved before the library existed are not imported.
+
+Checked on 2026-10-04 on headless sway 1.9: two fullscreen captures made two rows. After deleting one file and restarting the daemon, it logged one entry changed state, and the popover showed only the remaining capture. Not built yet: thumbnails cache, gallery views, filters, file actions and re-linking moved files.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
