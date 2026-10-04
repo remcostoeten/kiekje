@@ -1,0 +1,335 @@
+mod migrate;
+
+use std::fs::{self, OpenOptions};
+use std::io::{self, ErrorKind, Write};
+use std::path::{Path, PathBuf};
+
+use gtk::glib;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+use toml::Table;
+
+use crate::storage::{self, Template};
+pub use migrate::{MigrateError, VERSION};
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    pub version: i64,
+    #[serde(default)]
+    pub storage: Storage,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Storage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<Folder>,
+    pub filename: Template,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Folder {
+    source: String,
+    path: PathBuf,
+}
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("could not read {}: {source}", path.display())]
+    Read { path: PathBuf, source: io::Error },
+    #[error("{} is not valid: {source}", path.display())]
+    Parse {
+        path: PathBuf,
+        source: toml::de::Error,
+    },
+    #[error("{}: {source}", path.display())]
+    Migrate { path: PathBuf, source: MigrateError },
+    #[error("could not write {}: {source}", path.display())]
+    Write { path: PathBuf, source: io::Error },
+    #[error("could not encode the config: {0}")]
+    Encode(#[from] toml::ser::Error),
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("folder `{0}` must be an absolute path or start with `~/`")]
+pub struct FolderError(String);
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: VERSION,
+            storage: Storage::default(),
+        }
+    }
+}
+
+impl Storage {
+    /// Returns the folder captures are saved in.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let path = storage::save_png(&png, &config.storage.captures_dir(), &base)?;
+    /// ```
+    pub fn captures_dir(&self) -> PathBuf {
+        self.folder
+            .as_ref()
+            .map_or_else(storage::default_captures_dir, |folder| folder.path.clone())
+    }
+}
+
+impl Folder {
+    fn parse(source: String, home: &Path) -> Result<Self, FolderError> {
+        let path = match source.strip_prefix("~/") {
+            Some(relative) => home.join(relative),
+            None if source == "~" => home.to_path_buf(),
+            None => PathBuf::from(&source),
+        };
+        if !path.is_absolute() {
+            return Err(FolderError(source));
+        }
+        Ok(Self { source, path })
+    }
+}
+
+impl TryFrom<String> for Folder {
+    type Error = FolderError;
+
+    fn try_from(source: String) -> Result<Self, Self::Error> {
+        Self::parse(source, &glib::home_dir())
+    }
+}
+
+impl From<Folder> for String {
+    fn from(folder: Folder) -> Self {
+        folder.source
+    }
+}
+
+/// Returns `$XDG_CONFIG_HOME/kiekje/config.toml`.
+///
+/// # Examples
+///
+/// ```ignore
+/// let config = config::load_from(&config::path())?;
+/// ```
+pub fn path() -> PathBuf {
+    glib::user_config_dir().join("kiekje").join("config.toml")
+}
+
+/// Reads and migrates the config at `path`, or returns `None` when the file does not exist.
+///
+/// # Examples
+///
+/// ```ignore
+/// let config = load_from(&path())?.unwrap_or_default();
+/// ```
+pub fn load_from(path: &Path) -> Result<Option<Config>, ConfigError> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    parse(&text, path).map(Some)
+}
+
+/// Loads the user's config, falling back to defaults and logging why when it can't be used.
+///
+/// Reads from disk, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let directory = config::load().storage.captures_dir();
+/// ```
+pub fn load() -> Config {
+    match load_from(&path()) {
+        Ok(config) => config.unwrap_or_default(),
+        Err(error) => {
+            eprintln!("kiekje: using the default config: {error}");
+            Config::default()
+        }
+    }
+}
+
+/// Writes `config` to `path` through a temporary file and a rename, so readers never see half a file.
+///
+/// # Examples
+///
+/// ```ignore
+/// save_to(&path(), &config)?;
+/// ```
+pub fn save_to(path: &Path, config: &Config) -> Result<(), ConfigError> {
+    let text = toml::to_string_pretty(config)?;
+    let write_error = |source| ConfigError::Write {
+        path: path.to_path_buf(),
+        source,
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(write_error)?;
+    }
+    let temporary = path.with_extension(format!("toml.{}.tmp", std::process::id()));
+    let written = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .and_then(|mut file| {
+            file.write_all(text.as_bytes())?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&temporary, path));
+    if let Err(error) = written {
+        // Best-effort cleanup; the write error is the one to report.
+        let _ = fs::remove_file(&temporary);
+        return Err(write_error(error));
+    }
+    Ok(())
+}
+
+/// Writes the default config when none exists yet, so there is a file to edit.
+///
+/// Touches the disk, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// gio::spawn_blocking(|| config::ensure_file(&config::path()));
+/// ```
+pub fn ensure_file(path: &Path) -> Result<bool, ConfigError> {
+    if path.try_exists().map_err(|source| ConfigError::Read {
+        path: path.to_path_buf(),
+        source,
+    })? {
+        return Ok(false);
+    }
+    save_to(path, &Config::default())?;
+    Ok(true)
+}
+
+fn parse(text: &str, path: &Path) -> Result<Config, ConfigError> {
+    let parse_error = |source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    };
+    let table: Table = toml::from_str(text).map_err(parse_error)?;
+    let table = migrate::migrate(table).map_err(|source| ConfigError::Migrate {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    table.try_into().map_err(parse_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        std::env::temp_dir()
+            .join(format!("kiekje-config-{name}-{}", std::process::id()))
+            .join("config.toml")
+    }
+
+    #[test]
+    fn reads_a_missing_file_as_none() {
+        assert!(load_from(&scratch("missing")).unwrap().is_none());
+    }
+
+    #[test]
+    fn fills_missing_sections_with_defaults() {
+        let config = parse("version = 1", Path::new("config.toml")).unwrap();
+        assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn reads_a_custom_folder_and_filename() {
+        let config = parse(
+            "[storage]\nfolder = \"/srv/shots\"\nfilename = \"shot-{date}\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(config.storage.captures_dir(), PathBuf::from("/srv/shots"));
+        assert_eq!(config.storage.filename.to_string(), "shot-{date}");
+    }
+
+    #[test]
+    fn expands_a_tilde_folder_against_home() {
+        let folder = Folder::parse("~/Shots".into(), Path::new("/home/test")).unwrap();
+        assert_eq!(folder.path, PathBuf::from("/home/test/Shots"));
+        assert_eq!(String::from(folder), "~/Shots");
+    }
+
+    #[test]
+    fn rejects_a_relative_folder() {
+        assert_eq!(
+            Folder::parse("Shots".into(), Path::new("/home/test")),
+            Err(FolderError("Shots".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_an_invalid_filename_template() {
+        let error = parse(
+            "[storage]\nfilename = \"{weekday}\"",
+            Path::new("config.toml"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::Parse { .. }));
+    }
+
+    #[test]
+    fn rejects_unknown_keys() {
+        let error = parse("[storage]\nfolders = \"/srv\"", Path::new("config.toml")).unwrap_err();
+        assert!(matches!(error, ConfigError::Parse { .. }));
+    }
+
+    #[test]
+    fn refuses_a_config_from_a_newer_build() {
+        let error = parse("version = 9", Path::new("config.toml")).unwrap_err();
+        assert!(matches!(
+            error,
+            ConfigError::Migrate {
+                source: MigrateError::Newer(9),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn round_trips_through_an_atomic_save() {
+        let path = scratch("round-trip");
+        let mut config = Config::default();
+        config.storage.folder = Some(Folder::parse("/srv/shots".into(), Path::new("/")).unwrap());
+        config.storage.filename = Template::parse("{date} {time}").unwrap();
+        save_to(&path, &config).unwrap();
+        save_to(&path, &config).unwrap();
+        assert_eq!(load_from(&path).unwrap(), Some(config));
+        let leftovers = fs::read_dir(path.parent().unwrap()).unwrap().count();
+        assert_eq!(leftovers, 1);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn writes_defaults_only_when_no_file_exists() {
+        let path = scratch("ensure");
+        assert!(ensure_file(&path).unwrap());
+        fs::write(&path, "[storage]\nfilename = \"mine\"").unwrap();
+        assert!(!ensure_file(&path).unwrap());
+        assert_eq!(
+            load_from(&path)
+                .unwrap()
+                .unwrap()
+                .storage
+                .filename
+                .to_string(),
+            "mine"
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+}

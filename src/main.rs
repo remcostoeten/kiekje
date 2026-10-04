@@ -2,6 +2,7 @@ mod app;
 mod backends;
 mod capture;
 mod clipboard;
+mod config;
 mod desktop_file;
 mod doctor;
 mod help;
@@ -9,6 +10,7 @@ mod mascot;
 mod output;
 mod overlay;
 mod shortcuts;
+mod storage;
 mod style;
 mod tray;
 

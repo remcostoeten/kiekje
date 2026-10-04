@@ -14,11 +14,13 @@ use crate::capture::{
     BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
 };
 use crate::clipboard::Clipboard;
+use crate::config;
 use crate::output::{self, Image};
 use crate::overlay::{self, Selection};
 use crate::shortcuts::{
     PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland_bind,
 };
+use crate::storage::{self, Naming};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost, TrayOrigin};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
@@ -109,6 +111,7 @@ pub fn run(command: Command) -> glib::ExitCode {
     install_actions(&app, &session);
     register_shortcuts(&app, &session);
     start_tray(&app, &session);
+    write_default_config();
     let hold = app.hold();
     let initial = match command {
         Command::Capture(request) => Some(request),
@@ -271,13 +274,31 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
     }
 }
 
+fn write_default_config() {
+    glib::spawn_future_local(async {
+        let path = config::path();
+        let target = path.clone();
+        match gio::spawn_blocking(move || config::ensure_file(&target)).await {
+            Ok(Ok(true)) => println!("kiekje: wrote the default config to {}", path.display()),
+            Ok(Ok(false)) => {}
+            Ok(Err(error)) => eprintln!("kiekje: {error}"),
+            Err(_) => eprintln!("kiekje: the config worker stopped"),
+        }
+    });
+}
+
 fn open_captures() {
-    let directory = output::captures_dir();
     glib::spawn_future_local(async move {
-        let target = directory.clone();
-        match gio::spawn_blocking(move || std::fs::create_dir_all(target)).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
+        let created = gio::spawn_blocking(|| {
+            let directory = config::load().storage.captures_dir();
+            std::fs::create_dir_all(&directory)
+                .map(|()| directory.clone())
+                .map_err(|error| (directory, error))
+        })
+        .await;
+        let directory = match created {
+            Ok(Ok(directory)) => directory,
+            Ok(Err((directory, error))) => {
                 eprintln!("kiekje: could not create {}: {error}", directory.display());
                 return;
             }
@@ -285,7 +306,7 @@ fn open_captures() {
                 eprintln!("kiekje: the folder worker stopped");
                 return;
             }
-        }
+        };
         let uri = gio::File::for_path(&directory).uri();
         if let Err(error) =
             gio::AppInfo::launch_default_for_uri_future(&uri, gio::AppLaunchContext::NONE).await
@@ -494,7 +515,14 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>) {
         }
     }
     if request.save {
-        match output::save_png(&png, &output::captures_dir(), request.mode) {
+        let storage = config::load().storage;
+        let base = storage.filename.render(&Naming {
+            mode: request.mode,
+            stamp: storage::now(),
+            width,
+            height,
+        });
+        match storage::save_png(&png, &storage.captures_dir(), &base) {
             Ok(path) => println!("kiekje: saved {}", path.display()),
             Err(error) => eprintln!("kiekje: save failed: {error}"),
         }

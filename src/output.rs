@@ -1,14 +1,12 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, ErrorKind, Write};
+use std::io;
 use std::num::NonZero;
-use std::path::{Path, PathBuf};
 use std::thread;
 
 use gtk::{gdk, glib};
 
 use crate::backends::portal::bounding_box;
 use crate::capture::mapping::{PixelRect, SelectionPlan, density};
-use crate::capture::{CaptureMode, Frame, LogicalRect, PixelFormat};
+use crate::capture::{Frame, LogicalRect, PixelFormat};
 
 pub struct Image {
     pub width: u32,
@@ -253,50 +251,6 @@ pub fn encode_png(image: Image) -> io::Result<Vec<u8>> {
     Ok(png)
 }
 
-/// Writes encoded PNG bytes into a new file in `directory`, never overwriting an existing one.
-///
-/// # Examples
-///
-/// ```ignore
-/// let path = save_png(&png, &captures_dir(), CaptureMode::Region)?;
-/// ```
-pub fn save_png(png: &[u8], directory: &Path, mode: CaptureMode) -> io::Result<PathBuf> {
-    fs::create_dir_all(directory)?;
-    let stamp = glib::DateTime::now_local()
-        .and_then(|now| now.format("%Y%m%d-%H%M%S"))
-        .map(|value| value.to_string())
-        .unwrap_or_else(|_| "unknown-time".into());
-    let base = format!("kiekje-{}-{stamp}", mode.as_str());
-    let (path, mut file) = create_unique(directory, &base, "png")?;
-
-    if let Err(error) = file.write_all(png) {
-        // Best-effort cleanup of the partial file; the write error is the one to report.
-        let _ = fs::remove_file(&path);
-        return Err(error);
-    }
-    Ok(path)
-}
-
-fn create_unique(directory: &Path, base: &str, extension: &str) -> io::Result<(PathBuf, File)> {
-    for attempt in 1..=1000 {
-        let name = if attempt == 1 {
-            format!("{base}.{extension}")
-        } else {
-            format!("{base}-{attempt}.{extension}")
-        };
-        let path = directory.join(name);
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok((path, file)),
-            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::new(
-        ErrorKind::AlreadyExists,
-        "no free file name after 1000 attempts",
-    ))
-}
-
 fn into_rgba(mut image: Image) -> Image {
     let row_bytes = image.width as usize * 4;
     if image.format != PixelFormat::Rgba {
@@ -325,12 +279,6 @@ fn convert_row(format: PixelFormat, source: &[u8], target: &mut [u8]) {
     }
 }
 
-pub fn captures_dir() -> PathBuf {
-    glib::user_special_dir(glib::UserDirectory::Pictures)
-        .unwrap_or_else(|| glib::home_dir().join("Pictures"))
-        .join("Kiekje")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,17 +301,6 @@ mod tests {
             format: PixelFormat::Bgrx,
             data: [value, 0, 0, 0].repeat((width * width) as usize),
         }
-    }
-
-    #[test]
-    fn creates_a_new_file_when_the_name_exists() {
-        let directory = std::env::temp_dir().join(format!("kiekje-test-{}", std::process::id()));
-        fs::create_dir_all(&directory).unwrap();
-        let (first, _) = create_unique(&directory, "same", "png").unwrap();
-        let (second, _) = create_unique(&directory, "same", "png").unwrap();
-        assert_ne!(first, second);
-        assert!(second.ends_with("same-2.png"));
-        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
