@@ -19,8 +19,8 @@ use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
 use crate::shortcuts::{
-    PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar, Shortcuts,
-    hyprland,
+    Binding, PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar,
+    Shortcuts, hyprland,
 };
 use crate::storage::{self, Naming, last_region};
 use crate::tray::popover::{self, Pick};
@@ -40,6 +40,7 @@ struct Session {
     tray: RefCell<Option<Box<dyn TrayGuard>>>,
     popover: RefCell<Option<gtk::Window>>,
     settings: RefCell<Option<gtk::Window>>,
+    settings_handle: RefCell<Option<settings::Handle>>,
     shortcut_host: RefCell<ShortcutHost>,
     shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
 }
@@ -142,6 +143,7 @@ pub fn run(command: Command) -> glib::ExitCode {
         tray: RefCell::new(None),
         popover: RefCell::new(None),
         settings: RefCell::new(None),
+        settings_handle: RefCell::new(None),
         shortcut_host: RefCell::new(ShortcutHost::Starting),
         shortcut_labels: RefCell::new(Vec::new()),
     });
@@ -212,7 +214,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
             .unwrap_or_default();
         let registrar = PortalShortcuts::new(connection, shortcuts.clone());
         match registrar.bind(on_activated).await {
-            Ok((guard, bindings)) => {
+            Ok((mut guard, bindings)) => {
                 let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
                 let mut unbound = false;
                 let mut labels = Vec::new();
@@ -244,10 +246,21 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                     install_hyprland_binds(shortcuts);
                 }
                 if let Some(session) = session.upgrade() {
+                    if !on_hyprland {
+                        let changed_session = Rc::downgrade(&session);
+                        guard.watch_changes(move |bindings| {
+                            if let Some(session) = changed_session.upgrade() {
+                                desktop_changed(&session, bindings);
+                            }
+                        });
+                    }
                     session.shortcut_host.replace(if on_hyprland {
                         ShortcutHost::Hyprland
                     } else {
-                        ShortcutHost::Desktop(registrar.name())
+                        ShortcutHost::Desktop {
+                            name: registrar.name(),
+                            configurable: guard.can_configure(),
+                        }
                     });
                     session.shortcut_labels.replace(labels);
                     session.shortcuts.replace(Some(guard));
@@ -261,6 +274,46 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                         .replace(ShortcutHost::Off(error.to_string()));
                 }
             }
+        }
+    });
+}
+
+fn desktop_changed(session: &Session, bindings: Vec<Binding>) {
+    let mut labels = Vec::new();
+    for binding in bindings {
+        println!(
+            "kiekje: shortcut {} changed to {}",
+            binding.action.id(),
+            binding.trigger.as_deref().unwrap_or("nothing")
+        );
+        if let Some(trigger) = binding.trigger {
+            labels.push((binding.action, trigger));
+        }
+    }
+    if let Some(handle) = session.settings_handle.borrow().as_ref() {
+        handle.show_bound(&labels);
+    }
+    session.shortcut_labels.replace(
+        labels
+            .into_iter()
+            .map(|(action, label)| (action_mode(action), label))
+            .collect(),
+    );
+}
+
+fn configure_shortcuts(session: &Session) {
+    let Some(configure) = session
+        .shortcuts
+        .borrow()
+        .as_ref()
+        .map(PortalGuard::configure)
+    else {
+        eprintln!("kiekje: no shortcut session to configure");
+        return;
+    };
+    glib::spawn_future_local(async move {
+        if let Err(error) = configure.await {
+            eprintln!("kiekje: the desktop's shortcut dialog did not open: {error}");
         }
     });
 }
@@ -535,18 +588,30 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             bound,
         };
         let saved_session = Rc::downgrade(&session);
-        let window = settings::show(&app, model, move |shortcuts| {
-            if let Some(session) = saved_session.upgrade() {
-                session.shortcut_labels.replace(hyprland_labels(shortcuts));
-            }
-        });
+        let configure_session = Rc::downgrade(&session);
+        let (window, handle) = settings::show(
+            &app,
+            model,
+            move |shortcuts| {
+                if let Some(session) = saved_session.upgrade() {
+                    session.shortcut_labels.replace(hyprland_labels(shortcuts));
+                }
+            },
+            move || {
+                if let Some(session) = configure_session.upgrade() {
+                    configure_shortcuts(&session);
+                }
+            },
+        );
         let closed_session = Rc::downgrade(&session);
         window.connect_close_request(move |_| {
             if let Some(session) = closed_session.upgrade() {
                 session.settings.take();
+                session.settings_handle.take();
             }
             glib::Propagation::Proceed
         });
+        session.settings_handle.replace(Some(handle));
         session.settings.replace(Some(window));
     });
 }

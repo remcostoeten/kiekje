@@ -53,6 +53,10 @@ window.kiekje-popover {
   transform: scale(0.98);
 }
 
+.panel button:disabled {
+  color: var(--muted);
+}
+
 .panel button:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

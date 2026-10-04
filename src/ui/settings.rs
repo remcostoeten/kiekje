@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
@@ -39,13 +39,14 @@ struct Editor {
 /// # Examples
 ///
 /// ```ignore
-/// let window = settings::show(&app, model, |shortcuts| println!("{shortcuts:?}"));
+/// let (window, handle) = settings::show(&app, model, |shortcuts| save(shortcuts), || configure());
 /// ```
 pub fn show(
     app: &gtk::Application,
     model: Model,
     on_saved: impl Fn(&Shortcuts) + 'static,
-) -> gtk::Window {
+    on_configure: impl Fn() + 'static,
+) -> (gtk::Window, Handle) {
     ui::load_stylesheet();
     let window = gtk::Window::builder()
         .application(app)
@@ -89,7 +90,7 @@ pub fn show(
         row.append(&trigger);
         let reset = gtk::Button::builder()
             .label("Reset")
-            .sensitive(editable)
+            .visible(editable)
             .css_classes(["ghost"])
             .build();
         row.append(&reset);
@@ -106,6 +107,17 @@ pub fn show(
         .css_classes(["problem"])
         .build();
     content.append(&problem);
+    if let ShortcutHost::Desktop {
+        configurable: true, ..
+    } = model.host
+    {
+        let configure = gtk::Button::builder()
+            .label("Change in desktop settings")
+            .halign(gtk::Align::Start)
+            .build();
+        configure.connect_clicked(move |_| on_configure());
+        content.append(&configure);
+    }
     if editable {
         content.append(&note(
             "Click a shortcut, then press the new keys. Esc cancels, Backspace turns it off.",
@@ -142,6 +154,7 @@ pub fn show(
         });
     }
 
+    let handle = Handle(Rc::downgrade(&editor));
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     keys.connect_key_pressed(move |controller, keyval, keycode, state| {
@@ -161,7 +174,29 @@ pub fn show(
     window.add_controller(keys);
 
     window.present();
-    window
+    (window, handle)
+}
+
+pub struct Handle(Weak<Editor>);
+
+impl Handle {
+    /// Shows the triggers the desktop reports, after it changed them.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handle.show_bound(&[(ShortcutAction::CaptureRegion, "Print".into())]);
+    /// ```
+    pub fn show_bound(&self, bound: &[(ShortcutAction, String)]) {
+        let Some(editor) = self.0.upgrade() else {
+            return;
+        };
+        for action in ShortcutAction::ALL {
+            if let Some(button) = editor.buttons.get(action.id()) {
+                button.set_label(&bound_text(bound, action));
+            }
+        }
+    }
 }
 
 impl Editor {
@@ -259,7 +294,14 @@ fn host_note(host: &ShortcutHost) -> String {
             "Saved to {}, which Hyprland reloads by itself.",
             storage::tilde(&hyprland::include_path())
         ),
-        ShortcutHost::Desktop(name) => format!(
+        ShortcutHost::Desktop {
+            name,
+            configurable: true,
+        } => format!("Your desktop owns these keys through {name}. Change them in its dialog."),
+        ShortcutHost::Desktop {
+            name,
+            configurable: false,
+        } => format!(
             "Your desktop owns these keys through {name}. Kiekje suggested them once; change them in the desktop's shortcut settings."
         ),
         ShortcutHost::Off(reason) => format!("Global shortcuts are off: {reason}"),
@@ -268,14 +310,17 @@ fn host_note(host: &ShortcutHost) -> String {
 }
 
 fn trigger_text(model: &Model, action: ShortcutAction) -> String {
-    if let ShortcutHost::Desktop(_) = model.host {
-        return model
-            .bound
-            .iter()
-            .find(|(bound, _)| *bound == action)
-            .map_or_else(|| "Not set".to_owned(), |(_, label)| label.clone());
+    if let ShortcutHost::Desktop { .. } = model.host {
+        return bound_text(&model.bound, action);
     }
     slot_text(model.shortcuts.slot(action))
+}
+
+fn bound_text(bound: &[(ShortcutAction, String)], action: ShortcutAction) -> String {
+    bound
+        .iter()
+        .find(|(bound, _)| *bound == action)
+        .map_or_else(|| "Not set".to_owned(), |(_, label)| label.clone())
 }
 
 fn slot_text(slot: &Slot) -> String {
