@@ -7,6 +7,7 @@ use crate::app::{APP_ID, gdk_monitors, monitor_info};
 use crate::backends::detect::{self, Environment, LAYER_SHELL};
 use crate::backends::{Capabilities, backend, candidates};
 use crate::capture::{BackendChoice, BackendKind};
+use crate::config::{self, Config};
 use crate::desktop_file;
 use crate::overlay;
 use crate::style::{Style, pad};
@@ -69,6 +70,8 @@ struct Report {
     available: Vec<(BackendKind, Capabilities)>,
     kwin_present: bool,
     kwin_access: Option<KwinAccess>,
+    config_path: PathBuf,
+    config: Result<Option<Config>, String>,
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -117,6 +120,7 @@ fn collect() -> Report {
         })
         .map_err(|error| error.to_string());
 
+    let config_path = config::path();
     let available = candidates(BackendChoice::Auto, &environment)
         .into_iter()
         .map(|kind| (kind, backend(kind).capabilities()))
@@ -131,6 +135,14 @@ fn collect() -> Report {
         available,
         kwin_present: environment.has_kwin(),
         kwin_access: environment.has_kwin().then(kwin_access),
+        config: config::load_from(&config_path).map_err(|error| {
+            error
+                .to_string()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        }),
+        config_path,
     }
 }
 
@@ -258,6 +270,16 @@ fn problems(report: &Report) -> Vec<Problem> {
         }),
         Some(KwinAccess::Ready) | None => {}
     }
+    if let Err(error) = &report.config {
+        found.push(Problem {
+            severity: Severity::Warning,
+            message: format!("The config can't be used, so defaults apply: {error}"),
+            fix: Some(format!(
+                "fix {} or delete it to get the defaults back",
+                tilde(&report.config_path)
+            )),
+        });
+    }
     found
 }
 
@@ -305,6 +327,32 @@ fn render(report: &Report, style: &Style) -> String {
         };
         text.push_str(&field(style, "kwin access", &access));
     }
+    text.push('\n');
+
+    text.push_str(&format!("{}\n", style.bold("Storage")));
+    let path = tilde(&report.config_path);
+    let (status, effective) = match &report.config {
+        Ok(Some(config)) => (path, config.clone()),
+        Ok(None) => (
+            format!("{path} {}", style.dim("(not written yet)")),
+            Config::default(),
+        ),
+        Err(_) => (
+            format!("{path} {}", style.warn("(invalid)")),
+            Config::default(),
+        ),
+    };
+    text.push_str(&field(style, "config", &status));
+    text.push_str(&field(
+        style,
+        "folder",
+        &tilde(&effective.storage.captures_dir()),
+    ));
+    text.push_str(&field(
+        style,
+        "file name",
+        &format!("{}.png", effective.storage.filename),
+    ));
     text.push('\n');
 
     text.push_str(&format!("{}\n", style.bold("Monitors")));
@@ -410,6 +458,8 @@ mod tests {
             available: vec![(BackendKind::Kwin, backend(BackendKind::Kwin).capabilities())],
             kwin_present: true,
             kwin_access: Some(KwinAccess::Ready),
+            config_path: PathBuf::from("/etc/kiekje/config.toml"),
+            config: Ok(None),
         }
     }
 
@@ -435,6 +485,23 @@ mod tests {
         let text = render(&stale, &PLAIN);
         assert!(text.contains("! /tmp/kiekje.desktop points at another binary"));
         assert!(text.contains(&format!("run {BINARY} install-desktop-file")));
+    }
+
+    #[test]
+    fn shows_the_default_storage_when_no_config_exists() {
+        let text = render(&report(), &PLAIN);
+        assert!(text.contains("/etc/kiekje/config.toml (not written yet)"));
+        assert!(text.contains("kiekje-{mode}-{date}-{time}.png"));
+    }
+
+    #[test]
+    fn warns_about_an_invalid_config() {
+        let mut invalid = report();
+        invalid.config = Err("unknown token `{weekday}`".into());
+        let text = render(&invalid, &PLAIN);
+        assert!(text.contains("/etc/kiekje/config.toml (invalid)"));
+        assert!(text.contains("! The config can't be used, so defaults apply: unknown token"));
+        assert!(text.contains("fix /etc/kiekje/config.toml or delete it"));
     }
 
     #[test]
