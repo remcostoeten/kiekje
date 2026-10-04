@@ -18,6 +18,15 @@ pub struct Config {
     pub version: i64,
     #[serde(default)]
     pub storage: Storage,
+    #[serde(default)]
+    pub notifications: Notifications,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Notifications {
+    pub enabled: bool,
+    pub sound: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -61,6 +70,16 @@ impl Default for Config {
         Self {
             version: VERSION,
             storage: Storage::default(),
+            notifications: Notifications::default(),
+        }
+    }
+}
+
+impl Default for Notifications {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sound: true,
         }
     }
 }
@@ -244,6 +263,18 @@ mod tests {
         let folder = Folder::parse("~/Shots".into(), Path::new("/home/test")).unwrap();
         assert_eq!(folder.path, PathBuf::from("/home/test/Shots"));
         assert_eq!(String::from(folder), "~/Shots");
+    }
+
+    #[test]
+    fn reads_notification_switches_and_defaults_the_rest() {
+        let config = parse("[notifications]\nsound = false", Path::new("config.toml")).unwrap();
+        assert_eq!(
+            config.notifications,
+            Notifications {
+                enabled: true,
+                sound: false
+            }
+        );
     }
 
     #[test]
