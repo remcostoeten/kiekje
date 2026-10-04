@@ -12,6 +12,7 @@ const COMMANDS: &[&str] = &[
     "quit",
     "menu",
     "settings",
+    "gallery",
     "doctor",
     "install-desktop-file",
     "help",
@@ -76,6 +77,12 @@ const SESSION: &[Entry] = &[
         name: "settings",
         argument: "",
         description: "Open the settings window",
+        note: "",
+    },
+    Entry {
+        name: "gallery",
+        argument: "",
+        description: "Open the gallery of saved captures",
         note: "",
     },
 ];

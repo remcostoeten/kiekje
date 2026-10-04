@@ -99,6 +99,7 @@ impl Tray for Item {
                     mode: CaptureMode::Repeat,
                 },
             ),
+            command_item("Open gallery", TrayCommand::OpenGallery),
             command_item("Open captures folder", TrayCommand::OpenCaptures),
             MenuItem::Separator,
             command_item("Quit", TrayCommand::Quit),

@@ -1,4 +1,5 @@
 pub mod fonts;
+pub mod gallery;
 pub mod settings;
 
 use std::cell::Cell;

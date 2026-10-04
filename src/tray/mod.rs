@@ -12,6 +12,7 @@ pub enum TrayCommand {
     Capture { mode: CaptureMode },
     OpenMenu { x: i32, y: i32 },
     OpenCaptures,
+    OpenGallery,
     Quit,
 }
 

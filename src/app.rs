@@ -26,7 +26,7 @@ use crate::shortcuts::{
 use crate::storage::{self, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
-use crate::ui::{fonts, settings};
+use crate::ui::{fonts, gallery, settings};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
@@ -41,6 +41,8 @@ struct Session {
     tray: RefCell<Option<Box<dyn TrayGuard>>>,
     popover: RefCell<Option<gtk::Window>>,
     settings: RefCell<Option<gtk::Window>>,
+    gallery: RefCell<Option<gtk::Window>>,
+    gallery_handle: RefCell<Option<gallery::Handle>>,
     settings_handle: RefCell<Option<settings::Handle>>,
     shortcut_host: RefCell<ShortcutHost>,
     shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
@@ -51,6 +53,7 @@ pub enum Command {
     Quit,
     Menu,
     Settings,
+    Gallery,
     Capture(Request),
 }
 
@@ -144,6 +147,8 @@ pub fn run(command: Command) -> glib::ExitCode {
         tray: RefCell::new(None),
         popover: RefCell::new(None),
         settings: RefCell::new(None),
+        gallery: RefCell::new(None),
+        gallery_handle: RefCell::new(None),
         settings_handle: RefCell::new(None),
         shortcut_host: RefCell::new(ShortcutHost::Starting),
         shortcut_labels: RefCell::new(Vec::new()),
@@ -159,6 +164,7 @@ pub fn run(command: Command) -> glib::ExitCode {
         Some(Command::Capture(request)) => start_capture(app, request, &session),
         Some(Command::Menu) => toggle_menu(app, &session, None),
         Some(Command::Settings) => open_settings(app, &session),
+        Some(Command::Gallery) => open_gallery(app, &session),
         Some(Command::Daemon | Command::Quit) | None => {
             glib::idle_add_local_once(overlay::warm_up);
         }
@@ -175,6 +181,7 @@ fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
         Command::Quit => app.activate_action("quit", None),
         Command::Menu => app.activate_action("menu", None),
         Command::Settings => app.activate_action("settings", None),
+        Command::Gallery => app.activate_action("gallery", None),
         Command::Capture(request) => app.activate_action("capture", Some(&request.to_variant())),
     }
     if let Some(connection) = app.dbus_connection()
@@ -406,6 +413,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
         }
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
+        TrayCommand::OpenGallery => open_gallery(app, session),
         TrayCommand::Quit => app.activate_action("quit", None),
     }
 }
@@ -442,6 +450,7 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
                 }
                 Pick::OpenCaptures => open_captures(),
                 Pick::Settings => open_settings(&app, &session),
+                Pick::Gallery => open_gallery(&app, &session),
                 Pick::Quit => app.activate_action("quit", None),
             }
         });
@@ -552,6 +561,34 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         }
     });
     app.add_action(&settings);
+
+    let gallery = gio::SimpleAction::new("gallery", None);
+    let gallery_app = app.downgrade();
+    let gallery_session = Rc::downgrade(session);
+    gallery.connect_activate(move |_, _| {
+        if let (Some(app), Some(session)) = (gallery_app.upgrade(), gallery_session.upgrade()) {
+            open_gallery(&app, &session);
+        }
+    });
+    app.add_action(&gallery);
+}
+
+fn open_gallery(app: &gtk::Application, session: &Rc<Session>) {
+    if let Some(open) = session.gallery.borrow().as_ref() {
+        open.present();
+        return;
+    }
+    let (window, handle) = gallery::show(app);
+    let closed_session = Rc::downgrade(session);
+    window.connect_close_request(move |_| {
+        if let Some(session) = closed_session.upgrade() {
+            session.gallery.take();
+            session.gallery_handle.take();
+        }
+        glib::Propagation::Proceed
+    });
+    session.gallery_handle.replace(Some(handle));
+    session.gallery.replace(Some(window));
 }
 
 fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
@@ -887,6 +924,11 @@ fn empty_notice() -> Notice {
 }
 
 fn finish_delivery(session: &Session, notice: Notice) {
+    if let (Notice::Saved { .. }, Some(gallery)) =
+        (&notice, session.gallery_handle.borrow().as_ref())
+    {
+        gallery.reload();
+    }
     notify(session, notice);
     session.busy.set(false);
 }
