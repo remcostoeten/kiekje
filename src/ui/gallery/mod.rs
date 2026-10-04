@@ -1,3 +1,4 @@
+mod actions;
 mod cards;
 mod toolbar;
 
@@ -19,11 +20,15 @@ const TEXTURE_LIMIT: usize = 240;
 
 struct Gallery {
     paths: gtk::StringList,
+    selection: gtk::SingleSelection,
+    menus: RefCell<Vec<gtk::PopoverMenu>>,
+    status: gtk::Label,
     all: RefCell<Vec<Capture>>,
     details: RefCell<HashMap<String, Capture>>,
     query: RefCell<Query>,
     textures: RefCell<Textures>,
     loading: Cell<bool>,
+    stale: Cell<bool>,
     loaded: Cell<bool>,
     stack: gtk::Stack,
     views: gtk::Stack,
@@ -95,8 +100,11 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     header.append(&count);
     content.append(&header);
 
-    let stack = gtk::Stack::builder().vexpand(true).build();
-    stack.add_named(&cards::loading_state(), Some("loading"));
+    let stack = gtk::Stack::builder()
+        .vexpand(true)
+        .vhomogeneous(false)
+        .build();
+    stack.add_named(&scrolled(&cards::loading_state()), Some("loading"));
     stack.add_named(
         &cards::empty_state("No captures yet. Saved captures show up here."),
         Some("empty"),
@@ -110,31 +118,46 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         Some("failed"),
     );
 
+    let paths = gtk::StringList::new(&[]);
+    let selection = gtk::SingleSelection::builder()
+        .model(&paths)
+        .autoselect(false)
+        .can_unselect(true)
+        .build();
+    let status = gtk::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .visible(false)
+        .css_classes(["note"])
+        .build();
     let gallery = Rc::new(Gallery {
-        paths: gtk::StringList::new(&[]),
+        paths,
+        selection,
+        menus: RefCell::new(Vec::new()),
+        status,
         all: RefCell::new(Vec::new()),
         details: RefCell::new(HashMap::new()),
         query: RefCell::new(Query::default()),
         textures: RefCell::new(Textures::default()),
         loading: Cell::new(false),
+        stale: Cell::new(false),
         loaded: Cell::new(false),
         stack,
         views: gtk::Stack::new(),
         count,
     });
-    let selection = gtk::SingleSelection::builder()
-        .model(&gallery.paths)
-        .autoselect(false)
-        .can_unselect(true)
-        .build();
-    gallery.views.add_named(
-        &scrolled(&cards::grid(&gallery, &selection)),
-        Some(View::Grid.name()),
-    );
-    gallery.views.add_named(
-        &scrolled(&cards::list(&gallery, &selection)),
-        Some(View::List.name()),
-    );
+    let grid = cards::grid(&gallery);
+    let list = cards::list(&gallery);
+    gallery
+        .menus
+        .replace(vec![actions::attach(&grid), actions::attach(&list)]);
+    gallery
+        .views
+        .add_named(&scrolled(&grid), Some(View::Grid.name()));
+    gallery
+        .views
+        .add_named(&scrolled(&list), Some(View::List.name()));
+    actions::install(&window, &gallery);
     gallery.stack.add_named(&gallery.views, Some("items"));
     gallery.stack.set_visible_child_name("loading");
 
@@ -146,6 +169,7 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     });
     content.append(&bar);
     content.append(&gallery.stack);
+    content.append(&gallery.status);
     window.set_child(Some(&content));
     search.set_key_capture_widget(Some(&window));
 
@@ -204,6 +228,7 @@ impl Handle {
 impl Gallery {
     fn reload(self: &Rc<Self>) {
         if self.loading.replace(true) {
+            self.stale.set(true);
             return;
         }
         let gallery = self.clone();
@@ -213,6 +238,10 @@ impl Gallery {
             })
             .await;
             gallery.loading.set(false);
+            if gallery.stale.replace(false) {
+                gallery.reload();
+                return;
+            }
             match loaded {
                 Ok(Ok(captures)) => {
                     gallery.loaded.set(true);
@@ -279,8 +308,19 @@ impl Gallery {
                 .collect(),
         );
         drop(all);
+        let selected = self
+            .selection
+            .selected_item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|object| object.string());
         let borrowed: Vec<&str> = texts.iter().map(String::as_str).collect();
         self.paths.splice(0, self.paths.n_items(), &borrowed);
+        let kept = selected
+            .and_then(|selected| texts.iter().position(|text| *text == selected.as_str()))
+            .and_then(|position| u32::try_from(position).ok());
+        if let Some(position) = kept {
+            self.selection.set_selected(position);
+        }
     }
 
     fn thumbnail(self: &Rc<Self>, item: &gtk::ListItem, picture: &gtk::Picture, path: String) {

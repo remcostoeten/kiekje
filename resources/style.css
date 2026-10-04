@@ -237,3 +237,20 @@ window.settings-window {
   border: 1px dashed var(--line);
   border-radius: var(--radius);
 }
+
+.gallery popover.menu contents {
+  background-color: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+.gallery popover.menu modelbutton {
+  font-family: var(--sans);
+  color: var(--fg);
+  border-radius: var(--radius);
+}
+
+.gallery popover.menu modelbutton:hover,
+.gallery popover.menu modelbutton:focus-visible {
+  background-color: var(--accent-wash);
+}

@@ -188,6 +188,20 @@ impl Library {
         Ok(paths)
     }
 
+    /// Removes the record for `path` and reports whether there was one. The file is not touched.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// library.remove(&capture.path)?;
+    /// ```
+    pub fn remove(&self, path: &Path) -> Result<bool, LibraryError> {
+        let removed = self
+            .connection
+            .execute("DELETE FROM captures WHERE path = ?1", params![text(path)?])?;
+        Ok(removed > 0)
+    }
+
     /// Marks every capture whose file is gone as missing, and clears the mark when it is back.
     ///
     /// Returns how many records changed state. Stats every file, so call it off the GTK main thread.
@@ -346,6 +360,20 @@ mod tests {
         let recent = library.recent(5).unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].width, 10);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn removes_a_record_without_touching_the_file() {
+        let folder = scratch("remove");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let path = folder.join("shot.png");
+        std::fs::write(&path, b"png").unwrap();
+        library.insert(&capture(&path, 1)).unwrap();
+        assert!(library.remove(&path).unwrap());
+        assert!(!library.remove(&path).unwrap());
+        assert!(library.recent(5).unwrap().is_empty());
+        assert!(path.is_file());
         std::fs::remove_dir_all(folder).unwrap();
     }
 }
