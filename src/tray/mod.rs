@@ -1,3 +1,4 @@
+mod icon;
 pub mod popover;
 mod sni;
 

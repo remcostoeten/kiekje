@@ -2,7 +2,7 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Category, ToolTip, Tray};
 
-use super::{TrayCommand, TrayError, TrayGuard, TrayHost};
+use super::{TrayCommand, TrayError, TrayGuard, TrayHost, icon};
 use crate::capture::CaptureMode;
 
 pub struct SniTray;
@@ -64,7 +64,11 @@ impl Tray for Item {
     }
 
     fn icon_name(&self) -> String {
-        "camera-photo-symbolic".into()
+        icon::NAME.into()
+    }
+
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        icon::pixmaps()
     }
 
     fn tool_tip(&self) -> ToolTip {
