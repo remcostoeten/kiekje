@@ -412,3 +412,9 @@ Tested on headless sway 1.9 with a virtual pointer and wtype: an unclosed `{` sh
 Settings end with a Danger zone: Reset settings, Clear gallery and Clear thumbnails, each with a line saying what it does. The first click arms the button ("Click again", accent tint) for 4 s; only a second click inside that time runs it, so nothing happens by accident and no dialog is needed. Reset writes the default config, rewrites the Hyprland bind file where Kiekje owns the keys, and puts the window's fields and checkboxes back without writing the config again. Clear gallery forgets every library record and keeps the files; an open gallery reloads. Clear thumbnails empties `$XDG_CACHE_HOME/kiekje/thumbs`. The result shows under the buttons.
 
 Tested on headless sway 1.9 with a virtual pointer: with notifications off, two clicks on Reset settings wrote `enabled = true` and re-ticked the box; two clicks on Clear gallery took the library from 86 records to 0 with the 43 files still on disk; a single click on Clear thumbnails armed it and it disarmed after 4 s without deleting anything. Unverified: Plasma, Hyprland (the bind file rewrite) and GNOME.
+
+## About
+
+Settings have an About section between Shortcuts and the Danger zone: the name and version, one line on what Kiekje does, and where the config, library and thumbnail cache live, each with a Show button that reveals it in the file manager. Copy doctor report runs `kiekje doctor` as a subprocess with `NO_COLOR=1`, without blocking the window, and puts its plain text on the clipboard for a bug report. There is no update check: nothing is released yet, so there is no release feed to compare against. Showing a check that can't answer would be a placeholder.
+
+Tested on headless sway 1.9: clicking Copy doctor report showed "Copied the doctor report (32 lines)." Unverified: the Show buttons on a desktop with a file manager (the lab session has none), and Plasma, Hyprland and GNOME.

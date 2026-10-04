@@ -1,3 +1,4 @@
+mod about;
 mod danger;
 mod general;
 
@@ -182,6 +183,7 @@ pub fn show(
         }
         danger::Danger::ClearGallery | danger::Danger::ClearThumbnails => on_cleared(),
     });
+    about::append(&content);
     danger::append(&content, editor.host == ShortcutHost::Hyprland, on_done);
 
     let handle = Handle(Rc::downgrade(&editor));
