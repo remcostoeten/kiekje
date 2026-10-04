@@ -292,6 +292,21 @@ Checked on 2026-10-04 in a cloud container with sway 1.9 headless (pixman, one 1
 
 Unverified: storing the region from a real drag, the tray item, and any desktop other than headless sway.
 
+## Notifications and sound
+
+After every capture the daemon sends one notification through `org.freedesktop.Notifications` on the app's own D-Bus connection, from the main loop and without waiting on the reply. The notice depends on the outcome:
+
+- saved: the image as `image-path`, with Open and Show in folder actions. Show in folder calls `org.freedesktop.FileManager1.ShowItems` and opens the folder when no file manager service is running.
+- copied only, with `--no-save`.
+- save failed, at critical urgency, saying whether the image is still on the clipboard.
+- capture failed, at critical urgency, with the reason.
+
+Successful notices ask the daemon for the `screen-capture` sound theme event through `sound-name`. Failures and `sound = false` send `suppress-sound`. A canceled selection sends nothing. `[notifications] enabled` and `sound` in the config switch both, read once per capture.
+
+Checked on 2026-10-04 with mako 1.8 on headless sway 1.9 in a cloud container. Saved, copied, save failed (folder `/proc/kiekje`) and capture failed (`repeat` with no region) each showed one notification with the expected text, urgency and actions. Both actions reached the daemon: with no FileManager1 service and no default apps, they logged the folder fallback and the open error. With `enabled = false`, nothing was sent.
+
+Unverified: sound playback (mako plays no sounds), and notifications on Plasma, GNOME and the Omarchy mako setup.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).

@@ -7,6 +7,7 @@ mod desktop_file;
 mod doctor;
 mod help;
 mod mascot;
+mod notify;
 mod output;
 mod overlay;
 mod shortcuts;

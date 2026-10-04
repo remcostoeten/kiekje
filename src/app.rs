@@ -14,7 +14,8 @@ use crate::capture::{
     BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
 };
 use crate::clipboard::Clipboard;
-use crate::config;
+use crate::config::{self, Notifications};
+use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Selection};
 use crate::shortcuts::{
@@ -30,6 +31,8 @@ struct Session {
     busy: Cell<bool>,
     last_region: Cell<Option<LogicalRect>>,
     clipboard: Option<Clipboard>,
+    notifier: Option<FdoNotifier>,
+    notifications: Cell<Notifications>,
     shortcuts: RefCell<Option<PortalGuard>>,
     tray: RefCell<Option<Box<dyn TrayGuard>>>,
 }
@@ -120,6 +123,8 @@ pub fn run(command: Command) -> glib::ExitCode {
         busy: Cell::new(false),
         last_region: Cell::new(None),
         clipboard,
+        notifier: app.dbus_connection().map(FdoNotifier::start),
+        notifications: Cell::new(Notifications::default()),
         shortcuts: RefCell::new(None),
         tray: RefCell::new(None),
     });
@@ -382,6 +387,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
 
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
+        let notifications = config::load().notifications;
         let result = match request.mode {
             CaptureMode::Repeat => match known_region.or_else(last_region::load) {
                 Some(region) => backends::capture(request.backend, &infos, false)
@@ -393,16 +399,17 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             }
         };
         // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking((result, glib::monotonic_time()));
+        let _ = sender.send_blocking((result, notifications, glib::monotonic_time()));
     });
 
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let Ok((result, captured_us)) = receiver.recv().await else {
+        let Ok((result, notifications, captured_us)) = receiver.recv().await else {
             session.busy.set(false);
             return;
         };
+        session.notifications.set(notifications);
         log_timing("trigger -> instance", request.trigger_us, received_us);
         log_timing("instance -> frames", received_us, captured_us);
         match result {
@@ -415,6 +422,12 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             }
             Err(error) => {
                 eprintln!("kiekje: capture failed: {error}");
+                notify(
+                    &session,
+                    Notice::CaptureFailed {
+                        reason: error.to_string(),
+                    },
+                );
                 session.busy.set(false);
             }
         }
@@ -457,6 +470,12 @@ fn handle_capture(
         }
         (CaptureMode::Repeat, None) => {
             eprintln!("kiekje: capture failed: {}", CaptureError::NoLastRegion);
+            notify(
+                &session,
+                Notice::CaptureFailed {
+                    reason: CaptureError::NoLastRegion.to_string(),
+                },
+            );
             session.busy.set(false);
         }
         (CaptureMode::Region, _) => {
@@ -502,10 +521,12 @@ fn repeat_region(request: Request, frames: Vec<Frame>, region: LogicalRect, sess
         .map(|frame| (frame.monitor.logical, (frame.width, frame.height)))
         .collect();
     let Some(plan) = mapping::plan_selection(region, &geometry) else {
-        eprintln!(
-            "kiekje: capture failed: the last region {}x{}{:+}{:+} is not on any monitor now",
+        let reason = format!(
+            "the last region {}x{}{:+}{:+} is not on any monitor now",
             region.width, region.height, region.x, region.y,
         );
+        eprintln!("kiekje: capture failed: {reason}");
+        notify(&session, Notice::CaptureFailed { reason });
         session.busy.set(false);
         return;
     };
@@ -535,17 +556,27 @@ type Render = Box<dyn FnOnce() -> Option<Image> + Send>;
 
 fn deliver(render: Render, request: Request, session: Rc<Session>) {
     let clipboard = session.clipboard.clone();
+    let mut copied = false;
     let render: Render = match clipboard {
         Some(_) => render,
         None => {
             let Some(image) = render() else {
-                eprintln!("kiekje: nothing to deliver");
-                session.busy.set(false);
+                finish_delivery(&session, empty_notice());
                 return;
             };
-            copy_with_gtk(&image);
+            copied = copy_with_gtk(&image);
             if !request.save {
-                session.busy.set(false);
+                let notice = if copied {
+                    Notice::Copied {
+                        width: image.width,
+                        height: image.height,
+                    }
+                } else {
+                    Notice::CaptureFailed {
+                        reason: "no display to put the image on the clipboard".into(),
+                    }
+                };
+                finish_delivery(&session, notice);
                 return;
             }
             Box::new(move || Some(image))
@@ -554,30 +585,59 @@ fn deliver(render: Render, request: Request, session: Rc<Session>) {
 
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
-        match render() {
-            Some(image) => store(image, request, clipboard.as_ref()),
-            None => eprintln!("kiekje: nothing to deliver"),
-        }
+        let notice = match render() {
+            Some(image) => store(image, request, clipboard.as_ref(), copied),
+            None => empty_notice(),
+        };
         // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking(());
+        let _ = sender.send_blocking(notice);
     });
     glib::spawn_future_local(async move {
-        if receiver.recv().await.is_err() {
-            eprintln!("kiekje: delivery worker stopped");
+        match receiver.recv().await {
+            Ok(notice) => finish_delivery(&session, notice),
+            Err(_) => {
+                eprintln!("kiekje: delivery worker stopped");
+                session.busy.set(false);
+            }
         }
-        session.busy.set(false);
     });
 }
 
-fn store(image: Image, request: Request, clipboard: Option<&Clipboard>) {
+fn empty_notice() -> Notice {
+    eprintln!("kiekje: nothing to deliver");
+    Notice::CaptureFailed {
+        reason: "the capture had no image to deliver".into(),
+    }
+}
+
+fn finish_delivery(session: &Session, notice: Notice) {
+    notify(session, notice);
+    session.busy.set(false);
+}
+
+fn notify(session: &Session, notice: Notice) {
+    let settings = session.notifications.get();
+    if !settings.enabled {
+        return;
+    }
+    match &session.notifier {
+        Some(notifier) => notifier.send(&notice, settings.sound),
+        None => println!("kiekje: no session bus, notification skipped"),
+    }
+}
+
+fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: bool) -> Notice {
     let (width, height) = (image.width, image.height);
     let png = match output::encode_png(image) {
         Ok(png) => Arc::new(png),
         Err(error) => {
             eprintln!("kiekje: png encode failed: {error}");
-            return;
+            return Notice::CaptureFailed {
+                reason: format!("could not encode the image: {error}"),
+            };
         }
     };
+    let mut copied = copied;
     if let Some(clipboard) = clipboard {
         match clipboard.set_png(png.clone()) {
             Ok(()) => {
@@ -587,26 +647,49 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>) {
                     glib::monotonic_time(),
                 );
                 println!("kiekje: copied {width}x{height} to the clipboard");
+                copied = true;
             }
             Err(error) => eprintln!("kiekje: clipboard not set: {error}"),
         }
     }
-    if request.save {
-        let storage = config::load().storage;
-        let base = storage.filename.render(&Naming {
-            mode: request.mode,
-            stamp: storage::now(),
-            width,
-            height,
-        });
-        match storage::save_png(&png, &storage.captures_dir(), &base) {
-            Ok(path) => println!("kiekje: saved {}", path.display()),
-            Err(error) => eprintln!("kiekje: save failed: {error}"),
+    if !request.save {
+        return if copied {
+            Notice::Copied { width, height }
+        } else {
+            Notice::CaptureFailed {
+                reason: "could not put the image on the clipboard".into(),
+            }
+        };
+    }
+    let storage = config::load().storage;
+    let directory = storage.captures_dir();
+    let base = storage.filename.render(&Naming {
+        mode: request.mode,
+        stamp: storage::now(),
+        width,
+        height,
+    });
+    match storage::save_png(&png, &directory, &base) {
+        Ok(path) => {
+            println!("kiekje: saved {}", path.display());
+            Notice::Saved {
+                path,
+                width,
+                height,
+                copied,
+            }
+        }
+        Err(error) => {
+            eprintln!("kiekje: save failed: {error}");
+            Notice::SaveFailed {
+                reason: format!("could not write to {}: {error}", directory.display()),
+                copied,
+            }
         }
     }
 }
 
-fn copy_with_gtk(image: &Image) {
+fn copy_with_gtk(image: &Image) -> bool {
     match gdk::Display::default() {
         Some(display) => {
             display.clipboard().set_texture(&image.texture());
@@ -614,8 +697,12 @@ fn copy_with_gtk(image: &Image) {
                 "kiekje: copied {}x{} to the GTK clipboard",
                 image.width, image.height
             );
+            true
         }
-        None => eprintln!("kiekje: no display, clipboard not set"),
+        None => {
+            eprintln!("kiekje: no display, clipboard not set");
+            false
+        }
     }
 }
 
