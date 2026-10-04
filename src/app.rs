@@ -82,6 +82,13 @@ impl Request {
         }
     }
 
+    fn annotated() -> Self {
+        Self {
+            edit: true,
+            ..Self::saved(CaptureMode::Region)
+        }
+    }
+
     fn to_variant(self) -> glib::Variant {
         (
             self.mode.as_str().to_owned(),
@@ -418,14 +425,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
         }
         TrayCommand::Annotate => {
             println!("kiekje: tray annotate-region");
-            capture_after_menu(
-                app,
-                session,
-                Request {
-                    edit: true,
-                    ..Request::saved(CaptureMode::Region)
-                },
-            );
+            capture_after_menu(app, session, Request::annotated());
         }
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
@@ -467,6 +467,10 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
                 Pick::Capture(mode) => {
                     println!("kiekje: menu capture-{}", mode.as_str());
                     capture_after_menu(&app, &session, Request::saved(mode));
+                }
+                Pick::Annotate => {
+                    println!("kiekje: menu annotate-region");
+                    capture_after_menu(&app, &session, Request::annotated());
                 }
                 Pick::OpenCaptures => open_captures(),
                 Pick::Settings => open_settings(&app, &session),
