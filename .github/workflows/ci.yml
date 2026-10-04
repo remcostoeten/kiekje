@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LAYER_SHELL_VERSION: v1.1.1
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libdbus-1-dev libwayland-dev wayland-protocols \
+            meson ninja-build pkg-config
+
+      - name: Cache gtk4-layer-shell
+        id: layer-shell
+        uses: actions/cache@v4
+        with:
+          path: ~/layer-shell
+          key: layer-shell-${{ env.LAYER_SHELL_VERSION }}-ubuntu-24.04
+
+      # Ubuntu 24.04 does not package gtk4-layer-shell.
+      - name: Build gtk4-layer-shell
+        if: steps.layer-shell.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$LAYER_SHELL_VERSION" https://github.com/wmww/gtk4-layer-shell.git /tmp/gls
+          meson setup /tmp/gls/build /tmp/gls --prefix="$HOME/layer-shell" --libdir=lib \
+            -Dexamples=false -Ddocs=false -Dtests=false -Dintrospection=false -Dvapi=false
+          ninja -C /tmp/gls/build install
+
+      - name: Point the build at gtk4-layer-shell
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/layer-shell/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/layer-shell/lib" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test
