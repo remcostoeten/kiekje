@@ -15,7 +15,9 @@ pub(super) struct Typing {
 
 pub(super) fn attach(editor: &Rc<Editor>) {
     editor.writer.set_parent(&editor.canvas);
-    editor.writer.set_child(Some(&editor.entry));
+    if !editor.is_inline() {
+        editor.writer.set_child(Some(&editor.entry));
+    }
     editor.writer.set_has_arrow(false);
     editor.writer.set_position(gtk::PositionType::Bottom);
     editor.writer.set_halign(gtk::Align::Start);
@@ -50,7 +52,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         }
         glib::Propagation::Stop
     });
-    editor.writer.add_controller(keys);
+    editor.entry.add_controller(keys);
     let owned = editor.writer.downgrade();
     editor.canvas.connect_destroy(move |_| {
         if let Some(writer) = owned.upgrade() {
@@ -91,9 +93,21 @@ impl Editor {
             x: at.x,
             y: at.y + shapes::font_size(self.stroke().width),
         });
-        self.writer
-            .set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32 + 4, 1, 1)));
-        self.writer.popup();
+        match self.layer.borrow().as_ref() {
+            Some((layer, origin)) => {
+                layer.move_(&self.entry, origin.x + x, origin.y + y + 4.0);
+                self.entry.set_visible(true);
+            }
+            None => {
+                self.writer.set_pointing_to(Some(&gdk::Rectangle::new(
+                    x as i32,
+                    y as i32 + 4,
+                    1,
+                    1,
+                )));
+                self.writer.popup();
+            }
+        }
         self.entry.grab_focus();
         self.entry.set_position(-1);
         self.canvas.queue_draw();
@@ -148,7 +162,11 @@ impl Editor {
             self.document.borrow_mut().apply(edit);
             self.edited();
         }
-        self.writer.popdown();
+        if self.is_inline() {
+            self.entry.set_visible(false);
+        } else {
+            self.writer.popdown();
+        }
         self.canvas.grab_focus();
         self.canvas.queue_draw();
     }

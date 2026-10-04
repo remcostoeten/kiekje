@@ -20,9 +20,25 @@ pub struct Config {
     #[serde(default)]
     pub storage: Storage,
     #[serde(default)]
+    pub capture: Capture,
+    #[serde(default)]
     pub notifications: Notifications,
     #[serde(default)]
     pub shortcuts: Shortcuts,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Capture {
+    pub after_selection: AfterSelection,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AfterSelection {
+    #[default]
+    Finish,
+    Edit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -75,6 +91,7 @@ impl Default for Config {
         Self {
             version: VERSION,
             storage: Storage::default(),
+            capture: Capture::default(),
             notifications: Notifications::default(),
             shortcuts: Shortcuts::default(),
         }
@@ -395,6 +412,31 @@ mod tests {
                 enabled: true,
                 sound: false
             }
+        );
+    }
+
+    #[test]
+    fn reads_inline_editing_after_selection() {
+        let config = parse(
+            "[capture]\nafter_selection = \"edit\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(config.capture.after_selection, AfterSelection::Edit);
+        assert_eq!(
+            Config::default().capture.after_selection,
+            AfterSelection::Finish
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_after_selection() {
+        assert!(
+            parse(
+                "[capture]\nafter_selection = \"maybe\"",
+                Path::new("config.toml")
+            )
+            .is_err()
         );
     }
 

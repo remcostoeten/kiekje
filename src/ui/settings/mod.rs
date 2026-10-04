@@ -10,7 +10,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
-use crate::config::{self, Config, ConfigError, Notifications, Storage};
+use crate::config::{self, Capture, Config, ConfigError, Notifications, Storage};
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, record,
 };
@@ -23,6 +23,7 @@ pub struct Model {
     pub bound: Vec<(ShortcutAction, String)>,
     pub storage: Storage,
     pub notifications: Notifications,
+    pub capture: Capture,
 }
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
@@ -68,7 +69,7 @@ pub fn show(
         .spacing(12)
         .css_classes(["panel", "settings"])
         .build();
-    let general = general::append(&content, &model.storage, model.notifications);
+    let general = general::append(&content, &model.storage, model.notifications, model.capture);
     content.append(&caps("Shortcuts"));
     content.append(&note(&host_note(&model.host)));
 

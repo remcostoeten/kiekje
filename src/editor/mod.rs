@@ -1,6 +1,7 @@
 mod canvas;
 mod crop;
 mod document;
+mod inline;
 mod pixels;
 mod render;
 mod select;
@@ -27,6 +28,8 @@ use canvas::View;
 use document::{Area, Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
 use pixels::{LoadError, Picture};
 use render::Layers;
+
+pub use inline::{Ending, Finish, Inline};
 
 /// What an editor window works on: a saved capture, or a fresh one that is not on disk yet.
 pub enum Source {
@@ -58,7 +61,15 @@ struct Prepared {
     hidden: Picture,
 }
 
+type EndCallback = Box<dyn FnOnce(Ending)>;
+
+enum Host {
+    Window(glib::WeakRef<gtk::Window>),
+    Inline(RefCell<Option<EndCallback>>),
+}
+
 struct Editor {
+    host: Host,
     mode: CaptureMode,
     original: RefCell<Option<PathBuf>>,
     picture: Arc<Picture>,
@@ -79,6 +90,7 @@ struct Editor {
     moving: RefCell<Option<select::Moving>>,
     writer: gtk::Popover,
     entry: gtk::Entry,
+    layer: RefCell<Option<(gtk::Fixed, Point)>>,
     typing: RefCell<Option<text::Typing>>,
     busy: Cell<bool>,
     discard: Cell<bool>,
@@ -182,6 +194,38 @@ impl Editor {
         picture: Picture,
         layers: Layers,
     ) {
+        let editor = Self::new(
+            Host::Window(window.downgrade()),
+            mode,
+            original,
+            picture,
+            layers,
+        );
+        let content = panel(&toolbar::build(&editor));
+        content.append(&editor.canvas);
+        content.append(&editor.status);
+        window.set_child(Some(&content));
+        editor.sync();
+        editor.canvas.grab_focus();
+
+        let keys = gtk::EventControllerKey::new();
+        let pressed = Rc::downgrade(&editor);
+        keys.connect_key_pressed(move |_, key, _, state| match pressed.upgrade() {
+            Some(editor) => editor.key(key, state),
+            None => glib::Propagation::Proceed,
+        });
+        window.add_controller(keys);
+        let owner = editor.clone();
+        window.connect_close_request(move |_| owner.close_request());
+    }
+
+    fn new(
+        host: Host,
+        mode: CaptureMode,
+        original: Option<PathBuf>,
+        picture: Picture,
+        layers: Layers,
+    ) -> Rc<Self> {
         let document = if original.is_some() {
             Document::default()
         } else {
@@ -201,6 +245,7 @@ impl Editor {
             .css_classes(["note"])
             .build();
         let editor = Rc::new(Self {
+            host,
             mode,
             original: RefCell::new(original),
             picture: Arc::new(picture),
@@ -224,31 +269,14 @@ impl Editor {
                 .placeholder_text("Type, then press Enter")
                 .width_chars(24)
                 .build(),
+            layer: RefCell::new(None),
             typing: RefCell::new(None),
             busy: Cell::new(false),
             discard: Cell::new(false),
         });
         canvas::attach(&editor);
         text::attach(&editor);
-        let content = panel(&toolbar::build(&editor));
-        content.append(&editor.canvas);
-        content.append(&editor.status);
-        window.set_child(Some(&content));
-        editor.sync();
-        editor.canvas.grab_focus();
-
-        let keys = gtk::EventControllerKey::new();
-        let pressed = Rc::downgrade(&editor);
-        let closing = window.downgrade();
-        keys.connect_key_pressed(move |_, key, _, state| {
-            match (pressed.upgrade(), closing.upgrade()) {
-                (Some(editor), Some(window)) => editor.key(&window, key, state),
-                _ => glib::Propagation::Proceed,
-            }
-        });
-        window.add_controller(keys);
-        let owner = editor.clone();
-        window.connect_close_request(move |_| owner.close_request());
+        editor
     }
 
     fn size(&self) -> (f64, f64) {
@@ -336,12 +364,7 @@ impl Editor {
         }
     }
 
-    fn key(
-        self: &Rc<Self>,
-        window: &gtk::Window,
-        key: gdk::Key,
-        state: gdk::ModifierType,
-    ) -> glib::Propagation {
+    fn key(self: &Rc<Self>, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
         let control = state.contains(gdk::ModifierType::CONTROL_MASK);
         let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
         let alt = state.contains(gdk::ModifierType::ALT_MASK);
@@ -363,10 +386,12 @@ impl Editor {
             (true, "z") => self.undo(),
             (true, "y") => self.redo(),
             (true, "c") => self.copy(),
+            (true, "s") if shift && self.is_inline() => self.conclude(Finish::SaveAs),
             (true, "s") => self.save(),
+            (false, "Return" | "KP_Enter") if self.is_inline() => self.conclude(Finish::Accept),
             (false, "Escape") => {
                 if !(self.cancel_grab() || self.cancel_draft() || self.deselect()) {
-                    window.close();
+                    self.dismiss();
                 }
             }
             (false, _) if !alt && !shift => {
@@ -392,7 +417,31 @@ impl Editor {
         glib::Propagation::Stop
     }
 
+    fn is_inline(&self) -> bool {
+        matches!(self.host, Host::Inline(_))
+    }
+
+    fn dismiss(&self) {
+        match &self.host {
+            Host::Window(window) => {
+                if let Some(window) = window.upgrade() {
+                    window.close();
+                }
+            }
+            Host::Inline(ending) => {
+                self.finish_text(false);
+                if let Some(end) = ending.take() {
+                    end(Ending::Canceled);
+                }
+            }
+        }
+    }
+
     fn copy(self: &Rc<Self>) {
+        if self.is_inline() {
+            self.conclude(Finish::Copy);
+            return;
+        }
         let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };
@@ -419,6 +468,10 @@ impl Editor {
     }
 
     fn save(self: &Rc<Self>) {
+        if self.is_inline() {
+            self.conclude(Finish::Save);
+            return;
+        }
         let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };
@@ -461,6 +514,9 @@ impl Editor {
     }
 
     fn say(&self, message: &str, problem: bool) {
+        if self.is_inline() {
+            self.status.set_visible(problem);
+        }
         self.status.set_label(message);
         self.status.set_tooltip_text(Some(message));
         if problem {
