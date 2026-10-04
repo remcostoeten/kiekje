@@ -5,6 +5,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use super::Gallery;
+use crate::editor;
 use crate::library::{self, Library};
 use crate::ui::files;
 
@@ -13,6 +14,7 @@ const GROUP: &str = "gallery";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FileAction {
     Open,
+    Edit,
     Reveal,
     CopyImage,
     CopyPath,
@@ -23,8 +25,9 @@ pub(super) enum FileAction {
 }
 
 impl FileAction {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Open,
+        Self::Edit,
         Self::Reveal,
         Self::Locate,
         Self::CopyImage,
@@ -37,6 +40,7 @@ impl FileAction {
     fn name(self) -> &'static str {
         match self {
             Self::Open => "open",
+            Self::Edit => "edit",
             Self::Reveal => "reveal",
             Self::CopyImage => "copy-image",
             Self::CopyPath => "copy-path",
@@ -50,6 +54,7 @@ impl FileAction {
     fn label(self) -> &'static str {
         match self {
             Self::Open => "Open",
+            Self::Edit => "Edit",
             Self::Reveal => "Show in folder",
             Self::CopyImage => "Copy image",
             Self::CopyPath => "Copy path",
@@ -63,6 +68,7 @@ impl FileAction {
     fn keys(self) -> Option<&'static str> {
         match self {
             Self::Open => None,
+            Self::Edit => Some("<Ctrl>e"),
             Self::Reveal => Some("<Ctrl>Return"),
             Self::CopyImage => Some("<Ctrl>c"),
             Self::CopyPath => Some("<Ctrl><Alt>c"),
@@ -103,7 +109,7 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
     let remove = gio::Menu::new();
     for action in FileAction::ALL {
         let section = match action {
-            FileAction::Open | FileAction::Reveal | FileAction::Locate => &open,
+            FileAction::Open | FileAction::Edit | FileAction::Reveal | FileAction::Locate => &open,
             FileAction::CopyImage | FileAction::CopyPath => &copy,
             FileAction::Trash | FileAction::Forget | FileAction::ForgetMissing => &remove,
         };
@@ -282,9 +288,31 @@ impl Gallery {
                     gallery.forget(path, message).await;
                 });
             }
+            FileAction::Edit => self.edit(path),
             FileAction::Locate => self.locate(path),
             FileAction::ForgetMissing => {}
         }
+    }
+
+    fn edit(&self, path: PathBuf) {
+        let Some(mode) = self
+            .details
+            .borrow()
+            .get(path.to_string_lossy().as_ref())
+            .map(|capture| capture.mode)
+        else {
+            return;
+        };
+        let Some(app) = self
+            .status
+            .root()
+            .and_downcast::<gtk::Window>()
+            .and_then(|window| window.application())
+        else {
+            self.say("The editor needs the running app", true);
+            return;
+        };
+        editor::open(&app, editor::Source { path, mode });
     }
 
     fn locate(self: &Rc<Self>, path: PathBuf) {

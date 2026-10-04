@@ -1,0 +1,161 @@
+use std::rc::Rc;
+
+use gtk::prelude::*;
+use gtk::{cairo, gdk};
+
+use super::Editor;
+use super::document::{Point, Tool};
+use super::render;
+
+const MIN_PEN_STEP: f64 = 1.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct View {
+    zoom: f64,
+    left: f64,
+    top: f64,
+}
+
+impl View {
+    pub(super) const IDENTITY: Self = Self {
+        zoom: 1.0,
+        left: 0.0,
+        top: 0.0,
+    };
+
+    fn fit(area: (f64, f64), image: (f64, f64), max_zoom: f64) -> Self {
+        let zoom = (area.0 / image.0).min(area.1 / image.1).min(max_zoom);
+        let zoom = if zoom.is_finite() && zoom > 0.0 {
+            zoom
+        } else {
+            1.0
+        };
+        Self {
+            zoom,
+            left: ((area.0 - image.0 * zoom) / 2.0).max(0.0),
+            top: ((area.1 - image.1 * zoom) / 2.0).max(0.0),
+        }
+    }
+
+    fn to_image(self, x: f64, y: f64, image: (f64, f64)) -> Point {
+        Point {
+            x: ((x - self.left) / self.zoom).clamp(0.0, image.0),
+            y: ((y - self.top) / self.zoom).clamp(0.0, image.1),
+        }
+    }
+}
+
+pub(super) fn attach(editor: &Rc<Editor>) {
+    let painter = Rc::downgrade(editor);
+    editor.canvas.set_draw_func(move |area, cr, width, height| {
+        let Some(editor) = painter.upgrade() else {
+            return;
+        };
+        let view = View::fit(
+            (f64::from(width), f64::from(height)),
+            editor.size(),
+            1.0 / f64::from(area.scale_factor().max(1)),
+        );
+        editor.view.set(view);
+        if let Err(error) = paint(&editor, cr, view) {
+            eprintln!("kiekje: the editor canvas was not drawn: {error}");
+        }
+    });
+
+    let drag = gtk::GestureDrag::builder()
+        .button(gdk::BUTTON_PRIMARY)
+        .build();
+    let started = Rc::downgrade(editor);
+    drag.connect_drag_begin(move |_, x, y| {
+        if let Some(editor) = started.upgrade() {
+            editor.canvas.grab_focus();
+            let point = editor.view.get().to_image(x, y, editor.size());
+            editor.draft.replace(vec![point]);
+            editor.canvas.queue_draw();
+        }
+    });
+    let moved = Rc::downgrade(editor);
+    drag.connect_drag_update(move |gesture, dx, dy| {
+        if let Some(editor) = moved.upgrade() {
+            extend(&editor, gesture, dx, dy);
+        }
+    });
+    let ended = Rc::downgrade(editor);
+    drag.connect_drag_end(move |gesture, dx, dy| {
+        if let Some(editor) = ended.upgrade() {
+            extend(&editor, gesture, dx, dy);
+            editor.commit();
+        }
+    });
+    editor.canvas.add_controller(drag);
+    editor.canvas.set_cursor_from_name(Some("crosshair"));
+}
+
+fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
+    let Some((x, y)) = gesture.start_point() else {
+        return;
+    };
+    let point = editor.view.get().to_image(x + dx, y + dy, editor.size());
+    let mut draft = editor.draft.borrow_mut();
+    let Some(&start) = draft.first() else {
+        return;
+    };
+    match editor.tool.get() {
+        Tool::Pen => {
+            if draft
+                .last()
+                .is_none_or(|last| last.distance(point) >= MIN_PEN_STEP)
+            {
+                draft.push(point);
+            }
+        }
+        _ => *draft = vec![start, point],
+    }
+    drop(draft);
+    editor.canvas.queue_draw();
+}
+
+fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
+    let (width, height) = editor.size();
+    cr.translate(view.left, view.top);
+    cr.scale(view.zoom, view.zoom);
+    cr.rectangle(0.0, 0.0, width, height);
+    cr.clip();
+    let document = editor.document.borrow();
+    let draft = editor.draft_shape();
+    render::draw(cr, &editor.layers, document.shapes().iter().chain(&draft))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shrinks_a_large_image_and_centers_it() {
+        let view = View::fit((1000.0, 600.0), (3840.0, 2160.0), 1.0);
+        assert!((view.zoom - 1000.0 / 3840.0).abs() < 1e-9);
+        assert_eq!(view.left, 0.0);
+        assert!((view.top - (600.0 - 2160.0 * view.zoom) / 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn never_enlarges_past_one_device_pixel() {
+        let view = View::fit((1000.0, 1000.0), (100.0, 50.0), 0.5);
+        assert_eq!(view.zoom, 0.5);
+        assert_eq!((view.left, view.top), (475.0, 487.5));
+    }
+
+    #[test]
+    fn maps_widget_points_to_clamped_image_pixels() {
+        let view = View::fit((200.0, 100.0), (400.0, 100.0), 1.0);
+        let image = (400.0, 100.0);
+        assert_eq!(
+            view.to_image(100.0, 50.0, image),
+            Point { x: 200.0, y: 50.0 }
+        );
+        assert_eq!(
+            view.to_image(-5.0, 999.0, image),
+            Point { x: 0.0, y: 100.0 }
+        );
+    }
+}

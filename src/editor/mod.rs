@@ -1,0 +1,459 @@
+mod canvas;
+mod document;
+mod pixels;
+mod render;
+mod toolbar;
+
+use std::cell::{Cell, RefCell};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::Arc;
+
+use gtk::prelude::*;
+use gtk::{cairo, gdk, gio, glib};
+
+use crate::capture::CaptureMode;
+use crate::library::{self, Library, NewCapture};
+use crate::output;
+use crate::{storage, ui};
+use canvas::View;
+use document::{Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
+use pixels::{LoadError, Picture};
+use render::Layers;
+
+/// The saved capture an editor window works on.
+pub struct Source {
+    pub path: PathBuf,
+    pub mode: CaptureMode,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum SaveError {
+    #[error("could not draw the annotations: {0}")]
+    Draw(#[from] cairo::Error),
+    #[error("could not encode the image: {0}")]
+    Encode(io::Error),
+    #[error("could not write to {folder}: {source}")]
+    Write { folder: PathBuf, source: io::Error },
+}
+
+struct Prepared {
+    picture: Picture,
+    base: Picture,
+    hidden: Picture,
+}
+
+struct Editor {
+    source: Source,
+    picture: Arc<Picture>,
+    layers: Layers,
+    document: RefCell<Document>,
+    tool: Cell<Tool>,
+    color: Cell<Color>,
+    weight: Cell<Weight>,
+    draft: RefCell<Vec<Point>>,
+    view: Cell<View>,
+    canvas: gtk::DrawingArea,
+    status: gtk::Label,
+    undo: gtk::Button,
+    redo: gtk::Button,
+    clear: gtk::Button,
+    tools: RefCell<Vec<(Tool, gtk::ToggleButton)>>,
+    busy: Cell<bool>,
+    discard: Cell<bool>,
+}
+
+/// Opens an editor window for a saved capture.
+///
+/// The file loads off the main thread. Annotations never touch the original: saving writes a new
+/// file next to it and adds that file to the library.
+///
+/// # Examples
+///
+/// ```ignore
+/// editor::open(&app, Source { path, mode: CaptureMode::Region });
+/// ```
+pub fn open(app: &gtk::Application, source: Source) {
+    ui::load_stylesheet();
+    let window = gtk::Window::builder()
+        .application(app)
+        .title(format!("Edit {}", file_name(&source.path)))
+        .default_width(1100)
+        .default_height(760)
+        .css_classes(["settings-window"])
+        .build();
+    let loading = gtk::Label::builder()
+        .label("Loading the capture")
+        .vexpand(true)
+        .css_classes(["note"])
+        .build();
+    window.set_child(Some(&panel(&loading)));
+    window.present();
+
+    let path = source.path.clone();
+    glib::spawn_future_local(async move {
+        let prepared = gio::spawn_blocking(move || prepare(&path)).await;
+        let failure = match prepared {
+            Ok(Ok(prepared)) => match Layers::new(prepared.base, prepared.hidden) {
+                Ok(layers) => {
+                    Editor::build(&window, source, prepared.picture, layers);
+                    return;
+                }
+                Err(error) => format!("The capture could not be shown: {error}"),
+            },
+            Ok(Err(error)) => format!("The capture could not be opened: {error}"),
+            Err(_) => "The loading worker stopped".to_owned(),
+        };
+        eprintln!("kiekje: {failure}");
+        loading.set_label(&failure);
+        loading.add_css_class("problem");
+    });
+}
+
+fn prepare(path: &Path) -> Result<Prepared, LoadError> {
+    let picture = Picture::from_image(&pixels::decode(path)?);
+    let hidden = picture.mosaic(pixels::block_size(picture.width, picture.height));
+    Ok(Prepared {
+        base: picture.clone(),
+        picture,
+        hidden,
+    })
+}
+
+fn panel(child: &impl IsA<gtk::Widget>) -> gtk::Box {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .css_classes(["panel", "settings", "editor"])
+        .build();
+    content.append(child);
+    content
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+impl Editor {
+    fn build(window: &gtk::Window, source: Source, picture: Picture, layers: Layers) {
+        let canvas = gtk::DrawingArea::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .focusable(true)
+            .css_classes(["canvas"])
+            .build();
+        canvas.update_property(&[gtk::accessible::Property::Label("Capture to annotate")]);
+        let status = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .label("Drag on the image to annotate. Letters pick a tool, Ctrl+Z undoes.")
+            .css_classes(["note"])
+            .build();
+        let editor = Rc::new(Self {
+            source,
+            picture: Arc::new(picture),
+            layers,
+            document: RefCell::new(Document::default()),
+            tool: Cell::new(Tool::default()),
+            color: Cell::new(Color::default()),
+            weight: Cell::new(Weight::default()),
+            draft: RefCell::new(Vec::new()),
+            view: Cell::new(View::IDENTITY),
+            canvas,
+            status,
+            undo: toolbar::action("Undo", "Undo (Ctrl+Z)"),
+            redo: toolbar::action("Redo", "Redo (Ctrl+Shift+Z)"),
+            clear: toolbar::action("Clear", "Remove every annotation"),
+            tools: RefCell::new(Vec::new()),
+            busy: Cell::new(false),
+            discard: Cell::new(false),
+        });
+        canvas::attach(&editor);
+        let content = panel(&toolbar::build(&editor));
+        content.append(&editor.canvas);
+        content.append(&editor.status);
+        window.set_child(Some(&content));
+        editor.sync();
+        editor.canvas.grab_focus();
+
+        let keys = gtk::EventControllerKey::new();
+        let pressed = Rc::downgrade(&editor);
+        let closing = window.downgrade();
+        keys.connect_key_pressed(move |_, key, _, state| {
+            match (pressed.upgrade(), closing.upgrade()) {
+                (Some(editor), Some(window)) => editor.key(&window, key, state),
+                _ => glib::Propagation::Proceed,
+            }
+        });
+        window.add_controller(keys);
+        let owner = editor.clone();
+        window.connect_close_request(move |_| owner.close_request());
+    }
+
+    fn size(&self) -> (f64, f64) {
+        (
+            f64::from(self.picture.width),
+            f64::from(self.picture.height),
+        )
+    }
+
+    fn stroke(&self) -> Stroke {
+        Stroke::scaled(
+            self.color.get(),
+            self.weight.get(),
+            (self.picture.width, self.picture.height),
+        )
+    }
+
+    fn draft_shape(&self) -> Option<Shape> {
+        let draft = self.draft.borrow();
+        if draft.is_empty() {
+            return None;
+        }
+        let step = self.document.borrow().next_step();
+        self.tool.get().shape(&draft, self.stroke(), step)
+    }
+
+    fn commit(&self) {
+        let shape = self.draft_shape();
+        self.draft.borrow_mut().clear();
+        if let Some(shape) = shape {
+            self.document.borrow_mut().apply(Edit::Add(shape));
+            self.edited();
+        }
+        self.canvas.queue_draw();
+    }
+
+    fn cancel_draft(&self) -> bool {
+        let had = !self.draft.borrow().is_empty();
+        self.draft.borrow_mut().clear();
+        self.canvas.queue_draw();
+        had
+    }
+
+    fn undo(&self) {
+        if self.document.borrow_mut().undo() {
+            self.edited();
+        }
+    }
+
+    fn redo(&self) {
+        if self.document.borrow_mut().redo() {
+            self.edited();
+        }
+    }
+
+    fn clear(&self) {
+        let shapes = self.document.borrow().shapes().to_vec();
+        if shapes.is_empty() {
+            return;
+        }
+        self.document.borrow_mut().apply(Edit::Clear(shapes));
+        self.edited();
+        self.say("Removed every annotation. Ctrl+Z brings them back.", false);
+    }
+
+    fn edited(&self) {
+        self.discard.set(false);
+        self.sync();
+        self.canvas.queue_draw();
+    }
+
+    fn sync(&self) {
+        let document = self.document.borrow();
+        self.undo.set_sensitive(document.can_undo());
+        self.redo.set_sensitive(document.can_redo());
+        self.clear.set_sensitive(!document.shapes().is_empty());
+    }
+
+    fn pick(&self, tool: Tool) {
+        if let Some((_, button)) = self.tools.borrow().iter().find(|(each, _)| *each == tool) {
+            button.set_active(true);
+        }
+    }
+
+    fn key(
+        self: &Rc<Self>,
+        window: &gtk::Window,
+        key: gdk::Key,
+        state: gdk::ModifierType,
+    ) -> glib::Propagation {
+        let control = state.contains(gdk::ModifierType::CONTROL_MASK);
+        let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+        let alt = state.contains(gdk::ModifierType::ALT_MASK);
+        let letter = key.to_lower().name().unwrap_or_default();
+        match (control, letter.as_str()) {
+            (true, "z") if shift => self.redo(),
+            (true, "z") => self.undo(),
+            (true, "y") => self.redo(),
+            (true, "c") => self.copy(),
+            (true, "s") => self.save(),
+            (false, "Escape") => {
+                if !self.cancel_draft() {
+                    window.close();
+                }
+            }
+            (false, _) if !alt && !shift => {
+                let Some(tool) = Tool::ALL.into_iter().find(|tool| tool.key() == letter) else {
+                    return glib::Propagation::Proceed;
+                };
+                self.pick(tool);
+            }
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    }
+
+    fn close_request(&self) -> glib::Propagation {
+        if !self.document.borrow().is_modified() || self.discard.get() {
+            return glib::Propagation::Proceed;
+        }
+        self.discard.set(true);
+        self.say(
+            "The annotations are not saved or copied. Close again to discard them.",
+            true,
+        );
+        glib::Propagation::Stop
+    }
+
+    fn copy(self: &Rc<Self>) {
+        let Some((picture, shapes)) = self.begin() else {
+            return;
+        };
+        let editor = self.clone();
+        glib::spawn_future_local(async move {
+            let flattened = gio::spawn_blocking(move || render::flatten(&picture, &shapes)).await;
+            editor.busy.set(false);
+            match flattened {
+                Ok(Ok(image)) => {
+                    editor.canvas.clipboard().set_texture(&image.texture());
+                    editor.document.borrow_mut().mark_saved();
+                    editor.say(
+                        &format!("Copied {}x{} to the clipboard", image.width, image.height),
+                        false,
+                    );
+                }
+                Ok(Err(error)) => {
+                    editor.say(&format!("Not copied: {}", SaveError::from(error)), true);
+                }
+                Err(_) => editor.say("The copy worker stopped", true),
+            }
+        });
+    }
+
+    fn save(self: &Rc<Self>) {
+        let Some((picture, shapes)) = self.begin() else {
+            return;
+        };
+        let original = self.source.path.clone();
+        let mode = self.source.mode;
+        let editor = self.clone();
+        glib::spawn_future_local(async move {
+            let saved =
+                gio::spawn_blocking(move || write(&picture, &shapes, &original, mode)).await;
+            editor.busy.set(false);
+            match saved {
+                Ok(Ok(path)) => {
+                    editor.document.borrow_mut().mark_saved();
+                    editor.discard.set(false);
+                    editor.say(&format!("Saved {}", storage::tilde(&path)), false);
+                }
+                Ok(Err(error)) => editor.say(&format!("Not saved: {error}"), true),
+                Err(_) => editor.say("The save worker stopped", true),
+            }
+        });
+    }
+
+    fn begin(&self) -> Option<(Arc<Picture>, Vec<Shape>)> {
+        if self.busy.replace(true) {
+            return None;
+        }
+        self.cancel_draft();
+        Some((
+            self.picture.clone(),
+            self.document.borrow().shapes().to_vec(),
+        ))
+    }
+
+    fn say(&self, message: &str, problem: bool) {
+        self.status.set_label(message);
+        if problem {
+            self.status.add_css_class("problem");
+        } else {
+            self.status.remove_css_class("problem");
+        }
+    }
+}
+
+fn write(
+    picture: &Picture,
+    shapes: &[Shape],
+    original: &Path,
+    mode: CaptureMode,
+) -> Result<PathBuf, SaveError> {
+    let image = render::flatten(picture, shapes)?;
+    let (width, height) = (image.width, image.height);
+    let png = output::encode_png(image).map_err(SaveError::Encode)?;
+    let folder = original
+        .parent()
+        .map_or_else(storage::default_captures_dir, Path::to_path_buf);
+    let stem = original
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "kiekje".to_owned());
+    let path = storage::save_png(&png, &folder, &edited_base(&stem)).map_err(|source| {
+        SaveError::Write {
+            folder: folder.clone(),
+            source,
+        }
+    })?;
+    let capture = NewCapture {
+        path: path.clone(),
+        mode,
+        width,
+        height,
+        bytes: u64::try_from(png.len()).unwrap_or(u64::MAX),
+        created_us: glib::real_time(),
+    };
+    if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
+    {
+        eprintln!("kiekje: the edited capture is saved but not in the library: {error}");
+    }
+    Ok(path)
+}
+
+fn edited_base(stem: &str) -> String {
+    let unnumbered = stem
+        .rsplit_once('-')
+        .filter(|(_, number)| {
+            !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+        })
+        .map_or(stem, |(head, _)| head);
+    if unnumbered.ends_with("-edited") {
+        unnumbered.to_owned()
+    } else {
+        format!("{stem}-edited")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_an_edit_after_its_original() {
+        assert_eq!(
+            edited_base("kiekje-region-2026-10-04-14-47-59"),
+            "kiekje-region-2026-10-04-14-47-59-edited"
+        );
+    }
+
+    #[test]
+    fn reuses_the_name_when_editing_an_edit() {
+        assert_eq!(edited_base("shot-edited"), "shot-edited");
+        assert_eq!(edited_base("shot-edited-3"), "shot-edited");
+    }
+}
