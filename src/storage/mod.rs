@@ -4,10 +4,13 @@ pub mod template;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use gtk::glib;
 
 pub use template::{Naming, Stamp, Template};
+
+static TEMPORARY: AtomicU64 = AtomicU64::new(0);
 
 /// Returns the default capture folder, `$XDG_PICTURES_DIR/Kiekje`.
 ///
@@ -103,7 +106,11 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.tmp", std::process::id()));
+    name.push(format!(
+        ".{}-{}.tmp",
+        std::process::id(),
+        TEMPORARY.fetch_add(1, Ordering::Relaxed)
+    ));
     let temporary = path.with_file_name(name);
     let written = OpenOptions::new()
         .write(true)
@@ -169,6 +176,26 @@ mod tests {
         write_atomic(&path, b"second").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"second");
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn writes_the_same_file_from_several_threads_at_once() {
+        let directory = scratch("atomic-threads");
+        let path = directory.join("config.toml");
+        let writers: Vec<_> = (0..8u8)
+            .map(|index| {
+                let path = path.clone();
+                std::thread::spawn(move || write_atomic(&path, &[index; 64]))
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap().unwrap();
+        }
+        let written = fs::read(&path).unwrap();
+        assert_eq!(written.len(), 64);
+        assert!(written.iter().all(|byte| *byte == written[0]));
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
         fs::remove_dir_all(&directory).unwrap();
     }
 
