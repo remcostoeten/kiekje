@@ -96,6 +96,7 @@ fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, Strin
         mode: CaptureMode::Region,
         backend: BackendChoice::Auto,
         save: true,
+        edit: false,
         delay: Duration::ZERO,
         trigger_us,
     };
@@ -103,6 +104,7 @@ fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, Strin
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
             "--no-save" => request.save = false,
+            "--edit" => request.edit = true,
             "--backend" => {
                 let value = remaining.next().ok_or("--backend needs a value")?;
                 request.backend =
@@ -163,6 +165,12 @@ mod tests {
         assert_eq!(request.mode, CaptureMode::Repeat);
         assert_eq!(request.delay, Duration::from_secs(5));
         assert!(!request.save);
+    }
+
+    #[test]
+    fn asks_for_the_editor_with_edit() {
+        assert!(parse(&["--edit"]).unwrap().edit);
+        assert!(!parse(&[]).unwrap().edit);
     }
 
     #[test]
