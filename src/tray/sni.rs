@@ -2,7 +2,7 @@ use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Category, ToolTip, Tray};
 
-use super::{TrayCommand, TrayError, TrayGuard, TrayHost, TrayOrigin};
+use super::{TrayCommand, TrayError, TrayGuard, TrayHost};
 use crate::capture::CaptureMode;
 
 pub struct SniTray;
@@ -70,16 +70,13 @@ impl Tray for Item {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: "Kiekje".into(),
-            description: "Click to capture a region".into(),
+            description: "Click for the capture menu".into(),
             ..Default::default()
         }
     }
 
-    fn activate(&mut self, _x: i32, _y: i32) {
-        self.send(TrayCommand::Capture {
-            mode: CaptureMode::Region,
-            origin: TrayOrigin::Icon,
-        });
+    fn activate(&mut self, x: i32, y: i32) {
+        self.send(TrayCommand::OpenMenu { x, y });
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
@@ -88,21 +85,18 @@ impl Tray for Item {
                 "Capture region",
                 TrayCommand::Capture {
                     mode: CaptureMode::Region,
-                    origin: TrayOrigin::Menu,
                 },
             ),
             command_item(
                 "Capture every screen",
                 TrayCommand::Capture {
                     mode: CaptureMode::Fullscreen,
-                    origin: TrayOrigin::Menu,
                 },
             ),
             command_item(
                 "Repeat last region",
                 TrayCommand::Capture {
                     mode: CaptureMode::Repeat,
-                    origin: TrayOrigin::Menu,
                 },
             ),
             command_item("Open captures folder", TrayCommand::OpenCaptures),

@@ -14,6 +14,7 @@ mod shortcuts;
 mod storage;
 mod style;
 mod tray;
+mod ui;
 
 use std::time::Duration;
 
@@ -42,6 +43,7 @@ fn main() -> glib::ExitCode {
         },
         Some("daemon") => app::run(Command::Daemon),
         Some("quit") => app::run(Command::Quit),
+        Some("menu") => app::run(Command::Menu),
         Some("doctor") => {
             doctor::run();
             glib::ExitCode::SUCCESS

@@ -70,6 +70,29 @@ pub fn hyprland_bind(action: ShortcutAction, app_id: &str) -> String {
     )
 }
 
+/// Turns an XDG trigger like `SHIFT+Print` into the `Shift+Print` shown in menus.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(display_trigger("CTRL+SHIFT+s"), "Ctrl+Shift+S");
+/// ```
+pub fn display_trigger(trigger: &str) -> String {
+    trigger
+        .split('+')
+        .map(|part| {
+            let mut characters = part.chars();
+            characters.next().map_or_else(String::new, |first| {
+                first
+                    .to_uppercase()
+                    .chain(characters.flat_map(char::to_lowercase))
+                    .collect()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Binding {
     pub action: ShortcutAction,
@@ -120,6 +143,13 @@ mod tests {
             assert_eq!(ShortcutAction::parse(action.id()), Some(action));
         }
         assert_eq!(ShortcutAction::parse("capture-window"), None);
+    }
+
+    #[test]
+    fn shows_triggers_in_title_case() {
+        assert_eq!(display_trigger("SHIFT+Print"), "Shift+Print");
+        assert_eq!(display_trigger("CTRL+SHIFT+s"), "Ctrl+Shift+S");
+        assert_eq!(display_trigger("Print"), "Print");
     }
 
     #[test]

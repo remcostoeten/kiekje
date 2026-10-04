@@ -278,7 +278,7 @@ Tested on 2026-10-03 on Plasma 6.7.5 in `test-kde`, clicking through QEMU:
 - Quit from the menu ended the daemon and the icon disappeared.
 - The full lab run passed every check with the tray running; idle memory was 47 MB anonymous.
 
-The styled left-click popover from proposal section 10 is not built yet; left click captures a region until it exists.
+Left click now opens the styled popover, see "Tray popover".
 
 ## Capture delay and repeat last region
 
@@ -313,6 +313,21 @@ The overlay watches the GDK monitor behind each frame. If one is invalidated whi
 
 Checked on 2026-10-04 on headless sway 1.9 with two outputs, HEADLESS-1 at 1280x800 and HEADLESS-2 at 1920x1080 to its right. I opened the region overlay, then ran `swaymsg output HEADLESS-2 unplug`. The overlay closed, the notification showed, and a fullscreen capture right after worked on the remaining monitor. `quit` exited cleanly. Unverified: a physical unplug on KDE and Hyprland.
 
+## Tray popover
+
+Left click on the tray icon, or `kiekje menu`, opens Kiekje's own popover; a second trigger closes it. It lists Capture region (the primary button), Capture every screen and Repeat last region with their shortcuts in mono, up to four recent captures as thumbnails, then Open folder and Quit. Gallery and Settings join it when they exist. Thumbnails are decoded on a worker and clicking one opens the file.
+
+On layer-shell compositors the popover is a transparent `Top` layer surface over the whole monitor with exclusive keyboard focus. The panel sits in the corner nearest the tray click, 8 px from the edges, and a click anywhere outside it closes it, as does Escape. Without click coordinates, or when they are `(0, 0)` or outside every monitor, it uses the first monitor's top right. Elsewhere it is an undecorated window. Captures picked from it start 150 ms later so the popover is gone first.
+
+The styling comes from `resources/style.css`, compiled in with GResource. It needs GTK 4.16 or newer for `var()` and `color-mix()`; older GTK logs the parse error and draws the popover unstyled.
+
+Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12 built from source, in a cloud container, using a fullscreen capture taken while the popover was open:
+
+- The panel draws in the top-right corner at 320 px wide, with the tokens from the stylesheet and four cropped thumbnails.
+- Escape closed it. Down then Return picked Capture every screen, and the saved capture had no popover in it.
+
+Unverified: closing on a click outside (virtual pointer clicks didn't reach clients in the container), tray click coordinates from Plasma and Waybar, Geist fonts (not bundled yet, so it falls back to the system sans and mono), and every real desktop.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).
@@ -328,4 +343,4 @@ Checked on 2026-10-04 on headless sway 1.9 with two outputs, HEADLESS-1 at 1280x
 4. Done for registration: GlobalShortcuts through the portal on KDE and Hyprland, see "Global shortcuts". Done: the Hyprland managed `bind` include. Open: rebinding from settings, and persisting a user's disabled shortcuts.
 5. Done: CLI clients that forward to the running instance, and `quit` with nothing running, now leave through `g_application_run` with a `handle-local-options` handler that exits at once. GLib no longer warns about the D-Bus registration.
 6. Partly done: Hyprland runs in `test-hypr`. Still open: an Omarchy session, and GNOME overlay focus when triggered by a real global shortcut.
-7. Done on KWin: selection across monitors and the StatusNotifierItem tray with its native menu, see "Selection across monitors" and "Tray". Open: the styled tray popover, and both features on Hyprland, Sway, GNOME and real hardware.
+7. Done on KWin: selection across monitors and the StatusNotifierItem tray with its native menu, see "Selection across monitors" and "Tray". Done: the styled tray popover, see "Tray popover". Open: all three on Hyprland, Sway, GNOME and real hardware.
