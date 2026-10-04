@@ -10,6 +10,7 @@ use crate::capture::{BackendChoice, BackendKind};
 use crate::config::{self, Config};
 use crate::desktop_file;
 use crate::overlay;
+use crate::shortcuts::hyprland;
 use crate::style::{Style, pad};
 
 const BINARY: &str = env!("CARGO_PKG_NAME");
@@ -34,6 +35,12 @@ enum KwinAccess {
     Ready,
     Stale(PathBuf),
     Missing,
+}
+
+enum HyprlandBinds {
+    Sourced,
+    NotSourced,
+    NotWritten,
 }
 
 enum Severity {
@@ -72,6 +79,7 @@ struct Report {
     kwin_access: Option<KwinAccess>,
     config_path: PathBuf,
     config: Result<Option<Config>, String>,
+    hyprland: Option<HyprlandBinds>,
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -143,6 +151,22 @@ fn collect() -> Report {
                 .join(" ")
         }),
         config_path,
+        hyprland: std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").map(|_| hyprland_binds()),
+    }
+}
+
+fn hyprland_binds() -> HyprlandBinds {
+    let include = hyprland::include_path();
+    if !include.exists() {
+        HyprlandBinds::NotWritten
+    } else if hyprland::is_sourced(
+        &hyprland::main_config_path(),
+        &include,
+        &gtk::glib::home_dir(),
+    ) {
+        HyprlandBinds::Sourced
+    } else {
+        HyprlandBinds::NotSourced
     }
 }
 
@@ -270,6 +294,25 @@ fn problems(report: &Report) -> Vec<Problem> {
         }),
         Some(KwinAccess::Ready) | None => {}
     }
+    match report.hyprland {
+        Some(HyprlandBinds::NotWritten) => found.push(Problem {
+            severity: Severity::Warning,
+            message:
+                "Hyprland registers the shortcuts without keys and the bind file is not written yet"
+                    .into(),
+            fix: Some(format!("run {BINARY} daemon once, it writes the bind file")),
+        }),
+        Some(HyprlandBinds::NotSourced) => found.push(Problem {
+            severity: Severity::Warning,
+            message: "Hyprland does not read Kiekje's bind file, so Print does nothing".into(),
+            fix: Some(format!(
+                "add `{}` to {}",
+                hyprland::source_line(&hyprland::include_path()),
+                tilde(&hyprland::main_config_path())
+            )),
+        }),
+        Some(HyprlandBinds::Sourced) | None => {}
+    }
     if let Err(error) = &report.config {
         found.push(Problem {
             severity: Severity::Warning,
@@ -326,6 +369,14 @@ fn render(report: &Report, style: &Style) -> String {
             Some(KwinAccess::Missing) | None => style.warn("no desktop file"),
         };
         text.push_str(&field(style, "kwin access", &access));
+    }
+    if let Some(binds) = &report.hyprland {
+        let state = match binds {
+            HyprlandBinds::Sourced => style.good("sourced"),
+            HyprlandBinds::NotSourced => style.warn("not sourced"),
+            HyprlandBinds::NotWritten => style.warn("not written"),
+        };
+        text.push_str(&field(style, "hyprland binds", &state));
     }
     text.push('\n');
 
@@ -460,7 +511,27 @@ mod tests {
             kwin_access: Some(KwinAccess::Ready),
             config_path: PathBuf::from("/etc/kiekje/config.toml"),
             config: Ok(None),
+            hyprland: None,
         }
+    }
+
+    #[test]
+    fn names_the_source_line_when_hyprland_ignores_the_binds() {
+        let mut hypr = report();
+        hypr.hyprland = Some(HyprlandBinds::NotSourced);
+        let text = render(&hypr, &PLAIN);
+        assert!(text.contains("hyprland binds    not sourced"));
+        assert!(text.contains("! Hyprland does not read Kiekje's bind file"));
+        assert!(text.contains("source = "));
+    }
+
+    #[test]
+    fn stays_quiet_when_hyprland_sources_the_binds() {
+        let mut hypr = report();
+        hypr.hyprland = Some(HyprlandBinds::Sourced);
+        let text = render(&hypr, &PLAIN);
+        assert!(text.contains("hyprland binds    sourced"));
+        assert!(text.contains("No problems found."));
     }
 
     #[test]

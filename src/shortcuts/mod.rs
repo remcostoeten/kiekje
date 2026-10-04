@@ -1,3 +1,4 @@
+pub mod hyprland;
 mod portal;
 
 use gtk::glib;

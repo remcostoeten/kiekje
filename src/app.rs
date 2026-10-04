@@ -18,9 +18,7 @@ use crate::config::{self, Notifications};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Selection};
-use crate::shortcuts::{
-    PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland_bind,
-};
+use crate::shortcuts::{PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland};
 use crate::storage::{self, Naming, last_region};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost, TrayOrigin};
 
@@ -194,6 +192,8 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
     glib::spawn_future_local(async move {
         match registrar.bind(on_activated).await {
             Ok((guard, bindings)) => {
+                let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
+                let mut unbound = false;
                 for binding in bindings {
                     match binding.trigger {
                         Some(trigger) => println!(
@@ -201,13 +201,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                             binding.action.id(),
                             registrar.name()
                         ),
-                        None if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() => {
-                            println!(
-                                "kiekje: shortcut {} registered without a key; add to hyprland.conf: {}",
-                                binding.action.id(),
-                                hyprland_bind(binding.action, APP_ID)
-                            )
-                        }
+                        None if on_hyprland => unbound = true,
                         None => println!(
                             "kiekje: shortcut {} registered through {} without a trigger; assign one in the desktop settings",
                             binding.action.id(),
@@ -215,11 +209,47 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                         ),
                     }
                 }
+                if unbound {
+                    install_hyprland_binds();
+                }
                 if let Some(session) = session.upgrade() {
                     session.shortcuts.replace(Some(guard));
                 }
             }
             Err(error) => eprintln!("kiekje: global shortcuts are off: {error}"),
+        }
+    });
+}
+
+fn install_hyprland_binds() {
+    glib::spawn_future_local(async {
+        let include = hyprland::include_path();
+        let target = include.clone();
+        let written = gio::spawn_blocking(move || {
+            let changed = hyprland::write_include(&target, APP_ID)?;
+            let sourced =
+                hyprland::is_sourced(&hyprland::main_config_path(), &target, &glib::home_dir());
+            Ok::<_, std::io::Error>((changed, sourced))
+        })
+        .await;
+        match written {
+            Ok(Ok((changed, sourced))) => {
+                if changed {
+                    println!("kiekje: wrote Hyprland binds to {}", include.display());
+                }
+                if !sourced {
+                    println!(
+                        "kiekje: shortcuts have no keys yet; add `{}` to {}",
+                        hyprland::source_line(&include),
+                        hyprland::main_config_path().display()
+                    );
+                }
+            }
+            Ok(Err(error)) => eprintln!(
+                "kiekje: could not write Hyprland binds to {}: {error}",
+                include.display()
+            ),
+            Err(_) => eprintln!("kiekje: the Hyprland bind worker stopped"),
         }
     });
 }
