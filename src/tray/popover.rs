@@ -20,6 +20,7 @@ const PANEL_WIDTH: i32 = 320;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Capture(CaptureMode),
+    Annotate,
     OpenCaptures,
     Settings,
     Gallery,
@@ -245,6 +246,11 @@ fn panel(
         let button = action_button(label, shortcut, kind);
         connect_pick(&button, window, picked, Pick::Capture(mode));
         panel.append(&button);
+        if mode == CaptureMode::Region {
+            let annotate = action_button("Annotate region", None, "outline");
+            connect_pick(&annotate, window, picked, Pick::Annotate);
+            panel.append(&annotate);
+        }
     }
 
     let recent_header = gtk::Box::builder()
