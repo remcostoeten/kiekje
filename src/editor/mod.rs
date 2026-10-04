@@ -1,4 +1,5 @@
 mod canvas;
+mod crop;
 mod document;
 mod pixels;
 mod render;
@@ -21,7 +22,7 @@ use crate::library::{self, Library, NewCapture};
 use crate::output;
 use crate::{storage, ui};
 use canvas::View;
-use document::{Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
+use document::{Area, Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
 use pixels::{LoadError, Picture};
 use render::Layers;
 
@@ -352,12 +353,13 @@ impl Editor {
     }
 
     fn copy(self: &Rc<Self>) {
-        let Some((picture, shapes)) = self.begin() else {
+        let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };
         let editor = self.clone();
         glib::spawn_future_local(async move {
-            let flattened = gio::spawn_blocking(move || render::flatten(&picture, &shapes)).await;
+            let flattened =
+                gio::spawn_blocking(move || render::flatten(&picture, &shapes, crop)).await;
             editor.busy.set(false);
             match flattened {
                 Ok(Ok(image)) => {
@@ -377,7 +379,7 @@ impl Editor {
     }
 
     fn save(self: &Rc<Self>) {
-        let Some((picture, shapes)) = self.begin() else {
+        let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };
         let original = self.source.path.clone();
@@ -385,7 +387,7 @@ impl Editor {
         let editor = self.clone();
         glib::spawn_future_local(async move {
             let saved =
-                gio::spawn_blocking(move || write(&picture, &shapes, &original, mode)).await;
+                gio::spawn_blocking(move || write(&picture, &shapes, crop, &original, mode)).await;
             editor.busy.set(false);
             match saved {
                 Ok(Ok(path)) => {
@@ -399,15 +401,17 @@ impl Editor {
         });
     }
 
-    fn begin(&self) -> Option<(Arc<Picture>, Vec<Shape>)> {
+    fn begin(&self) -> Option<(Arc<Picture>, Vec<Shape>, Option<Area>)> {
         if self.busy.replace(true) {
             return None;
         }
         self.finish_text(true);
         self.cancel_draft();
+        let document = self.document.borrow();
         Some((
             self.picture.clone(),
-            self.document.borrow().shapes().to_vec(),
+            document.shapes().to_vec(),
+            document.crop(),
         ))
     }
 
@@ -425,10 +429,11 @@ impl Editor {
 fn write(
     picture: &Picture,
     shapes: &[Shape],
+    crop: Option<Area>,
     original: &Path,
     mode: CaptureMode,
 ) -> Result<PathBuf, SaveError> {
-    let image = render::flatten(picture, shapes)?;
+    let image = render::flatten(picture, shapes, crop)?;
     let (width, height) = (image.width, image.height);
     let png = output::encode_png(image).map_err(SaveError::Encode)?;
     let folder = original

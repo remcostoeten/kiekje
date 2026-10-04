@@ -29,7 +29,14 @@ impl Editor {
         self.tool.set(tool);
         self.cancel_draft();
         self.finish_text(true);
-        if tool == Tool::Text {
+        if tool == Tool::Crop {
+            self.canvas.set_cursor_from_name(Some("crosshair"));
+            self.deselect();
+            self.say(
+                "Drag to keep part of the image. Click once to clear the crop.",
+                false,
+            );
+        } else if tool == Tool::Text {
             self.canvas.set_cursor_from_name(Some("text"));
             self.deselect();
             self.say("Click where the text goes, type, then press Enter.", false);

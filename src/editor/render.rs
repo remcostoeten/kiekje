@@ -74,7 +74,11 @@ pub fn draw<'a>(
 /// ```ignore
 /// let image = render::flatten(&picture, &shapes)?;
 /// ```
-pub fn flatten(picture: &Picture, shapes: &[Shape]) -> Result<Image, cairo::Error> {
+pub fn flatten(
+    picture: &Picture,
+    shapes: &[Shape],
+    crop: Option<Area>,
+) -> Result<Image, cairo::Error> {
     let hidden = if shapes
         .iter()
         .any(|shape| matches!(shape, Shape::Pixelate { .. }))
@@ -105,12 +109,17 @@ pub fn flatten(picture: &Picture, shapes: &[Shape]) -> Result<Image, cairo::Erro
         .flat_map(|line| &line[..row.min(line.len())])
         .copied()
         .collect();
-    Ok(Picture {
+    let drawn = Picture {
         width: picture.width,
         height: picture.height,
         data: packed,
-    }
-    .to_image())
+    };
+    Ok(
+        match crop.and_then(|area| pixels::region(area, picture.width, picture.height)) {
+            Some(region) => drawn.cropped(region).to_image(),
+            None => drawn.to_image(),
+        },
+    )
 }
 
 fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(), cairo::Error> {
@@ -302,7 +311,7 @@ mod tests {
     #[test]
     fn flattens_without_shapes_to_the_same_pixels() {
         let picture = white(4, 3);
-        let image = flatten(&picture, &[]).unwrap();
+        let image = flatten(&picture, &[], None).unwrap();
         assert_eq!(image.data, picture.to_image().data);
     }
 
@@ -321,7 +330,7 @@ mod tests {
                 width: 2.0,
             },
         };
-        let image = flatten(&picture, &[shape]).unwrap();
+        let image = flatten(&picture, &[shape], None).unwrap();
         assert_eq!(pixel(&image, 10, 20), [0x11, 0x11, 0x11, 255]);
         assert_eq!(pixel(&image, 20, 20), [255, 255, 255, 255]);
         assert_eq!(pixel(&image, 2, 2), [255, 255, 255, 255]);
@@ -347,11 +356,38 @@ mod tests {
                 height: 16.0,
             },
         };
-        let image = flatten(&picture, &[shape]).unwrap();
+        let image = flatten(&picture, &[shape], None).unwrap();
         assert_eq!(pixel(&image, 0, 0), pixel(&image, 1, 0));
         assert_ne!(pixel(&image, 0, 0), [0, 0, 0, 255]);
         assert_eq!(pixel(&image, 20, 20), [0, 0, 0, 255]);
         assert_eq!(pixel(&image, 21, 20), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn crops_after_drawing() {
+        let picture = white(40, 30);
+        let shape = Shape::Rectangle {
+            area: Area {
+                x: 10.0,
+                y: 10.0,
+                width: 20.0,
+                height: 10.0,
+            },
+            stroke: Stroke {
+                color: Color::Black,
+                width: 2.0,
+            },
+        };
+        let crop = Area {
+            x: 10.0,
+            y: 5.0,
+            width: 15.0,
+            height: 12.0,
+        };
+        let image = flatten(&picture, &[shape], Some(crop)).unwrap();
+        assert_eq!((image.width, image.height), (15, 12));
+        assert_eq!(pixel(&image, 0, 8), [0x11, 0x11, 0x11, 255]);
+        assert_eq!(pixel(&image, 5, 0), [255, 255, 255, 255]);
     }
 
     #[test]
@@ -368,7 +404,7 @@ mod tests {
             },
             color: Color::Yellow,
         };
-        let image = flatten(&picture, &[shape]).unwrap();
+        let image = flatten(&picture, &[shape], None).unwrap();
         assert_eq!(pixel(&image, 0, 0), [0, 0, 0, 255]);
         let marked = pixel(&image, 4, 4);
         assert_eq!(marked[0], 255);

@@ -110,6 +110,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
             match editor.tool.get() {
                 Tool::Select => editor.release(),
                 Tool::Text => {}
+                Tool::Crop => editor.commit_crop(),
                 _ => editor.commit(),
             }
         }
@@ -205,6 +206,7 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
     };
     cr.restore()?;
     drawn?;
+    editor.paint_crop(cr, view)?;
     editor.paint_selection(cr, view)
 }
 

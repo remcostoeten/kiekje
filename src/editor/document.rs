@@ -30,7 +30,7 @@ impl Area {
         }
     }
 
-    fn is_tiny(self) -> bool {
+    pub fn is_tiny(self) -> bool {
         self.width < MIN_SIZE || self.height < MIN_SIZE
     }
 }
@@ -200,10 +200,11 @@ pub enum Tool {
     Step,
     Text,
     Pixelate,
+    Crop,
 }
 
 impl Tool {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Select,
         Self::Rectangle,
         Self::Ellipse,
@@ -214,6 +215,7 @@ impl Tool {
         Self::Step,
         Self::Text,
         Self::Pixelate,
+        Self::Crop,
     ];
 
     pub fn label(self) -> &'static str {
@@ -228,6 +230,7 @@ impl Tool {
             Self::Step => "Step",
             Self::Text => "Text",
             Self::Pixelate => "Pixelate",
+            Self::Crop => "Crop",
         }
     }
 
@@ -243,6 +246,7 @@ impl Tool {
             Self::Step => "n",
             Self::Text => "t",
             Self::Pixelate => "x",
+            Self::Crop => "c",
         }
     }
 
@@ -304,11 +308,16 @@ pub enum Edit {
         shape: Shape,
     },
     Clear(Vec<Shape>),
+    Crop {
+        before: Option<Area>,
+        after: Option<Area>,
+    },
 }
 
 #[derive(Debug, Default)]
 pub struct Document {
     shapes: Vec<Shape>,
+    crop: Option<Area>,
     done: Vec<Edit>,
     undone: Vec<Edit>,
     saved: usize,
@@ -317,6 +326,10 @@ pub struct Document {
 impl Document {
     pub fn shapes(&self) -> &[Shape] {
         &self.shapes
+    }
+
+    pub fn crop(&self) -> Option<Area> {
+        self.crop
     }
 
     /// Applies `edit` and makes it the newest step to undo, dropping anything left to redo.
@@ -418,6 +431,7 @@ impl Document {
                 }
             }
             Edit::Clear(_) => self.shapes.clear(),
+            Edit::Crop { after, .. } => self.crop = *after,
         }
     }
 
@@ -432,6 +446,7 @@ impl Document {
                 self.shapes.insert(index, shape.clone());
             }
             Edit::Clear(shapes) => self.shapes = shapes.clone(),
+            Edit::Crop { before, .. } => self.crop = *before,
         }
     }
 
@@ -579,6 +594,30 @@ mod tests {
         document.apply(Edit::Add(step(2)));
         assert_eq!(document.hit(point(1.0, 1.0), 0.0), Some(1));
         assert_eq!(document.hit(point(500.0, 500.0), 0.0), None);
+    }
+
+    #[test]
+    fn undoes_a_crop_back_to_the_previous_one() {
+        let first = Area {
+            x: 1.0,
+            y: 1.0,
+            width: 10.0,
+            height: 10.0,
+        };
+        let mut document = Document::default();
+        document.apply(Edit::Crop {
+            before: None,
+            after: Some(first),
+        });
+        document.apply(Edit::Crop {
+            before: Some(first),
+            after: None,
+        });
+        assert_eq!(document.crop(), None);
+        document.undo();
+        assert_eq!(document.crop(), Some(first));
+        document.undo();
+        assert_eq!(document.crop(), None);
     }
 
     #[test]
