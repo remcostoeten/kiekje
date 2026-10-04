@@ -18,13 +18,19 @@ pub struct Selection {
     pub plan: SelectionPlan,
 }
 
+pub enum Outcome {
+    Selected(Selection),
+    Canceled,
+    MonitorLost(String),
+}
+
 struct Drag {
     frame_index: usize,
     start: (f64, f64),
     current: (f64, f64),
 }
 
-type DoneCallback = Box<dyn FnOnce(Option<Selection>)>;
+type DoneCallback = Box<dyn FnOnce(Outcome)>;
 type PaintCallback = Box<dyn FnOnce()>;
 
 struct Shared {
@@ -35,14 +41,15 @@ struct Shared {
     areas: RefCell<Vec<gtk::DrawingArea>>,
     finished: Cell<bool>,
     on_done: RefCell<Option<DoneCallback>>,
+    watched: RefCell<Vec<(gdk::Monitor, glib::SignalHandlerId)>>,
     on_first_paint: RefCell<Option<PaintCallback>>,
 }
 
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
 ///
 /// Surfaces are layer-shell overlays when the compositor supports it and fullscreen windows
-/// otherwise. A drag may cross monitor edges. Escape cancels. `on_done` runs once with the plan
-/// that turns the selection into an image, or `None` when canceled.
+/// otherwise. A drag may cross monitor edges. Escape cancels, and unplugging a monitor that shows
+/// a frame ends the selection. `on_done` runs once with the outcome.
 ///
 /// # Examples
 ///
@@ -53,7 +60,7 @@ pub fn show(
     app: &gtk::Application,
     frames: Arc<Vec<Frame>>,
     monitors: &[gdk::Monitor],
-    on_done: impl FnOnce(Option<Selection>) + 'static,
+    on_done: impl FnOnce(Outcome) + 'static,
     on_first_paint: impl FnOnce() + 'static,
 ) {
     let geometry = frames
@@ -68,6 +75,7 @@ pub fn show(
         areas: RefCell::new(Vec::new()),
         finished: Cell::new(false),
         on_done: RefCell::new(Some(Box::new(on_done))),
+        watched: RefCell::new(Vec::new()),
         on_first_paint: RefCell::new(Some(Box::new(on_first_paint))),
     });
 
@@ -81,10 +89,11 @@ pub fn show(
             continue;
         };
         build_surface(app, &shared, frame_index, monitor);
+        watch_monitor(&shared, monitor, &frame.monitor.connector);
     }
 
     if shared.windows.borrow().is_empty() {
-        finish(&shared, None);
+        finish(&shared, Outcome::Canceled);
     }
 }
 
@@ -207,7 +216,7 @@ fn build_surface(
             .then(|| plan_selection(rect, &end_shared.geometry))
             .flatten();
         match plan {
-            Some(plan) => finish(&end_shared, Some(Selection { rect, plan })),
+            Some(plan) => finish(&end_shared, Outcome::Selected(Selection { rect, plan })),
             None => redraw(&end_shared),
         }
     });
@@ -217,7 +226,7 @@ fn build_surface(
     let key_shared = shared.clone();
     keys.connect_key_pressed(move |_, key, _, _| {
         if key == gdk::Key::Escape {
-            finish(&key_shared, None);
+            finish(&key_shared, Outcome::Canceled);
             return glib::Propagation::Stop;
         }
         glib::Propagation::Proceed
@@ -344,13 +353,27 @@ fn redraw(shared: &Shared) {
     }
 }
 
-fn finish(shared: &Shared, selection: Option<Selection>) {
+fn watch_monitor(shared: &Rc<Shared>, monitor: &gdk::Monitor, connector: &str) {
+    let weak = Rc::downgrade(shared);
+    let connector = connector.to_owned();
+    let handler = monitor.connect_invalidate(move |_| {
+        if let Some(shared) = weak.upgrade() {
+            finish(&shared, Outcome::MonitorLost(connector.clone()));
+        }
+    });
+    shared.watched.borrow_mut().push((monitor.clone(), handler));
+}
+
+fn finish(shared: &Shared, outcome: Outcome) {
     if shared.finished.replace(true) {
         return;
     }
+    for (monitor, handler) in shared.watched.borrow_mut().drain(..) {
+        monitor.disconnect(handler);
+    }
     // Wayland only accepts a clipboard change from a focused client, so deliver before closing.
     if let Some(callback) = shared.on_done.borrow_mut().take() {
-        callback(selection);
+        callback(outcome);
     }
     for window in shared.windows.borrow_mut().drain(..) {
         window.close();
