@@ -119,6 +119,32 @@ impl Folder {
     }
 }
 
+impl Folder {
+    /// Wraps a chosen absolute folder, written with `~/` when it sits under the home folder.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let folder = Folder::from_path(glib::home_dir().join("Shots"))?;
+    /// assert_eq!(String::from(folder), "~/Shots");
+    /// ```
+    pub fn from_path(path: PathBuf) -> Result<Self, FolderError> {
+        Self::chosen(path, &glib::home_dir())
+    }
+
+    fn chosen(path: PathBuf, home: &Path) -> Result<Self, FolderError> {
+        if !path.is_absolute() {
+            return Err(FolderError(path.display().to_string()));
+        }
+        let source = match path.strip_prefix(home) {
+            Ok(relative) if relative.as_os_str().is_empty() => "~".to_owned(),
+            Ok(relative) => format!("~/{}", relative.display()),
+            Err(_) => path.display().to_string(),
+        };
+        Ok(Self { source, path })
+    }
+}
+
 impl TryFrom<String> for Folder {
     type Error = FolderError;
 
@@ -246,6 +272,23 @@ pub fn set_shortcut(
     Ok(config.shortcuts)
 }
 
+/// Applies `change` to the config at `path` and saves it, keeping everything else in the file.
+///
+/// A config that can't be read is left untouched. Touches the disk, so call it off the GTK
+/// main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// config::update(&config::path(), |config| config.notifications.sound = false)?;
+/// ```
+pub fn update(path: &Path, change: impl FnOnce(&mut Config)) -> Result<Config, ConfigError> {
+    let mut config = load_from(path)?.unwrap_or_default();
+    change(&mut config);
+    save_to(path, &config)?;
+    Ok(config)
+}
+
 fn parse(text: &str, path: &Path) -> Result<Config, ConfigError> {
     let parse_error = |source| ConfigError::Parse {
         path: path.to_path_buf(),
@@ -275,6 +318,43 @@ mod tests {
         std::env::temp_dir()
             .join(format!("kiekje-config-{name}-{}", std::process::id()))
             .join("config.toml")
+    }
+
+    #[test]
+    fn writes_a_chosen_folder_under_home_with_a_tilde() {
+        let home = Path::new("/home/ada");
+        let folder = Folder::chosen(home.join("Shots/2026"), home).unwrap();
+        assert_eq!(String::from(folder.clone()), "~/Shots/2026");
+        assert_eq!(folder.path, PathBuf::from("/home/ada/Shots/2026"));
+        let outside = Folder::chosen(PathBuf::from("/srv/shots"), home).unwrap();
+        assert_eq!(String::from(outside), "/srv/shots");
+        assert!(Folder::chosen(PathBuf::from("shots"), home).is_err());
+    }
+
+    #[test]
+    fn updates_one_setting_and_keeps_the_rest() {
+        let path = scratch("update");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+        set_shortcut(&path, ShortcutAction::CaptureRegion, Slot::Off).unwrap();
+        let config = update(&path, |config| config.notifications.sound = false).unwrap();
+        assert!(!config.notifications.sound);
+        let saved = load_from(&path).unwrap().unwrap();
+        assert!(!saved.notifications.sound);
+        assert_eq!(
+            saved.shortcuts.slot(ShortcutAction::CaptureRegion),
+            &Slot::Off
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn leaves_an_unreadable_config_alone_on_update() {
+        let path = scratch("update-broken");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "version = ").unwrap();
+        assert!(update(&path, |config| config.notifications.enabled = false).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "version = ");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]
