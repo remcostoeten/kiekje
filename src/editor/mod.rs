@@ -4,6 +4,7 @@ mod pixels;
 mod render;
 mod select;
 mod shapes;
+mod text;
 mod toolbar;
 
 use std::cell::{Cell, RefCell};
@@ -64,6 +65,9 @@ struct Editor {
     tools: RefCell<Vec<(Tool, gtk::ToggleButton)>>,
     selected: Cell<Option<usize>>,
     moving: RefCell<Option<select::Moving>>,
+    writer: gtk::Popover,
+    entry: gtk::Entry,
+    typing: RefCell<Option<text::Typing>>,
     busy: Cell<bool>,
     discard: Cell<bool>,
 }
@@ -174,10 +178,17 @@ impl Editor {
             tools: RefCell::new(Vec::new()),
             selected: Cell::new(None),
             moving: RefCell::new(None),
+            writer: gtk::Popover::new(),
+            entry: gtk::Entry::builder()
+                .placeholder_text("Type, then press Enter")
+                .width_chars(24)
+                .build(),
+            typing: RefCell::new(None),
             busy: Cell::new(false),
             discard: Cell::new(false),
         });
         canvas::attach(&editor);
+        text::attach(&editor);
         let content = panel(&toolbar::build(&editor));
         content.append(&editor.canvas);
         content.append(&editor.status);
@@ -392,6 +403,7 @@ impl Editor {
         if self.busy.replace(true) {
             return None;
         }
+        self.finish_text(true);
         self.cancel_draft();
         Some((
             self.picture.clone(),
