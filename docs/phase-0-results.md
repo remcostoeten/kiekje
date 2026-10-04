@@ -307,6 +307,12 @@ Checked on 2026-10-04 with mako 1.8 on headless sway 1.9 in a cloud container. S
 
 Unverified: sound playback (mako plays no sounds), and notifications on Plasma, GNOME and the Omarchy mako setup.
 
+## Monitor unplugged during selection
+
+The overlay watches the GDK monitor behind each frame. If one is invalidated while the selection is open, the overlay closes every surface, saves nothing, logs `monitor <connector> was disconnected during the selection` and sends a capture-failed notification. The daemon then takes the next trigger as usual. The signal handlers are disconnected when the overlay finishes, so they don't keep the frames alive.
+
+Checked on 2026-10-04 on headless sway 1.9 with two outputs, HEADLESS-1 at 1280x800 and HEADLESS-2 at 1920x1080 to its right. I opened the region overlay, then ran `swaymsg output HEADLESS-2 unplug`. The overlay closed, the notification showed, and a fullscreen capture right after worked on the remaining monitor. `quit` exited cleanly. Unverified: a physical unplug on KDE and Hyprland.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).

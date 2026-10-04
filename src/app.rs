@@ -17,7 +17,7 @@ use crate::clipboard::Clipboard;
 use crate::config::{self, Notifications};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
-use crate::overlay::{self, Selection};
+use crate::overlay::{self, Outcome, Selection};
 use crate::shortcuts::{PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland};
 use crate::storage::{self, Naming, last_region};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost, TrayOrigin};
@@ -517,7 +517,7 @@ fn handle_capture(
                 frames,
                 monitors,
                 move |selection| match selection {
-                    Some(Selection { rect, plan }) => {
+                    Outcome::Selected(Selection { rect, plan }) => {
                         remember_region(&session, rect);
                         log_selection(&selection_frames, plan);
                         deliver(
@@ -528,8 +528,16 @@ fn handle_capture(
                             session,
                         )
                     }
-                    None => {
+                    Outcome::Canceled => {
                         println!("kiekje: selection canceled, nothing saved");
+                        session.busy.set(false);
+                    }
+                    Outcome::MonitorLost(connector) => {
+                        let reason = format!(
+                            "monitor {connector} was disconnected during the selection, nothing was saved"
+                        );
+                        eprintln!("kiekje: {reason}");
+                        notify(&session, Notice::CaptureFailed { reason });
                         session.busy.set(false);
                     }
                 },
