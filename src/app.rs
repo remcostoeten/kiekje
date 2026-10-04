@@ -25,7 +25,7 @@ use crate::shortcuts::{
 use crate::storage::{self, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
-use crate::ui::settings;
+use crate::ui::{fonts, settings};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
@@ -119,6 +119,10 @@ pub fn run(command: Command) -> glib::ExitCode {
     if matches!(command, Command::Quit) {
         println!("kiekje: not running");
         return exit_without_running(&app, glib::ExitCode::SUCCESS);
+    }
+
+    for error in fonts::register() {
+        eprintln!("kiekje: {error}, using the system font");
     }
 
     let clipboard = match Clipboard::start() {
