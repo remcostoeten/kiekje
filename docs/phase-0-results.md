@@ -418,3 +418,13 @@ Tested on headless sway 1.9 with a virtual pointer: with notifications off, two 
 Settings have an About section between Shortcuts and the Danger zone: the name and version, one line on what Kiekje does, and where the config, library and thumbnail cache live, each with a Show button that reveals it in the file manager. Copy doctor report runs `kiekje doctor` as a subprocess with `NO_COLOR=1`, without blocking the window, and puts its plain text on the clipboard for a bug report. There is no update check: nothing is released yet, so there is no release feed to compare against. Showing a check that can't answer would be a placeholder.
 
 Tested on headless sway 1.9: clicking Copy doctor report showed "Copied the doctor report (32 lines)." Unverified: the Show buttons on a desktop with a file manager (the lab session has none), and Plasma, Hyprland and GNOME.
+
+## Gallery at 10,000 captures
+
+Lab run on 2026-10-04: headless sway 1.9 with the pixman renderer (GTK falls back to its cairo renderer), a 4-core Intel Xeon at 2.80 GHz in a cloud container, release build. The library held 10,001 captures, 10,000 of them generated 320x200 PNGs, and the thumbnail cache was empty. One run each, so these are single readings, not p50 or p95:
+
+- Opening the gallery made 257 thumbnails (GTK binds about that many grid items ahead) and cost 2.8 s of process CPU, including the 10,000-file missing check. RSS went from 171 MB to 353 MB.
+- 30 Page Down presses stayed inside the prebound items, so no new thumbnails were made; the 5.2 s of CPU they cost is software rendering of each scrolled frame.
+- End jumped to the last capture and made 257 more thumbnails. Only bound items get thumbnails, so a jump does not decode the 9,500 items in between.
+
+Since then, thumbnails for the gallery and the tray popover are decoded into textures on the worker that loads them, rather than on the GTK main thread. Unverified: a real GPU renderer, and timing on Plasma, Hyprland or GNOME.

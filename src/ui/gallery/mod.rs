@@ -357,22 +357,15 @@ impl Gallery {
         let picture = picture.downgrade();
         glib::spawn_future_local(async move {
             let source = PathBuf::from(&path);
-            let made = gio::spawn_blocking(move || thumbs::load(&thumbs::dir(), &source)).await;
-            let png = match made {
-                Ok(Ok(png)) => png,
+            let made = gio::spawn_blocking(move || thumbs::texture(&thumbs::dir(), &source)).await;
+            let texture = match made {
+                Ok(Ok(texture)) => texture,
                 Ok(Err(error)) => {
                     eprintln!("kiekje: no thumbnail: {error}");
                     return;
                 }
                 Err(_) => {
                     eprintln!("kiekje: the thumbnail worker stopped");
-                    return;
-                }
-            };
-            let texture = match gdk::Texture::from_bytes(&glib::Bytes::from_owned(png)) {
-                Ok(texture) => texture,
-                Err(error) => {
-                    eprintln!("kiekje: thumbnail for {path} unreadable: {error}");
                     return;
                 }
             };
