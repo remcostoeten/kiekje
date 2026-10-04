@@ -1,14 +1,13 @@
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 
-use gtk::gdk_pixbuf::Pixbuf;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::capture::{CaptureMode, LogicalRect};
-use crate::library::{self, Library};
+use crate::library::{self, Library, thumbs};
 use crate::overlay;
 use crate::ui;
 
@@ -352,9 +351,10 @@ fn load_recent(row: &gtk::Box) {
     let row = row.downgrade();
     glib::spawn_future_local(async move {
         let loaded = gio::spawn_blocking(move || {
+            let cache = thumbs::dir();
             recent_captures()
                 .into_iter()
-                .filter_map(|path| match thumbnail_png(&path) {
+                .filter_map(|path| match thumbs::load(&cache, &path) {
                     Ok(png) => Some((path, png)),
                     Err(error) => {
                         eprintln!("kiekje: no thumbnail for {}: {error}", path.display());
@@ -398,11 +398,6 @@ fn load_recent(row: &gtk::Box) {
             row.append(&gtk::Box::new(gtk::Orientation::Horizontal, 0));
         }
     });
-}
-
-fn thumbnail_png(path: &Path) -> Result<Vec<u8>, glib::Error> {
-    Pixbuf::from_file_at_scale(path, THUMBNAIL_WIDTH * 2, THUMBNAIL_HEIGHT * 2, true)?
-        .save_to_bufferv("png", &[])
 }
 
 fn thumbnail_button(path: PathBuf, texture: &gdk::Texture) -> gtk::Button {
