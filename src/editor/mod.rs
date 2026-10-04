@@ -18,18 +18,28 @@ use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
 
 use crate::capture::CaptureMode;
+use crate::config;
 use crate::library::{self, Library, NewCapture};
-use crate::output;
+use crate::output::{self, Image};
+use crate::storage::Naming;
 use crate::{storage, ui};
 use canvas::View;
 use document::{Area, Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
 use pixels::{LoadError, Picture};
 use render::Layers;
 
-/// The saved capture an editor window works on.
-pub struct Source {
-    pub path: PathBuf,
-    pub mode: CaptureMode,
+/// What an editor window works on: a saved capture, or a fresh one that is not on disk yet.
+pub enum Source {
+    File { path: PathBuf, mode: CaptureMode },
+    Capture { image: Image, mode: CaptureMode },
+}
+
+impl Source {
+    fn mode(&self) -> CaptureMode {
+        match self {
+            Self::File { mode, .. } | Self::Capture { mode, .. } => *mode,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -49,7 +59,8 @@ struct Prepared {
 }
 
 struct Editor {
-    source: Source,
+    mode: CaptureMode,
+    original: RefCell<Option<PathBuf>>,
     picture: Arc<Picture>,
     layers: Layers,
     document: RefCell<Document>,
@@ -73,21 +84,31 @@ struct Editor {
     discard: Cell<bool>,
 }
 
-/// Opens an editor window for a saved capture.
+/// Opens an editor window for a saved capture or a fresh one.
 ///
-/// The file loads off the main thread. Annotations never touch the original: saving writes a new
-/// file next to it and adds that file to the library.
+/// Pixels are prepared off the main thread. Annotations never touch a saved original: saving
+/// writes a new file next to it. A fresh capture is saved like any capture, through the filename
+/// template. Either way the new file joins the library.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// editor::open(&app, Source { path, mode: CaptureMode::Region });
+/// editor::open(&app, Source::File { path, mode: CaptureMode::Region });
 /// ```
 pub fn open(app: &gtk::Application, source: Source) {
     ui::load_stylesheet();
+    let mode = source.mode();
+    let (title, original, input) = match source {
+        Source::File { path, .. } => (
+            format!("Edit {}", file_name(&path)),
+            Some(path.clone()),
+            Input::File(path),
+        ),
+        Source::Capture { image, .. } => ("Annotate capture".to_owned(), None, Input::Image(image)),
+    };
     let window = gtk::Window::builder()
         .application(app)
-        .title(format!("Edit {}", file_name(&source.path)))
+        .title(title)
         .default_width(1100)
         .default_height(760)
         .css_classes(["settings-window"])
@@ -100,13 +121,12 @@ pub fn open(app: &gtk::Application, source: Source) {
     window.set_child(Some(&panel(&loading)));
     window.present();
 
-    let path = source.path.clone();
     glib::spawn_future_local(async move {
-        let prepared = gio::spawn_blocking(move || prepare(&path)).await;
+        let prepared = gio::spawn_blocking(move || prepare(input)).await;
         let failure = match prepared {
             Ok(Ok(prepared)) => match Layers::new(prepared.base, prepared.hidden) {
                 Ok(layers) => {
-                    Editor::build(&window, source, prepared.picture, layers);
+                    Editor::build(&window, mode, original, prepared.picture, layers);
                     return;
                 }
                 Err(error) => format!("The capture could not be shown: {error}"),
@@ -120,8 +140,16 @@ pub fn open(app: &gtk::Application, source: Source) {
     });
 }
 
-fn prepare(path: &Path) -> Result<Prepared, LoadError> {
-    let picture = Picture::from_image(&pixels::decode(path)?);
+enum Input {
+    File(PathBuf),
+    Image(Image),
+}
+
+fn prepare(input: Input) -> Result<Prepared, LoadError> {
+    let picture = match input {
+        Input::File(path) => Picture::from_image(&pixels::decode(&path)?),
+        Input::Image(image) => Picture::from_image(&image),
+    };
     let hidden = picture.mosaic(pixels::block_size(picture.width, picture.height));
     Ok(Prepared {
         base: picture.clone(),
@@ -147,7 +175,18 @@ fn file_name(path: &Path) -> String {
 }
 
 impl Editor {
-    fn build(window: &gtk::Window, source: Source, picture: Picture, layers: Layers) {
+    fn build(
+        window: &gtk::Window,
+        mode: CaptureMode,
+        original: Option<PathBuf>,
+        picture: Picture,
+        layers: Layers,
+    ) {
+        let document = if original.is_some() {
+            Document::default()
+        } else {
+            Document::unsaved()
+        };
         let canvas = gtk::DrawingArea::builder()
             .hexpand(true)
             .vexpand(true)
@@ -162,10 +201,11 @@ impl Editor {
             .css_classes(["note"])
             .build();
         let editor = Rc::new(Self {
-            source,
+            mode,
+            original: RefCell::new(original),
             picture: Arc::new(picture),
             layers,
-            document: RefCell::new(Document::default()),
+            document: RefCell::new(document),
             tool: Cell::new(Tool::default()),
             color: Cell::new(Color::default()),
             weight: Cell::new(Weight::default()),
@@ -382,16 +422,21 @@ impl Editor {
         let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };
-        let original = self.source.path.clone();
-        let mode = self.source.mode;
+        let original = self.original.borrow().clone();
+        let mode = self.mode;
         let editor = self.clone();
         glib::spawn_future_local(async move {
-            let saved =
-                gio::spawn_blocking(move || write(&picture, &shapes, crop, &original, mode)).await;
+            let saved = gio::spawn_blocking(move || {
+                write(&picture, &shapes, crop, original.as_deref(), mode)
+            })
+            .await;
             editor.busy.set(false);
             match saved {
                 Ok(Ok(path)) => {
                     editor.document.borrow_mut().mark_saved();
+                    if editor.original.borrow().is_none() {
+                        editor.original.replace(Some(path.clone()));
+                    }
                     editor.discard.set(false);
                     editor.say(&format!("Saved {}", storage::tilde(&path)), false);
                 }
@@ -430,24 +475,37 @@ fn write(
     picture: &Picture,
     shapes: &[Shape],
     crop: Option<Area>,
-    original: &Path,
+    original: Option<&Path>,
     mode: CaptureMode,
 ) -> Result<PathBuf, SaveError> {
     let image = render::flatten(picture, shapes, crop)?;
     let (width, height) = (image.width, image.height);
     let png = output::encode_png(image).map_err(SaveError::Encode)?;
-    let folder = original
-        .parent()
-        .map_or_else(storage::default_captures_dir, Path::to_path_buf);
-    let stem = original
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "kiekje".to_owned());
-    let path = storage::save_png(&png, &folder, &edited_base(&stem)).map_err(|source| {
-        SaveError::Write {
-            folder: folder.clone(),
-            source,
+    let (folder, base) = match original {
+        Some(original) => {
+            let folder = original
+                .parent()
+                .map_or_else(storage::default_captures_dir, Path::to_path_buf);
+            let stem = original
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "kiekje".to_owned());
+            (folder, edited_base(&stem))
         }
+        None => {
+            let storage = config::load().storage;
+            let base = storage.filename.render(&Naming {
+                mode,
+                stamp: storage::now(),
+                width,
+                height,
+            });
+            (storage.captures_dir(), base)
+        }
+    };
+    let path = storage::save_png(&png, &folder, &base).map_err(|source| SaveError::Write {
+        folder: folder.clone(),
+        source,
     })?;
     let capture = NewCapture {
         path: path.clone(),

@@ -93,6 +93,7 @@ impl Tray for Item {
                     mode: CaptureMode::Fullscreen,
                 },
             ),
+            command_item("Annotate region", TrayCommand::Annotate),
             command_item(
                 "Repeat last region",
                 TrayCommand::Capture {

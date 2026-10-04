@@ -312,7 +312,7 @@ impl Gallery {
             self.say("The editor needs the running app", true);
             return;
         };
-        editor::open(&app, editor::Source { path, mode });
+        editor::open(&app, editor::Source::File { path, mode });
     }
 
     fn locate(self: &Rc<Self>, path: PathBuf) {

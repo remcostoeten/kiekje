@@ -15,6 +15,7 @@ use crate::capture::{
 };
 use crate::clipboard::Clipboard;
 use crate::config::{self, Notifications};
+use crate::editor;
 use crate::library::{self, Library, NewCapture, thumbs};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
@@ -62,11 +63,12 @@ pub struct Request {
     pub mode: CaptureMode,
     pub backend: BackendChoice,
     pub save: bool,
+    pub edit: bool,
     pub delay: Duration,
     pub trigger_us: i64,
 }
 
-type RequestVariant = (String, String, bool, u32, i64);
+type RequestVariant = (String, String, bool, bool, u32, i64);
 
 impl Request {
     fn saved(mode: CaptureMode) -> Self {
@@ -74,6 +76,7 @@ impl Request {
             mode,
             backend: BackendChoice::Auto,
             save: true,
+            edit: false,
             delay: Duration::ZERO,
             trigger_us: glib::monotonic_time(),
         }
@@ -84,6 +87,7 @@ impl Request {
             self.mode.as_str().to_owned(),
             self.backend.as_str().to_owned(),
             self.save,
+            self.edit,
             u32::try_from(self.delay.as_millis()).unwrap_or(u32::MAX),
             self.trigger_us,
         )
@@ -91,11 +95,12 @@ impl Request {
     }
 
     fn from_variant(variant: &glib::Variant) -> Option<Self> {
-        let (mode, backend, save, delay_ms, trigger_us) = variant.get::<RequestVariant>()?;
+        let (mode, backend, save, edit, delay_ms, trigger_us) = variant.get::<RequestVariant>()?;
         Some(Self {
             mode: CaptureMode::parse(&mode)?,
             backend: BackendChoice::parse(&backend)?,
             save,
+            edit,
             delay: Duration::from_millis(u64::from(delay_ms)),
             trigger_us,
         })
@@ -409,7 +414,18 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
     match command {
         TrayCommand::Capture { mode } => {
             println!("kiekje: tray capture-{}", mode.as_str());
-            capture_after_menu(app, session, mode);
+            capture_after_menu(app, session, Request::saved(mode));
+        }
+        TrayCommand::Annotate => {
+            println!("kiekje: tray annotate-region");
+            capture_after_menu(
+                app,
+                session,
+                Request {
+                    edit: true,
+                    ..Request::saved(CaptureMode::Region)
+                },
+            );
         }
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
@@ -418,11 +434,15 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
     }
 }
 
-fn capture_after_menu(app: &gtk::Application, session: &Rc<Session>, mode: CaptureMode) {
+fn capture_after_menu(app: &gtk::Application, session: &Rc<Session>, request: Request) {
     let app = app.clone();
     let session = session.clone();
     glib::timeout_add_local_once(TRAY_MENU_CLOSE, move || {
-        start_capture(&app, Request::saved(mode), &session)
+        let request = Request {
+            trigger_us: glib::monotonic_time(),
+            ..request
+        };
+        start_capture(&app, request, &session)
     });
 }
 
@@ -446,7 +466,7 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
             match pick {
                 Pick::Capture(mode) => {
                     println!("kiekje: menu capture-{}", mode.as_str());
-                    capture_after_menu(&app, &session, mode);
+                    capture_after_menu(&app, &session, Request::saved(mode));
                 }
                 Pick::OpenCaptures => open_captures(),
                 Pick::Settings => open_settings(&app, &session),
@@ -868,6 +888,10 @@ fn remember_region(session: &Session, region: LogicalRect) {
 type Render = Box<dyn FnOnce() -> Option<Image> + Send>;
 
 fn deliver(render: Render, request: Request, session: Rc<Session>) {
+    if request.edit {
+        annotate(render, request, session);
+        return;
+    }
     let clipboard = session.clipboard.clone();
     let mut copied = false;
     let render: Render = match clipboard {
@@ -913,6 +937,40 @@ fn deliver(render: Render, request: Request, session: Rc<Session>) {
                 session.busy.set(false);
             }
         }
+    });
+}
+
+fn annotate(render: Render, request: Request, session: Rc<Session>) {
+    glib::spawn_future_local(async move {
+        let rendered = gio::spawn_blocking(render).await;
+        session.busy.set(false);
+        let image = match rendered {
+            Ok(Some(image)) => image,
+            Ok(None) => {
+                notify(&session, empty_notice());
+                return;
+            }
+            Err(_) => {
+                eprintln!("kiekje: the render worker stopped");
+                return;
+            }
+        };
+        let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() else {
+            eprintln!("kiekje: no running app to open the editor in");
+            return;
+        };
+        log_timing(
+            "trigger -> editor opening",
+            request.trigger_us,
+            glib::monotonic_time(),
+        );
+        editor::open(
+            &app,
+            editor::Source::Capture {
+                image,
+                mode: request.mode,
+            },
+        );
     });
 }
 
@@ -1134,10 +1192,12 @@ mod tests {
             mode: CaptureMode::Repeat,
             backend: BackendChoice::Wlroots,
             save: false,
+            edit: true,
             delay: Duration::from_secs(3),
             trigger_us: 42,
         };
         let decoded = Request::from_variant(&request.to_variant()).unwrap();
+        assert!(decoded.edit);
         assert_eq!(decoded.mode, CaptureMode::Repeat);
         assert_eq!(decoded.backend, BackendChoice::Wlroots);
         assert!(!decoded.save);

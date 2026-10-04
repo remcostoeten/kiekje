@@ -10,6 +10,7 @@ pub use sni::SniTray;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayCommand {
     Capture { mode: CaptureMode },
+    Annotate,
     OpenMenu { x: i32, y: i32 },
     OpenCaptures,
     OpenGallery,

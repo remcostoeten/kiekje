@@ -324,6 +324,20 @@ pub struct Document {
 }
 
 impl Document {
+    /// Starts a document whose picture is not on disk yet, so closing it asks first.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let document = Document::unsaved();
+    /// ```
+    pub fn unsaved() -> Self {
+        Self {
+            saved: usize::MAX,
+            ..Self::default()
+        }
+    }
+
     pub fn shapes(&self) -> &[Shape] {
         &self.shapes
     }
@@ -645,6 +659,14 @@ mod tests {
         assert!(document.is_modified());
         document.undo();
         assert!(document.is_modified());
+    }
+
+    #[test]
+    fn counts_a_fresh_capture_as_unsaved() {
+        let mut document = Document::unsaved();
+        assert!(document.is_modified());
+        document.mark_saved();
+        assert!(!document.is_modified());
     }
 
     #[test]

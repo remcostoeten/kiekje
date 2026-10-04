@@ -149,6 +149,12 @@ const FLAGS: &[Entry] = &[
         note: "(default: 0)",
     },
     Entry {
+        name: "--edit",
+        argument: "",
+        description: "Open the result in the annotation editor",
+        note: "",
+    },
+    Entry {
         name: "--no-save",
         argument: "",
         description: "Copy to the clipboard without writing a file",
@@ -162,6 +168,7 @@ const EXAMPLES: &[(&str, &str)] = &[
         "Open a menu, then capture after 5 seconds",
         "capture --delay 5",
     ),
+    ("Select a region and annotate it", "capture --edit"),
     (
         "Grab every monitor through KWin, clipboard only",
         "capture fullscreen --backend kwin --no-save",
