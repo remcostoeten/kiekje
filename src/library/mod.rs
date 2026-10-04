@@ -1,0 +1,329 @@
+use std::path::{Path, PathBuf};
+
+use gtk::glib;
+use rusqlite::{Connection, params};
+use thiserror::Error;
+
+use crate::capture::CaptureMode;
+
+const SCHEMA: &[&str] = &["CREATE TABLE captures (
+        id INTEGER PRIMARY KEY,
+        path TEXT NOT NULL UNIQUE,
+        mode TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        bytes INTEGER NOT NULL,
+        created_us INTEGER NOT NULL,
+        missing INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX captures_created ON captures (created_us DESC);"];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Capture {
+    pub id: i64,
+    pub path: PathBuf,
+    pub mode: CaptureMode,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
+    pub created_us: i64,
+    pub missing: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewCapture {
+    pub path: PathBuf,
+    pub mode: CaptureMode,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
+    pub created_us: i64,
+}
+
+#[derive(Debug, Error)]
+pub enum LibraryError {
+    #[error("could not create {}: {source}", path.display())]
+    Folder {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("library database: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("the library was written by a newer build (schema {0}, this build reads up to {max})", max = SCHEMA.len())]
+    Newer(i64),
+    #[error("{0} is not valid UTF-8, so it can't be stored")]
+    Path(PathBuf),
+}
+
+pub struct Library {
+    connection: Connection,
+}
+
+/// Returns `$XDG_DATA_HOME/kiekje/library.db`.
+///
+/// # Examples
+///
+/// ```ignore
+/// let library = Library::open(&library::path())?;
+/// ```
+pub fn path() -> PathBuf {
+    glib::user_data_dir().join("kiekje").join("library.db")
+}
+
+impl Library {
+    /// Opens the library at `path`, creating it and bringing its schema up to date.
+    ///
+    /// Touches the disk, so call it off the GTK main thread.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let library = Library::open(&library::path())?;
+    /// ```
+    pub fn open(path: &Path) -> Result<Self, LibraryError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| LibraryError::Folder {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        let connection = Connection::open(path)?;
+        connection.busy_timeout(std::time::Duration::from_secs(2))?;
+        connection.pragma_update(None, "journal_mode", "WAL")?;
+        let mut library = Self { connection };
+        library.migrate()?;
+        Ok(library)
+    }
+
+    fn migrate(&mut self) -> Result<(), LibraryError> {
+        let version: i64 = self
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        let latest = i64::try_from(SCHEMA.len()).unwrap_or(i64::MAX);
+        if version > latest {
+            return Err(LibraryError::Newer(version));
+        }
+        let transaction = self.connection.transaction()?;
+        for (index, step) in SCHEMA
+            .iter()
+            .enumerate()
+            .skip(usize::try_from(version).unwrap_or(0))
+        {
+            transaction.execute_batch(step)?;
+            transaction.pragma_update(None, "user_version", index + 1)?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Records a saved capture and returns its id; saving the same path again updates it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let id = library.insert(&NewCapture { path, mode, width, height, bytes, created_us })?;
+    /// ```
+    pub fn insert(&self, capture: &NewCapture) -> Result<i64, LibraryError> {
+        let path = text(&capture.path)?;
+        let id = self.connection.query_row(
+            "INSERT INTO captures (path, mode, width, height, bytes, created_us, missing)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)
+             ON CONFLICT (path) DO UPDATE SET
+                mode = excluded.mode, width = excluded.width, height = excluded.height,
+                bytes = excluded.bytes, created_us = excluded.created_us, missing = 0
+             RETURNING id",
+            params![
+                path,
+                capture.mode.as_str(),
+                capture.width,
+                capture.height,
+                i64::try_from(capture.bytes).unwrap_or(i64::MAX),
+                capture.created_us,
+            ],
+            |row| row.get(0),
+        )?;
+        Ok(id)
+    }
+
+    /// Returns up to `limit` captures that are still on disk, newest first.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let shown = library.recent(4)?;
+    /// ```
+    pub fn recent(&self, limit: usize) -> Result<Vec<Capture>, LibraryError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, path, mode, width, height, bytes, created_us, missing FROM captures
+             WHERE missing = 0 ORDER BY created_us DESC, id DESC LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![i64::try_from(limit).unwrap_or(i64::MAX)], row)?;
+        let mut captures = Vec::new();
+        for capture in rows {
+            if let Some(capture) = capture? {
+                captures.push(capture);
+            }
+        }
+        Ok(captures)
+    }
+
+    /// Marks every capture whose file is gone as missing, and clears the mark when it is back.
+    ///
+    /// Returns how many records changed state. Stats every file, so call it off the GTK main thread.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let changed = library.check_missing()?;
+    /// ```
+    pub fn check_missing(&mut self) -> Result<usize, LibraryError> {
+        let entries: Vec<(i64, String, bool)> = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT id, path, missing FROM captures")?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let transaction = self.connection.transaction()?;
+        let mut changed = 0;
+        for (id, path, missing) in entries {
+            let gone = !Path::new(&path).is_file();
+            if gone != missing {
+                transaction.execute(
+                    "UPDATE captures SET missing = ?1 WHERE id = ?2",
+                    params![gone, id],
+                )?;
+                changed += 1;
+            }
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+}
+
+fn text(path: &Path) -> Result<&str, LibraryError> {
+    path.to_str()
+        .ok_or_else(|| LibraryError::Path(path.to_path_buf()))
+}
+
+fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Capture>> {
+    let mode: String = row.get(2)?;
+    let path: String = row.get(1)?;
+    let bytes: i64 = row.get(5)?;
+    let Some(mode) = CaptureMode::parse(&mode) else {
+        eprintln!("kiekje: skipped library entry {path} with unknown mode {mode}");
+        return Ok(None);
+    };
+    Ok(Some(Capture {
+        id: row.get(0)?,
+        path: PathBuf::from(path),
+        mode,
+        width: row.get(3)?,
+        height: row.get(4)?,
+        bytes: u64::try_from(bytes).unwrap_or(0),
+        created_us: row.get(6)?,
+        missing: row.get(7)?,
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("kiekje-library-{name}-{}", std::process::id()));
+        // A leftover folder from an earlier run may or may not exist.
+        let _ = std::fs::remove_dir_all(&folder);
+        folder
+    }
+
+    fn capture(path: &Path, created_us: i64) -> NewCapture {
+        NewCapture {
+            path: path.to_path_buf(),
+            mode: CaptureMode::Region,
+            width: 640,
+            height: 400,
+            bytes: 1234,
+            created_us,
+        }
+    }
+
+    #[test]
+    fn creates_the_schema_once_and_reopens() {
+        let folder = scratch("open");
+        let path = folder.join("library.db");
+        let library = Library::open(&path).unwrap();
+        library.insert(&capture(&folder.join("a.png"), 1)).unwrap();
+        drop(library);
+        let reopened = Library::open(&path).unwrap();
+        assert_eq!(reopened.recent(5).unwrap()[0].path, folder.join("a.png"));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_library_from_a_newer_build() {
+        let folder = scratch("newer");
+        let path = folder.join("library.db");
+        drop(Library::open(&path).unwrap());
+        Connection::open(&path)
+            .unwrap()
+            .pragma_update(None, "user_version", 99)
+            .unwrap();
+        assert!(matches!(Library::open(&path), Err(LibraryError::Newer(99))));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn lists_recent_captures_newest_first_and_skips_missing_ones() {
+        let folder = scratch("recent");
+        let mut library = Library::open(&folder.join("library.db")).unwrap();
+        for (name, created) in [("old.png", 1), ("new.png", 3), ("mid.png", 2)] {
+            std::fs::write(folder.join(name), b"png").unwrap();
+            library
+                .insert(&capture(&folder.join(name), created))
+                .unwrap();
+        }
+        let names = |library: &Library| -> Vec<String> {
+            library
+                .recent(10)
+                .unwrap()
+                .into_iter()
+                .map(|capture| {
+                    capture
+                        .path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        };
+        assert_eq!(names(&library), ["new.png", "mid.png", "old.png"]);
+
+        std::fs::remove_file(folder.join("mid.png")).unwrap();
+        assert_eq!(library.check_missing().unwrap(), 1);
+        assert_eq!(names(&library), ["new.png", "old.png"]);
+
+        std::fs::write(folder.join("mid.png"), b"png").unwrap();
+        assert_eq!(library.check_missing().unwrap(), 1);
+        assert_eq!(names(&library), ["new.png", "mid.png", "old.png"]);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn updates_a_capture_saved_to_the_same_path() {
+        let folder = scratch("upsert");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let path = folder.join("shot.png");
+        let first = library.insert(&capture(&path, 1)).unwrap();
+        let mut again = capture(&path, 5);
+        again.width = 10;
+        assert_eq!(library.insert(&again).unwrap(), first);
+        let recent = library.recent(5).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].width, 10);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+}

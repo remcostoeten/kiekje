@@ -15,6 +15,7 @@ use crate::capture::{
 };
 use crate::clipboard::Clipboard;
 use crate::config::{self, Notifications};
+use crate::library::{self, Library, NewCapture};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
@@ -151,6 +152,7 @@ pub fn run(command: Command) -> glib::ExitCode {
     register_shortcuts(&app, &session);
     start_tray(&app, &session);
     write_default_config();
+    check_library();
     let hold = app.hold();
     let initial = Cell::new(Some(command));
     app.connect_activate(move |app| match initial.take() {
@@ -424,12 +426,8 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let captures_dir = gio::spawn_blocking(|| config::load().storage.captures_dir())
-            .await
-            .unwrap_or_else(|_| storage::default_captures_dir());
         let content = popover::Content {
             shortcuts: session.shortcut_labels.borrow().clone(),
-            captures_dir,
         };
         let pick_app = app.downgrade();
         let pick_session = Rc::downgrade(&session);
@@ -904,6 +902,36 @@ fn notify(session: &Session, notice: Notice) {
     }
 }
 
+fn record(path: &std::path::Path, mode: CaptureMode, width: u32, height: u32, bytes: usize) {
+    let capture = NewCapture {
+        path: path.to_path_buf(),
+        mode,
+        width,
+        height,
+        bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
+        created_us: glib::real_time(),
+    };
+    if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
+    {
+        eprintln!("kiekje: the capture is saved but not in the library: {error}");
+    }
+}
+
+fn check_library() {
+    glib::spawn_future_local(async {
+        let checked = gio::spawn_blocking(|| {
+            Library::open(&library::path()).and_then(|mut library| library.check_missing())
+        })
+        .await;
+        match checked {
+            Ok(Ok(0)) => {}
+            Ok(Ok(changed)) => println!("kiekje: {changed} library entries changed missing state"),
+            Ok(Err(error)) => eprintln!("kiekje: library check failed: {error}"),
+            Err(_) => eprintln!("kiekje: the library worker stopped"),
+        }
+    });
+}
+
 fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: bool) -> Notice {
     let (width, height) = (image.width, image.height);
     let png = match output::encode_png(image) {
@@ -950,6 +978,7 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
     match storage::save_png(&png, &directory, &base) {
         Ok(path) => {
             println!("kiekje: saved {}", path.display());
+            record(&path, request.mode, width, height, png.len());
             Notice::Saved {
                 path,
                 width,
