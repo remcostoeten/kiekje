@@ -6,7 +6,7 @@ The architecture, capability matrix, phases and acceptance tests live in [`docs/
 
 ## Status
 
-Phase 0 is done, phase 1 code is in, phase 2 has started with the capture library and its thumbnail cache. Phase 1 has lab coverage on five desktops, overlay warm-up, portal global shortcuts, selection across monitors, the tray with its native menu, the TOML config with filename templates, capture delay, repeat last region, notifications with sound, the styled tray popover, the shortcut recorder and bundled fonts. Phase 1 still needs real-hardware runs on Omarchy, Plasma and GNOME. Nothing is released. Results live in [`docs/phase-0-results.md`](./docs/phase-0-results.md).
+Phase 0 is done, phase 1 code is in, phase 2 has started: the capture library, its thumbnail cache and a gallery grid are in; list view, filters, search and file actions are next. Phase 1 has lab coverage on five desktops, overlay warm-up, portal global shortcuts, selection across monitors, the tray with its native menu, the TOML config with filename templates, capture delay, repeat last region, notifications with sound, the styled tray popover, the shortcut recorder and bundled fonts. Phase 1 still needs real-hardware runs on Omarchy, Plasma and GNOME. Nothing is released. Results live in [`docs/phase-0-results.md`](./docs/phase-0-results.md).
 
 Decided:
 

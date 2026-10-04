@@ -22,6 +22,7 @@ pub enum Pick {
     Capture(CaptureMode),
     OpenCaptures,
     Settings,
+    Gallery,
     Quit,
 }
 
@@ -246,7 +247,19 @@ fn panel(
         panel.append(&button);
     }
 
-    panel.append(&caps("Recent"));
+    let recent_header = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    let recent_label = caps("Recent");
+    recent_label.set_hexpand(true);
+    recent_header.append(&recent_label);
+    let gallery = action_button("Gallery", None, "ghost");
+    gallery.add_css_class("compact");
+    gallery.set_hexpand(false);
+    connect_pick(&gallery, window, picked, Pick::Gallery);
+    recent_header.append(&gallery);
+    panel.append(&recent_header);
     let recent = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)

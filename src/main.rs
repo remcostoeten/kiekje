@@ -46,6 +46,7 @@ fn main() -> glib::ExitCode {
         Some("quit") => app::run(Command::Quit),
         Some("menu") => app::run(Command::Menu),
         Some("settings") => app::run(Command::Settings),
+        Some("gallery") => app::run(Command::Gallery),
         Some("doctor") => {
             doctor::run();
             glib::ExitCode::SUCCESS
