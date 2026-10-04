@@ -54,8 +54,10 @@ fn decode(bytes: &[u8]) -> Result<Icon, IconError> {
 }
 
 fn argb(rgba: &[u8]) -> Vec<u8> {
-    rgba.chunks_exact(4)
-        .flat_map(|pixel| [pixel[3], pixel[0], pixel[1], pixel[2]])
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|&[red, green, blue, alpha]| [alpha, red, green, blue])
         .collect()
 }
 
@@ -69,7 +71,13 @@ mod tests {
         assert_eq!(sizes, [16, 22, 24, 32, 48]);
         for icon in pixmaps() {
             assert_eq!(icon.data.len(), (icon.width * icon.height * 4) as usize);
-            assert!(icon.data.chunks_exact(4).any(|pixel| pixel[0] == 255));
+            assert!(
+                icon.data
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .any(|pixel| pixel[0] == 255)
+            );
         }
     }
 
