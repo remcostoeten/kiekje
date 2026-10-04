@@ -623,9 +623,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
-            .await
-            .unwrap_or_default();
+        let config = gio::spawn_blocking(config::load).await.unwrap_or_default();
         if session.settings.borrow().is_some() {
             return;
         }
@@ -642,7 +640,9 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             })
             .collect();
         let model = settings::Model {
-            shortcuts,
+            shortcuts: config.shortcuts,
+            storage: config.storage,
+            notifications: config.notifications,
             host: session.shortcut_host.borrow().clone(),
             bound,
         };

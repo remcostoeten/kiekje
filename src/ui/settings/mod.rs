@@ -1,3 +1,5 @@
+mod general;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
@@ -6,7 +8,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
-use crate::config::{self, ConfigError};
+use crate::config::{self, ConfigError, Notifications, Storage};
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, record,
 };
@@ -17,6 +19,8 @@ pub struct Model {
     pub shortcuts: Shortcuts,
     pub host: ShortcutHost,
     pub bound: Vec<(ShortcutAction, String)>,
+    pub storage: Storage,
+    pub notifications: Notifications,
 }
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
@@ -33,7 +37,7 @@ struct Editor {
 
 /// Opens the settings window, or brings the open one to the front.
 ///
-/// On Hyprland each shortcut can be recorded and is saved to the config and the managed bind
+/// Saving and notification changes are written to the config right away. On Hyprland each shortcut can be recorded and is saved to the config and the managed bind
 /// file. Where the desktop owns the keys, the rows show its bindings and say where to change them.
 ///
 /// # Examples
@@ -51,7 +55,8 @@ pub fn show(
     let window = gtk::Window::builder()
         .application(app)
         .title("Kiekje settings")
-        .default_width(520)
+        .default_width(560)
+        .default_height(640)
         .css_classes(["settings-window"])
         .build();
 
@@ -60,6 +65,7 @@ pub fn show(
         .spacing(12)
         .css_classes(["panel", "settings"])
         .build();
+    general::append(&content, &model.storage, model.notifications);
     content.append(&caps("Shortcuts"));
     content.append(&note(&host_note(&model.host)));
 
@@ -123,7 +129,12 @@ pub fn show(
             "Click a shortcut, then press the new keys. Esc cancels, Backspace turns it off.",
         ));
     }
-    window.set_child(Some(&content));
+    window.set_child(Some(
+        &gtk::ScrolledWindow::builder()
+            .child(&content)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build(),
+    ));
 
     let editor = Rc::new(Editor {
         host: model.host,
