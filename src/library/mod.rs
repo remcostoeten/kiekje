@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::capture::CaptureMode;
 
+pub mod query;
 pub mod thumbs;
 
 const SCHEMA: &[&str] = &["CREATE TABLE captures (

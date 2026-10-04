@@ -146,31 +146,44 @@ window.settings-window {
 }
 
 .gallery gridview,
+.gallery listview,
 .gallery scrolledwindow {
   background-color: transparent;
 }
 
-.gallery gridview > child {
+.gallery gridview > child,
+.gallery listview > row {
   padding: 6px;
   border-radius: var(--radius);
   transition: background-color 120ms ease-out;
 }
 
-.gallery gridview > child:hover {
+.gallery gridview > child:hover,
+.gallery listview > row:hover {
   background-color: var(--wash);
 }
 
-.gallery gridview > child:selected {
+.gallery gridview > child:selected,
+.gallery listview > row:selected {
   background-color: var(--accent-wash);
 }
 
-.gallery gridview > child:focus-visible {
+.gallery gridview > child:focus-visible,
+.gallery listview > row:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
 .card {
   color: var(--fg);
+}
+
+.gallery gridview > child box {
+  margin: 0;
+}
+
+.gallery gridview > child > box {
+  margin: 6px;
 }
 
 .card picture {
@@ -180,5 +193,47 @@ window.settings-window {
 
 .skeleton {
   background-color: var(--wash);
+  border-radius: var(--radius);
+}
+
+.panel button.chip {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  color: var(--muted);
+}
+
+.panel button.chip:checked {
+  color: var(--fg);
+  border: 1px solid var(--accent);
+  background-color: var(--accent-wash);
+}
+
+.gallery entry {
+  background-color: transparent;
+  color: var(--fg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  box-shadow: none;
+  min-height: 32px;
+}
+
+.gallery entry:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.gallery dropdown > button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 4px 10px;
+}
+
+.row picture {
+  border: 1px dashed var(--line);
   border-radius: var(--radius);
 }
