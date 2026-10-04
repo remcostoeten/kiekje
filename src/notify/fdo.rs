@@ -9,12 +9,11 @@ use gtk::prelude::*;
 
 use super::{Notice, NoticeAction, Urgency};
 use crate::app::APP_ID;
+use crate::ui::files;
 
 const DESTINATION: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
-const FILE_MANAGER: &str = "org.freedesktop.FileManager1";
-const FILE_MANAGER_PATH: &str = "/org/freedesktop/FileManager1";
 const CALL_TIMEOUT_MS: i32 = 2000;
 
 type Targets = Rc<RefCell<HashMap<u32, PathBuf>>>;
@@ -37,7 +36,6 @@ impl FdoNotifier {
     pub fn start(connection: gio::DBusConnection) -> Self {
         let targets: Targets = Rc::default();
         let invoked_targets = targets.clone();
-        let invoked_connection = connection.clone();
         let invoked = connection.subscribe_to_signal(
             Some(DESTINATION),
             Some(INTERFACE),
@@ -54,7 +52,7 @@ impl FdoNotifier {
                     return;
                 };
                 match NoticeAction::parse(&action) {
-                    Some(action) => run_action(&invoked_connection, action, path),
+                    Some(action) => run_action(action, path),
                     None => eprintln!("kiekje: ignored unknown notification action {action}"),
                 }
             },
@@ -157,43 +155,9 @@ impl FdoNotifier {
     }
 }
 
-fn run_action(connection: &gio::DBusConnection, action: NoticeAction, path: PathBuf) {
-    let connection = connection.clone();
-    glib::spawn_future_local(async move {
-        let uri = gio::File::for_path(&path).uri();
-        match action {
-            NoticeAction::Open => open_uri(&uri).await,
-            NoticeAction::ShowInFolder => {
-                let shown = connection
-                    .call_future(
-                        Some(FILE_MANAGER),
-                        FILE_MANAGER_PATH,
-                        FILE_MANAGER,
-                        "ShowItems",
-                        Some(&(vec![uri.to_string()], "").to_variant()),
-                        None,
-                        DBusCallFlags::NONE,
-                        CALL_TIMEOUT_MS,
-                    )
-                    .await;
-                if let Err(error) = shown {
-                    println!(
-                        "kiekje: no file manager service ({}), opening the folder",
-                        error.message()
-                    );
-                    if let Some(folder) = path.parent() {
-                        open_uri(&gio::File::for_path(folder).uri()).await;
-                    }
-                }
-            }
-        }
-    });
-}
-
-async fn open_uri(uri: &str) {
-    if let Err(error) =
-        gio::AppInfo::launch_default_for_uri_future(uri, gio::AppLaunchContext::NONE).await
-    {
-        eprintln!("kiekje: could not open {uri}: {error}");
-    }
+fn run_action(action: NoticeAction, path: PathBuf) {
+    match action {
+        NoticeAction::Open => glib::spawn_future_local(files::open(path)),
+        NoticeAction::ShowInFolder => glib::spawn_future_local(files::reveal(path)),
+    };
 }

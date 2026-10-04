@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
-use super::Gallery;
+use super::{Gallery, actions};
 use crate::library::Capture;
 
 const CARD_WIDTH: i32 = 220;
@@ -17,9 +17,9 @@ enum Shape {
     Row,
 }
 
-pub(super) fn grid(gallery: &Rc<Gallery>, selection: &gtk::SingleSelection) -> gtk::GridView {
+pub(super) fn grid(gallery: &Rc<Gallery>) -> gtk::GridView {
     let grid = gtk::GridView::builder()
-        .model(selection)
+        .model(&gallery.selection)
         .factory(&factory(gallery, Shape::Card))
         .max_columns(8)
         .min_columns(1)
@@ -29,9 +29,9 @@ pub(super) fn grid(gallery: &Rc<Gallery>, selection: &gtk::SingleSelection) -> g
     grid
 }
 
-pub(super) fn list(gallery: &Rc<Gallery>, selection: &gtk::SingleSelection) -> gtk::ListView {
+pub(super) fn list(gallery: &Rc<Gallery>) -> gtk::ListView {
     let list = gtk::ListView::builder()
-        .model(selection)
+        .model(&gallery.selection)
         .factory(&factory(gallery, Shape::Row))
         .single_click_activate(false)
         .build();
@@ -41,10 +41,34 @@ pub(super) fn list(gallery: &Rc<Gallery>, selection: &gtk::SingleSelection) -> g
 
 fn factory(gallery: &Rc<Gallery>, shape: Shape) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
+    let menus = Rc::downgrade(gallery);
     factory.connect_setup(move |_, object| {
-        if let Some(item) = object.downcast_ref::<gtk::ListItem>() {
-            item.set_child(Some(&item_widget(shape)));
-        }
+        let Some(item) = object.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let widget = item_widget(shape);
+        let click = gtk::GestureClick::builder()
+            .button(gdk::BUTTON_SECONDARY)
+            .build();
+        let target = item.downgrade();
+        let menus = menus.clone();
+        click.connect_pressed(move |click, _, x, y| {
+            let (Some(item), Some(gallery), Some(widget)) =
+                (target.upgrade(), menus.upgrade(), click.widget())
+            else {
+                return;
+            };
+            gallery.selection.set_selected(item.position());
+            let menus = gallery.menus.borrow();
+            let menu = menus
+                .iter()
+                .find(|menu| menu.parent().is_some_and(|view| widget.is_ancestor(&view)));
+            if let Some(menu) = menu {
+                actions::show_at(menu, &widget, x, y);
+            }
+        });
+        widget.add_controller(click);
+        item.set_child(Some(&widget));
     });
     let binding = Rc::downgrade(gallery);
     factory.connect_bind(move |_, object| {
