@@ -349,3 +349,12 @@ window.settings-window {
 .settings checkbutton:disabled check {
   opacity: 0.5;
 }
+
+.panel button.danger {
+  min-width: 150px;
+}
+
+.panel button.danger.armed {
+  border: 1px solid var(--accent);
+  background-color: var(--accent-wash);
+}

@@ -1,3 +1,4 @@
+mod danger;
 mod general;
 
 use std::cell::{Cell, RefCell};
@@ -8,7 +9,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
-use crate::config::{self, ConfigError, Notifications, Storage};
+use crate::config::{self, Config, ConfigError, Notifications, Storage};
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, record,
 };
@@ -43,13 +44,14 @@ struct Editor {
 /// # Examples
 ///
 /// ```ignore
-/// let (window, handle) = settings::show(&app, model, |shortcuts| save(shortcuts), || configure());
+/// let (window, handle) = settings::show(&app, model, save, configure, reload_gallery);
 /// ```
 pub fn show(
     app: &gtk::Application,
     model: Model,
     on_saved: impl Fn(&Shortcuts) + 'static,
     on_configure: impl Fn() + 'static,
+    on_cleared: impl Fn() + 'static,
 ) -> (gtk::Window, Handle) {
     ui::load_stylesheet();
     let window = gtk::Window::builder()
@@ -65,7 +67,7 @@ pub fn show(
         .spacing(12)
         .css_classes(["panel", "settings"])
         .build();
-    general::append(&content, &model.storage, model.notifications);
+    let general = general::append(&content, &model.storage, model.notifications);
     content.append(&caps("Shortcuts"));
     content.append(&note(&host_note(&model.host)));
 
@@ -164,6 +166,23 @@ pub fn show(
             }
         });
     }
+
+    let reset_editor = Rc::downgrade(&editor);
+    let on_done: danger::DoneCallback = Rc::new(move |done| match done {
+        danger::Danger::ResetSettings => {
+            let defaults = Config::default();
+            if let Some(general) = general.upgrade() {
+                general.reset(&defaults);
+            }
+            if let Some(editor) = reset_editor.upgrade() {
+                editor.shortcuts.replace(defaults.shortcuts);
+                editor.stop();
+                (editor.on_saved)(&editor.shortcuts.borrow());
+            }
+        }
+        danger::Danger::ClearGallery | danger::Danger::ClearThumbnails => on_cleared(),
+    });
+    danger::append(&content, editor.host == ShortcutHost::Hyprland, on_done);
 
     let handle = Handle(Rc::downgrade(&editor));
     let keys = gtk::EventControllerKey::new();
