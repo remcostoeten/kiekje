@@ -2,6 +2,9 @@
 name = "kiekje"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+description = "Capture, mark up and keep screenshots"
+repository = "https://github.com/remcostoeten/kiekje"
 
 [dependencies]
 async-channel = "2"

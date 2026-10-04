@@ -14,4 +14,5 @@ install -Dm644 "$repo/packaging/dev.remcostoeten.Kiekje.desktop" "$root/share/ap
 for icon in "$repo"/resources/icons/hicolor/*/apps/*; do
     install -Dm644 "$icon" "$root/share/icons/hicolor/${icon#"$repo/resources/icons/hicolor/"}"
 done
+install -Dm644 "$repo/LICENSE" "$root/share/licenses/kiekje/LICENSE"
 install -Dm644 "$repo/resources/fonts/OFL.txt" "$root/share/licenses/kiekje/OFL-fonts.txt"

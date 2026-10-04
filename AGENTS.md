@@ -13,6 +13,8 @@ Decided:
 - New repo; `~/dev/kiekje` (Rust/GTK) and `~/dev/cheese/cheese-wails` (Wails) are reference only. Port ideas, not files.
 - The annotation editor is part of V1 (phase 2b).
 - Dark-only UI following the design system in proposal section 10.
+- The binary, packages and app id are `kiekje` and `dev.remcostoeten.Kiekje` (2026-10-04).
+- MIT license (2026-10-04). The bundled Geist fonts stay under the OFL.
 
 Open:
 
