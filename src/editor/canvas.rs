@@ -4,10 +4,11 @@ use gtk::prelude::*;
 use gtk::{cairo, gdk};
 
 use super::Editor;
-use super::document::{Point, Tool};
+use super::document::{Point, Shape, Tool};
 use super::render;
 
 const MIN_PEN_STEP: f64 = 1.0;
+const TEXT_REACH: f64 = 8.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct View {
@@ -81,9 +82,16 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         if let Some(editor) = started.upgrade() {
             editor.canvas.grab_focus();
             let point = editor.view.get().to_image(x, y, editor.size());
-            if editor.tool.get() == Tool::Select {
-                editor.grab(point);
-                return;
+            match editor.tool.get() {
+                Tool::Select => {
+                    editor.grab(point);
+                    return;
+                }
+                Tool::Text => {
+                    editor.start_text(point, None);
+                    return;
+                }
+                _ => {}
             }
             editor.draft.replace(vec![point]);
             editor.canvas.queue_draw();
@@ -99,14 +107,43 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     drag.connect_drag_end(move |gesture, dx, dy| {
         if let Some(editor) = ended.upgrade() {
             extend(&editor, gesture, dx, dy);
-            if editor.tool.get() == Tool::Select {
-                editor.release();
-            } else {
-                editor.commit();
+            match editor.tool.get() {
+                Tool::Select => editor.release(),
+                Tool::Text => {}
+                _ => editor.commit(),
             }
         }
     });
     editor.canvas.add_controller(drag);
+
+    let clicks = gtk::GestureClick::builder()
+        .button(gdk::BUTTON_PRIMARY)
+        .build();
+    let clicked = Rc::downgrade(editor);
+    clicks.connect_released(move |_, presses, x, y| {
+        let Some(editor) = clicked.upgrade() else {
+            return;
+        };
+        if presses != 2 || !matches!(editor.tool.get(), Tool::Select | Tool::Text) {
+            return;
+        }
+        let view = editor.view.get();
+        let point = view.to_image(x, y, editor.size());
+        let index = editor
+            .document
+            .borrow()
+            .hit(point, TEXT_REACH / view.zoom());
+        let is_text = index.is_some_and(|index| {
+            matches!(
+                editor.document.borrow().shapes().get(index),
+                Some(Shape::Text { .. })
+            )
+        });
+        if is_text {
+            editor.start_text(point, index);
+        }
+    });
+    editor.canvas.add_controller(clicks);
     editor.canvas.set_cursor_from_name(Some("crosshair"));
 }
 
@@ -115,9 +152,13 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
         return;
     };
     let point = editor.view.get().to_image(x + dx, y + dy, editor.size());
-    if editor.tool.get() == Tool::Select {
-        editor.drag_to(point);
-        return;
+    match editor.tool.get() {
+        Tool::Select => {
+            editor.drag_to(point);
+            return;
+        }
+        Tool::Text => return,
+        _ => {}
     }
     let mut draft = editor.draft.borrow_mut();
     let Some(&start) = draft.first() else {
@@ -149,16 +190,18 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
         let document = editor.document.borrow();
         let moving = editor.moving.borrow();
         let draft = editor.draft_shape();
-        let shapes =
-            document
-                .shapes()
-                .iter()
-                .enumerate()
-                .map(|(index, shape)| match moving.as_ref() {
-                    Some(moving) if moving.index == index => &moving.preview,
-                    _ => shape,
-                });
-        render::draw(cr, &editor.layers, shapes.chain(&draft))
+        let typed = editor.typed_shape();
+        let hidden = editor.typing_over();
+        let shapes = document
+            .shapes()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| hidden != Some(*index))
+            .map(|(index, shape)| match moving.as_ref() {
+                Some(moving) if moving.index == index => &moving.preview,
+                _ => shape,
+            });
+        render::draw(cr, &editor.layers, shapes.chain(&draft).chain(&typed))
     };
     cr.restore()?;
     drawn?;

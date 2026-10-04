@@ -152,6 +152,7 @@ fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(),
             cr.fill()
         }
         Shape::Step { at, number, stroke } => step(cr, *at, *number, *stroke),
+        Shape::Text { at, text, stroke } => write(cr, *at, text, *stroke),
         Shape::Pixelate { area } => {
             cr.rectangle(area.x, area.y, area.width, area.height);
             cr.clip();
@@ -161,6 +162,52 @@ fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(),
             cr.paint()
         }
     }
+}
+
+const FONT: &str = "Geist";
+
+/// Measures one line of annotation text in image pixels: its advance and its line height.
+///
+/// Falls back to a rough estimate if cairo cannot measure it.
+///
+/// # Examples
+///
+/// ```ignore
+/// let (width, height) = render::measure("Bug here", 28.0);
+/// ```
+pub fn measure(text: &str, size: f64) -> (f64, f64) {
+    let measured = cairo::ImageSurface::create(cairo::Format::ARgb32, 1, 1)
+        .and_then(|surface| cairo::Context::new(&surface))
+        .and_then(|cr| {
+            cr.select_font_face(FONT, cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+            cr.set_font_size(size);
+            let line = cr.font_extents()?;
+            let extents = cr.text_extents(text)?;
+            Ok((extents.x_advance(), line.ascent() + line.descent()))
+        });
+    measured.unwrap_or((text.chars().count() as f64 * size * 0.6, size * 1.2))
+}
+
+fn write(cr: &cairo::Context, at: Point, text: &str, stroke: Stroke) -> Result<(), cairo::Error> {
+    let size = shapes::font_size(stroke.width);
+    cr.select_font_face(FONT, cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.set_font_size(size);
+    let line = cr.font_extents()?;
+    cr.move_to(at.x, at.y + line.ascent());
+    cr.text_path(text);
+    let halo = if stroke.color == Color::Black {
+        Color::White
+    } else {
+        Color::Black
+    };
+    let (red, green, blue) = halo.rgb();
+    cr.set_source_rgba(red, green, blue, 0.7);
+    cr.set_line_width(size / 6.0);
+    cr.set_line_join(cairo::LineJoin::Round);
+    cr.stroke_preserve()?;
+    let (red, green, blue) = stroke.color.rgb();
+    cr.set_source_rgb(red, green, blue);
+    cr.fill()
 }
 
 fn use_stroke(cr: &cairo::Context, stroke: Stroke) {
@@ -220,7 +267,7 @@ fn step(cr: &cairo::Context, at: Point, number: u32, stroke: Stroke) -> Result<(
     };
     let (red, green, blue) = ink.rgb();
     cr.set_source_rgb(red, green, blue);
-    cr.select_font_face("Geist", cairo::FontSlant::Normal, cairo::FontWeight::Bold);
+    cr.select_font_face(FONT, cairo::FontSlant::Normal, cairo::FontWeight::Bold);
     let label = number.to_string();
     cr.set_font_size(radius * if label.len() > 2 { 0.8 } else { 1.1 });
     let extents = cr.text_extents(&label)?;

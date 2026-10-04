@@ -180,6 +180,11 @@ pub enum Shape {
     Pixelate {
         area: Area,
     },
+    Text {
+        at: Point,
+        text: String,
+        stroke: Stroke,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -193,11 +198,12 @@ pub enum Tool {
     Pen,
     Highlight,
     Step,
+    Text,
     Pixelate,
 }
 
 impl Tool {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Select,
         Self::Rectangle,
         Self::Ellipse,
@@ -206,6 +212,7 @@ impl Tool {
         Self::Pen,
         Self::Highlight,
         Self::Step,
+        Self::Text,
         Self::Pixelate,
     ];
 
@@ -219,6 +226,7 @@ impl Tool {
             Self::Pen => "Pen",
             Self::Highlight => "Marker",
             Self::Step => "Step",
+            Self::Text => "Text",
             Self::Pixelate => "Pixelate",
         }
     }
@@ -233,6 +241,7 @@ impl Tool {
             Self::Pen => "p",
             Self::Highlight => "m",
             Self::Step => "n",
+            Self::Text => "t",
             Self::Pixelate => "x",
         }
     }

@@ -28,7 +28,12 @@ impl Editor {
     pub(super) fn set_tool(&self, tool: Tool) {
         self.tool.set(tool);
         self.cancel_draft();
-        if tool == Tool::Select {
+        self.finish_text(true);
+        if tool == Tool::Text {
+            self.canvas.set_cursor_from_name(Some("text"));
+            self.deselect();
+            self.say("Click where the text goes, type, then press Enter.", false);
+        } else if tool == Tool::Select {
             self.canvas.set_cursor_from_name(Some("default"));
             self.say(
                 "Click a shape, then drag to move, drag a handle to resize, Delete removes, \

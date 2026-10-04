@@ -1,4 +1,5 @@
 use super::document::{Area, Color, Point, Shape, Stroke};
+use super::render;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handle {
@@ -88,6 +89,17 @@ pub fn step_radius(stroke: Stroke) -> f64 {
     (stroke.width * 3.0 + 8.0).max(12.0)
 }
 
+/// Returns the font size, in image pixels, for text drawn at line width `width`.
+///
+/// # Examples
+///
+/// ```ignore
+/// let size = font_size(stroke.width);
+/// ```
+pub fn font_size(width: f64) -> f64 {
+    width * 5.0 + 12.0
+}
+
 impl Shape {
     /// Returns the smallest area that holds the shape's geometry, ignoring line width.
     ///
@@ -126,6 +138,15 @@ impl Shape {
                     y: at.y - radius,
                     width: radius * 2.0,
                     height: radius * 2.0,
+                }
+            }
+            Self::Text { at, text, stroke } => {
+                let (width, height) = render::measure(text, font_size(stroke.width));
+                Area {
+                    x: at.x,
+                    y: at.y,
+                    width,
+                    height,
                 }
             }
         }
@@ -175,6 +196,7 @@ impl Shape {
                 }
             }
             Self::Step { at, stroke, .. } => at.distance(point) <= step_radius(*stroke) + slack,
+            Self::Text { .. } => self.bounds().grown(slack).contains(point),
         }
     }
 
@@ -201,7 +223,7 @@ impl Shape {
                     *point = point.moved(dx, dy);
                 }
             }
-            Self::Step { at, .. } => *at = at.moved(dx, dy),
+            Self::Step { at, .. } | Self::Text { at, .. } => *at = at.moved(dx, dy),
         }
         shape
     }
@@ -227,7 +249,7 @@ impl Shape {
             Self::Line { from, to, .. } | Self::Arrow { from, to, .. } => {
                 vec![(Handle::Start, *from), (Handle::End, *to)]
             }
-            Self::Pen { .. } | Self::Step { .. } => Vec::new(),
+            Self::Pen { .. } | Self::Step { .. } | Self::Text { .. } => Vec::new(),
         }
     }
 
@@ -254,7 +276,7 @@ impl Shape {
                 Handle::End => *end = to,
                 _ => {}
             },
-            Self::Pen { .. } | Self::Step { .. } => {}
+            Self::Pen { .. } | Self::Step { .. } | Self::Text { .. } => {}
         }
         shape
     }
@@ -276,7 +298,8 @@ impl Shape {
             | Self::Line { stroke, .. }
             | Self::Arrow { stroke, .. }
             | Self::Pen { stroke, .. }
-            | Self::Step { stroke, .. } => {
+            | Self::Step { stroke, .. }
+            | Self::Text { stroke, .. } => {
                 stroke.color = color;
                 if let Some(width) = width {
                     stroke.width = width;
@@ -431,6 +454,23 @@ mod tests {
         };
         assert!(step.handles().is_empty());
         assert_eq!(step.bounds(), area(6.0, 6.0, 28.0, 28.0));
+    }
+
+    #[test]
+    fn measures_text_to_select_and_move_it() {
+        let text = Shape::Text {
+            at: point(10.0, 20.0),
+            text: "Hello".into(),
+            stroke: STROKE,
+        };
+        let bounds = text.bounds();
+        assert_eq!((bounds.x, bounds.y), (10.0, 20.0));
+        assert!(bounds.width > font_size(STROKE.width));
+        assert!(bounds.height >= font_size(STROKE.width));
+        assert!(text.hit(point(12.0, 25.0), 0.0));
+        assert!(!text.hit(point(5.0, 25.0), 0.0));
+        assert!(text.handles().is_empty());
+        assert_eq!(text.moved(1.0, 1.0).bounds().x, 11.0);
     }
 
     #[test]

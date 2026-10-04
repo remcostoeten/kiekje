@@ -269,3 +269,24 @@ window.settings-window {
 .panel button.chip.swatch {
   padding: 5px 6px;
 }
+
+.editor popover contents {
+  background-color: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+
+.editor entry {
+  background-color: transparent;
+  color: var(--fg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  box-shadow: none;
+  min-height: 32px;
+}
+
+.editor entry:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
