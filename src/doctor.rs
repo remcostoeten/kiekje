@@ -20,6 +20,7 @@ const LABEL_WIDTH: usize = 18;
 const BACKEND_WIDTH: usize = 24;
 const ROLE_WIDTH: usize = 12;
 const PORTALS: [&str; 3] = ["Screenshot", "ScreenCast", "GlobalShortcuts"];
+const TRAY_WATCHER: &str = "org.kde.StatusNotifierWatcher";
 const BACKENDS: [BackendKind; 4] = [
     BackendKind::Kwin,
     BackendKind::ExtImageCopy,
@@ -67,6 +68,7 @@ struct Monitor {
 
 struct Bus {
     daemon_running: bool,
+    tray_host: bool,
     portals: Vec<(&'static str, Option<u32>)>,
 }
 
@@ -124,6 +126,7 @@ fn collect() -> Report {
     let bus = detect::session_bus()
         .map(|connection| Bus {
             daemon_running: detect::name_has_owner(&connection, APP_ID),
+            tray_host: detect::name_has_owner(&connection, TRAY_WATCHER),
             portals: PORTALS
                 .iter()
                 .map(|interface| (*interface, detect::portal_version(&connection, interface)))
@@ -265,6 +268,13 @@ fn problems(report: &Report) -> Vec<Problem> {
                 .portals
                 .iter()
                 .any(|(name, version)| *name == "GlobalShortcuts" && version.is_some());
+            if !bus.tray_host {
+                found.push(Problem {
+                    severity: Severity::Warning,
+                    message: "No tray host is running, so Kiekje has no tray icon".into(),
+                    fix: Some(tray_fix(report).into()),
+                });
+            }
             if !shortcuts {
                 found.push(Problem {
                     severity: Severity::Warning,
@@ -344,6 +354,16 @@ fn problems(report: &Report) -> Vec<Problem> {
     found
 }
 
+fn tray_fix(report: &Report) -> &'static str {
+    if report.hyprland.is_some() {
+        "add \"tray\" to a modules list in ~/.config/waybar/config.jsonc and restart waybar"
+    } else if report.desktop.contains("GNOME") {
+        "install the AppIndicator and KStatusNotifierItem Support extension"
+    } else {
+        "start a panel with a system tray (StatusNotifierItem) area"
+    }
+}
+
 fn field(style: &Style, label: &str, value: &str) -> String {
     format!("  {}{value}\n", style.dim(&pad(label, LABEL_WIDTH)))
 }
@@ -371,6 +391,12 @@ fn render(report: &Report, style: &Style) -> String {
             style.dim("not running")
         };
         text.push_str(&field(style, "daemon", &daemon));
+        let tray = if bus.tray_host {
+            style.good("tray host found")
+        } else {
+            style.warn("no tray host")
+        };
+        text.push_str(&field(style, "tray", &tray));
     }
     if report.kwin_present {
         let access = match report.kwin_access {
@@ -520,6 +546,7 @@ mod tests {
             }],
             bus: Ok(Bus {
                 daemon_running: false,
+                tray_host: true,
                 portals: PORTALS.iter().map(|name| (*name, Some(2))).collect(),
             }),
             available: vec![(BackendKind::Kwin, backend(BackendKind::Kwin).capabilities())],
@@ -612,5 +639,17 @@ mod tests {
         empty.kwin_present = false;
         empty.kwin_access = None;
         assert!(render(&empty, &PLAIN).contains("✗ No capture backend is available"));
+    }
+
+    #[test]
+    fn names_the_waybar_fix_when_hyprland_has_no_tray_host() {
+        let mut hypr = report();
+        hypr.hyprland = Some(HyprlandBinds::Sourced);
+        if let Ok(bus) = &mut hypr.bus {
+            bus.tray_host = false;
+        }
+        let text = render(&hypr, &PLAIN);
+        assert!(text.contains("no tray host"));
+        assert!(text.contains("~/.config/waybar/config.jsonc"));
     }
 }
