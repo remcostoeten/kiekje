@@ -18,16 +18,20 @@ pub(super) enum FileAction {
     CopyPath,
     Trash,
     Forget,
+    Locate,
+    ForgetMissing,
 }
 
 impl FileAction {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 8] = [
         Self::Open,
         Self::Reveal,
+        Self::Locate,
         Self::CopyImage,
         Self::CopyPath,
         Self::Trash,
         Self::Forget,
+        Self::ForgetMissing,
     ];
 
     fn name(self) -> &'static str {
@@ -38,6 +42,8 @@ impl FileAction {
             Self::CopyPath => "copy-path",
             Self::Trash => "trash",
             Self::Forget => "forget",
+            Self::Locate => "locate",
+            Self::ForgetMissing => "forget-missing",
         }
     }
 
@@ -49,6 +55,8 @@ impl FileAction {
             Self::CopyPath => "Copy path",
             Self::Trash => "Move to trash",
             Self::Forget => "Remove from gallery",
+            Self::Locate => "Locate file",
+            Self::ForgetMissing => "Remove all missing",
         }
     }
 
@@ -59,7 +67,8 @@ impl FileAction {
             Self::CopyImage => Some("<Ctrl>c"),
             Self::CopyPath => Some("<Ctrl><Alt>c"),
             Self::Trash => Some("Delete"),
-            Self::Forget => None,
+            Self::Forget | Self::ForgetMissing => None,
+            Self::Locate => Some("<Ctrl>l"),
         }
     }
 }
@@ -77,6 +86,14 @@ pub(super) fn install(window: &gtk::Window, gallery: &Rc<Gallery>) {
         group.add_action(&simple);
     }
     window.insert_action_group(GROUP, Some(&group));
+    let _ = gallery.actions.set(group);
+    let selected = Rc::downgrade(gallery);
+    gallery.selection.connect_selected_notify(move |_| {
+        if let Some(gallery) = selected.upgrade() {
+            gallery.sync_actions();
+        }
+    });
+    gallery.sync_actions();
 }
 
 pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
@@ -86,9 +103,9 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
     let remove = gio::Menu::new();
     for action in FileAction::ALL {
         let section = match action {
-            FileAction::Open | FileAction::Reveal => &open,
+            FileAction::Open | FileAction::Reveal | FileAction::Locate => &open,
             FileAction::CopyImage | FileAction::CopyPath => &copy,
-            FileAction::Trash | FileAction::Forget => &remove,
+            FileAction::Trash | FileAction::Forget | FileAction::ForgetMissing => &remove,
         };
         section.append(
             Some(action.label()),
@@ -173,7 +190,38 @@ impl Gallery {
             .map(|object| PathBuf::from(object.string().as_str()))
     }
 
+    pub(super) fn sync_actions(&self) {
+        let Some(group) = self.actions.get() else {
+            return;
+        };
+        let missing = self.selected().map(|path| {
+            self.details
+                .borrow()
+                .get(path.to_string_lossy().as_ref())
+                .is_some_and(|capture| capture.missing)
+        });
+        let any_missing = self.all.borrow().iter().any(|capture| capture.missing);
+        for action in FileAction::ALL {
+            let enabled = match action {
+                FileAction::Forget => missing.is_some(),
+                FileAction::Locate => missing == Some(true),
+                FileAction::ForgetMissing => self.query.borrow().missing && any_missing,
+                _ => missing == Some(false),
+            };
+            if let Some(simple) = group
+                .lookup_action(action.name())
+                .and_downcast::<gio::SimpleAction>()
+            {
+                simple.set_enabled(enabled);
+            }
+        }
+    }
+
     fn run(self: &Rc<Self>, action: FileAction) {
+        if action == FileAction::ForgetMissing {
+            self.forget_missing();
+            return;
+        }
         let Some(path) = self.selected() else {
             return;
         };
@@ -226,12 +274,94 @@ impl Gallery {
             }
             FileAction::Forget => {
                 glib::spawn_future_local(async move {
-                    let message =
-                        format!("Removed {name} from the gallery; the file is still there");
+                    let message = if path.exists() {
+                        format!("Removed {name} from the gallery; the file is still there")
+                    } else {
+                        format!("Removed {name} from the gallery")
+                    };
                     gallery.forget(path, message).await;
                 });
             }
+            FileAction::Locate => self.locate(path),
+            FileAction::ForgetMissing => {}
         }
+    }
+
+    fn locate(self: &Rc<Self>, path: PathBuf) {
+        let Some(id) = self
+            .details
+            .borrow()
+            .get(path.to_string_lossy().as_ref())
+            .map(|capture| capture.id)
+        else {
+            return;
+        };
+        let images = gtk::FileFilter::new();
+        images.set_name(Some("Images"));
+        images.add_mime_type("image/*");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&images);
+        let dialog = gtk::FileDialog::builder()
+            .title("Locate the moved capture")
+            .accept_label("Use this file")
+            .modal(true)
+            .filters(&filters)
+            .build();
+        if let Some(folder) = path.parent().filter(|folder| folder.is_dir()) {
+            dialog.set_initial_folder(Some(&gio::File::for_path(folder)));
+        }
+        let window = self.status.root().and_downcast::<gtk::Window>();
+        let gallery = self.clone();
+        glib::spawn_future_local(async move {
+            let picked = match dialog.open_future(window.as_ref()).await {
+                Ok(file) => file.path(),
+                Err(error) if error.matches(gtk::DialogError::Dismissed) => return,
+                Err(error) => {
+                    gallery.say(&format!("Could not pick a file: {error}"), true);
+                    return;
+                }
+            };
+            let Some(picked) = picked else {
+                gallery.say("Pick a local file; remote locations can't be linked", true);
+                return;
+            };
+            let target = picked.clone();
+            let linked = gio::spawn_blocking(move || {
+                Library::open(&library::path()).and_then(|library| library.relink(id, &target))
+            })
+            .await;
+            let name = picked
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            match linked {
+                Ok(Ok(())) => gallery.say(&format!("Linked the capture to {name}"), false),
+                Ok(Err(error)) => gallery.say(&format!("Not linked: {error}"), true),
+                Err(_) => gallery.say("The library worker stopped", true),
+            }
+            gallery.reload();
+        });
+    }
+
+    fn forget_missing(self: &Rc<Self>) {
+        let gallery = self.clone();
+        glib::spawn_future_local(async move {
+            let removed = gio::spawn_blocking(|| {
+                Library::open(&library::path()).and_then(|library| library.remove_missing())
+            })
+            .await;
+            match removed {
+                Ok(Ok(count)) => gallery.say(
+                    &format!("Removed missing captures from the gallery: {count}"),
+                    false,
+                ),
+                Ok(Err(error)) => {
+                    gallery.say(&format!("The library was not updated: {error}"), true);
+                }
+                Err(_) => gallery.say("The library worker stopped", true),
+            }
+            gallery.reload();
+        });
     }
 
     async fn forget(self: &Rc<Self>, path: PathBuf, done: String) {

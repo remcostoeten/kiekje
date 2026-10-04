@@ -2,7 +2,7 @@ mod actions;
 mod cards;
 mod toolbar;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
@@ -22,6 +22,8 @@ struct Gallery {
     paths: gtk::StringList,
     selection: gtk::SingleSelection,
     menus: RefCell<Vec<gtk::PopoverMenu>>,
+    actions: OnceCell<gio::SimpleActionGroup>,
+    missing: OnceCell<gtk::ToggleButton>,
     status: gtk::Label,
     all: RefCell<Vec<Capture>>,
     details: RefCell<HashMap<String, Capture>>,
@@ -134,6 +136,8 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         paths,
         selection,
         menus: RefCell::new(Vec::new()),
+        actions: OnceCell::new(),
+        missing: OnceCell::new(),
         status,
         all: RefCell::new(Vec::new()),
         details: RefCell::new(HashMap::new()),
@@ -162,12 +166,14 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     gallery.stack.set_visible_child_name("loading");
 
     let changed = Rc::downgrade(&gallery);
-    let (bar, search) = toolbar::build(move |change| {
+    let parts = toolbar::build(move |change| {
         if let Some(gallery) = changed.upgrade() {
             gallery.apply(change);
         }
     });
-    content.append(&bar);
+    let search = parts.search;
+    let _ = gallery.missing.set(parts.missing);
+    content.append(&parts.bar);
     content.append(&gallery.stack);
     content.append(&gallery.status);
     window.set_child(Some(&content));
@@ -234,7 +240,9 @@ impl Gallery {
         let gallery = self.clone();
         glib::spawn_future_local(async move {
             let loaded = gio::spawn_blocking(|| {
-                Library::open(&library::path()).and_then(|library| library.recent(usize::MAX))
+                let mut library = Library::open(&library::path())?;
+                library.check_missing()?;
+                library.all()
             })
             .await;
             gallery.loading.set(false);
@@ -268,6 +276,7 @@ impl Gallery {
                 Change::Kind(kind) => query.kind = kind,
                 Change::Period(period) => query.period = period,
                 Change::Sort(sort) => query.sort = sort,
+                Change::Missing(missing) => query.missing = missing,
                 Change::View(view) => {
                     self.views.set_visible_child_name(view.name());
                     return;
@@ -281,14 +290,25 @@ impl Gallery {
 
     fn refresh(&self) {
         let all = self.all.borrow();
-        let shown = query::apply(&all, &self.query.borrow(), glib::real_time());
-        self.count.set_label(&count_text(shown.len(), all.len()));
+        let query = self.query.borrow().clone();
+        let shown = query::apply(&all, &query, glib::real_time());
+        let missing = all.iter().filter(|capture| capture.missing).count();
+        let total = if query.missing {
+            missing
+        } else {
+            all.len() - missing
+        };
+        self.count.set_label(&count_text(shown.len(), total));
         self.stack
             .set_visible_child_name(match (all.len(), shown.len()) {
                 (0, _) => "empty",
                 (_, 0) => "nomatch",
                 _ => "items",
             });
+        if let Some(toggle) = self.missing.get() {
+            toggle.set_label(&format!("Missing {missing}"));
+            toggle.set_visible(missing > 0 || query.missing);
+        }
         let texts: Vec<String> = shown
             .iter()
             .map(|capture| capture.path.to_string_lossy().into_owned())
@@ -297,9 +317,6 @@ impl Gallery {
             .filter_map(|position| self.paths.string(position))
             .map(String::from)
             .collect();
-        if current == texts {
-            return;
-        }
         self.details.replace(
             texts
                 .iter()
@@ -308,6 +325,10 @@ impl Gallery {
                 .collect(),
         );
         drop(all);
+        if current == texts {
+            self.sync_actions();
+            return;
+        }
         let selected = self
             .selection
             .selected_item()
@@ -321,6 +342,7 @@ impl Gallery {
         if let Some(position) = kept {
             self.selection.set_selected(position);
         }
+        self.sync_actions();
     }
 
     fn thumbnail(self: &Rc<Self>, item: &gtk::ListItem, picture: &gtk::Picture, path: String) {

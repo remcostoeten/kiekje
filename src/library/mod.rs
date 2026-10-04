@@ -56,6 +56,10 @@ pub enum LibraryError {
     Newer(i64),
     #[error("{0} is not valid UTF-8, so it can't be stored")]
     Path(PathBuf),
+    #[error("{} is already in the gallery", .0.display())]
+    Taken(PathBuf),
+    #[error("{} does not exist", .0.display())]
+    Absent(PathBuf),
 }
 
 pub struct Library {
@@ -156,11 +160,35 @@ impl Library {
     /// let shown = library.recent(4)?;
     /// ```
     pub fn recent(&self, limit: usize) -> Result<Vec<Capture>, LibraryError> {
-        let mut statement = self.connection.prepare(
+        self.select(
             "SELECT id, path, mode, width, height, bytes, created_us, missing FROM captures
              WHERE missing = 0 ORDER BY created_us DESC, id DESC LIMIT ?1",
-        )?;
-        let rows = statement.query_map(params![i64::try_from(limit).unwrap_or(i64::MAX)], row)?;
+            params![i64::try_from(limit).unwrap_or(i64::MAX)],
+        )
+    }
+
+    /// Returns every capture, including the ones marked missing, newest first.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let missing = library.all()?.into_iter().filter(|capture| capture.missing).count();
+    /// ```
+    pub fn all(&self) -> Result<Vec<Capture>, LibraryError> {
+        self.select(
+            "SELECT id, path, mode, width, height, bytes, created_us, missing FROM captures
+             ORDER BY created_us DESC, id DESC",
+            [],
+        )
+    }
+
+    fn select(
+        &self,
+        sql: &str,
+        parameters: impl rusqlite::Params,
+    ) -> Result<Vec<Capture>, LibraryError> {
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(parameters, row)?;
         let mut captures = Vec::new();
         for capture in rows {
             if let Some(capture) = capture? {
@@ -168,6 +196,49 @@ impl Library {
             }
         }
         Ok(captures)
+    }
+
+    /// Points the record `id` at `path`, after its file was moved or renamed, and clears its
+    /// missing mark.
+    ///
+    /// Fails with `Absent` when `path` is not a file and `Taken` when another record already uses
+    /// it. Size and byte count are taken from the record, not re-read from the new file.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// library.relink(capture.id, Path::new("/home/me/Pictures/moved.png"))?;
+    /// ```
+    pub fn relink(&self, id: i64, path: &Path) -> Result<(), LibraryError> {
+        if !path.is_file() {
+            return Err(LibraryError::Absent(path.to_path_buf()));
+        }
+        let updated = self.connection.execute(
+            "UPDATE captures SET path = ?1, missing = 0 WHERE id = ?2",
+            params![text(path)?, id],
+        );
+        match updated {
+            Err(rusqlite::Error::SqliteFailure(failure, _))
+                if failure.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                Err(LibraryError::Taken(path.to_path_buf()))
+            }
+            Err(error) => Err(error.into()),
+            Ok(_) => Ok(()),
+        }
+    }
+
+    /// Removes every record marked missing and returns how many there were.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let forgotten = library.remove_missing()?;
+    /// ```
+    pub fn remove_missing(&self) -> Result<usize, LibraryError> {
+        Ok(self
+            .connection
+            .execute("DELETE FROM captures WHERE missing = 1", [])?)
     }
 
     /// Returns the paths of every capture that is still on disk.
@@ -360,6 +431,54 @@ mod tests {
         let recent = library.recent(5).unwrap();
         assert_eq!(recent.len(), 1);
         assert_eq!(recent[0].width, 10);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn relinks_a_moved_capture_and_refuses_taken_or_absent_paths() {
+        let folder = scratch("relink");
+        let mut library = Library::open(&folder.join("library.db")).unwrap();
+        let (old, moved, other) = (
+            folder.join("old.png"),
+            folder.join("moved.png"),
+            folder.join("other.png"),
+        );
+        std::fs::write(&old, b"png").unwrap();
+        std::fs::write(&other, b"png").unwrap();
+        let id = library.insert(&capture(&old, 1)).unwrap();
+        library.insert(&capture(&other, 2)).unwrap();
+        std::fs::rename(&old, &moved).unwrap();
+        library.check_missing().unwrap();
+        assert!(library.all().unwrap().iter().any(|capture| capture.missing));
+
+        assert!(matches!(
+            library.relink(id, &folder.join("nowhere.png")),
+            Err(LibraryError::Absent(_))
+        ));
+        assert!(matches!(
+            library.relink(id, &other),
+            Err(LibraryError::Taken(_))
+        ));
+        library.relink(id, &moved).unwrap();
+        let all = library.all().unwrap();
+        assert!(all.iter().all(|capture| !capture.missing));
+        assert!(all.iter().any(|capture| capture.path == moved));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn forgets_only_missing_captures() {
+        let folder = scratch("forget-missing");
+        let mut library = Library::open(&folder.join("library.db")).unwrap();
+        let (kept, gone) = (folder.join("kept.png"), folder.join("gone.png"));
+        std::fs::write(&kept, b"png").unwrap();
+        library.insert(&capture(&kept, 1)).unwrap();
+        library.insert(&capture(&gone, 2)).unwrap();
+        library.check_missing().unwrap();
+        assert_eq!(library.remove_missing().unwrap(), 1);
+        let all = library.all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].path, kept);
         std::fs::remove_dir_all(folder).unwrap();
     }
 
