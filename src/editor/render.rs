@@ -4,6 +4,7 @@ use gtk::cairo;
 
 use super::document::{Area, Color, Point, Shape, Stroke};
 use super::pixels::{self, Picture};
+use super::shapes;
 use crate::output::Image;
 
 const MARKER_ALPHA: f64 = 0.85;
@@ -207,7 +208,7 @@ fn arrow(cr: &cairo::Context, from: Point, to: Point, stroke: Stroke) -> Result<
 }
 
 fn step(cr: &cairo::Context, at: Point, number: u32, stroke: Stroke) -> Result<(), cairo::Error> {
-    let radius = (stroke.width * 3.0 + 8.0).max(12.0);
+    let radius = shapes::step_radius(stroke);
     let (red, green, blue) = stroke.color.rgb();
     cr.set_source_rgb(red, green, blue);
     cr.arc(at.x, at.y, radius, 0.0, TAU);

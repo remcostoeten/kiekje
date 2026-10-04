@@ -2,6 +2,8 @@ mod canvas;
 mod document;
 mod pixels;
 mod render;
+mod select;
+mod shapes;
 mod toolbar;
 
 use std::cell::{Cell, RefCell};
@@ -60,6 +62,8 @@ struct Editor {
     redo: gtk::Button,
     clear: gtk::Button,
     tools: RefCell<Vec<(Tool, gtk::ToggleButton)>>,
+    selected: Cell<Option<usize>>,
+    moving: RefCell<Option<select::Moving>>,
     busy: Cell<bool>,
     discard: Cell<bool>,
 }
@@ -148,7 +152,7 @@ impl Editor {
         canvas.update_property(&[gtk::accessible::Property::Label("Capture to annotate")]);
         let status = gtk::Label::builder()
             .xalign(0.0)
-            .wrap(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
             .label("Drag on the image to annotate. Letters pick a tool, Ctrl+Z undoes.")
             .css_classes(["note"])
             .build();
@@ -168,6 +172,8 @@ impl Editor {
             redo: toolbar::action("Redo", "Redo (Ctrl+Shift+Z)"),
             clear: toolbar::action("Clear", "Remove every annotation"),
             tools: RefCell::new(Vec::new()),
+            selected: Cell::new(None),
+            moving: RefCell::new(None),
             busy: Cell::new(false),
             discard: Cell::new(false),
         });
@@ -235,12 +241,14 @@ impl Editor {
     }
 
     fn undo(&self) {
+        self.deselect();
         if self.document.borrow_mut().undo() {
             self.edited();
         }
     }
 
     fn redo(&self) {
+        self.deselect();
         if self.document.borrow_mut().redo() {
             self.edited();
         }
@@ -251,6 +259,7 @@ impl Editor {
         if shapes.is_empty() {
             return;
         }
+        self.deselect();
         self.document.borrow_mut().apply(Edit::Clear(shapes));
         self.edited();
         self.say("Removed every annotation. Ctrl+Z brings them back.", false);
@@ -285,6 +294,18 @@ impl Editor {
         let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
         let alt = state.contains(gdk::ModifierType::ALT_MASK);
         let letter = key.to_lower().name().unwrap_or_default();
+        let step = if shift { 10.0 } else { 1.0 };
+        let handled = match (control, letter.as_str()) {
+            (false, "Delete" | "BackSpace") => self.delete_selected(),
+            (false, "Left") => self.nudge(-step, 0.0),
+            (false, "Right") => self.nudge(step, 0.0),
+            (false, "Up") => self.nudge(0.0, -step),
+            (false, "Down") => self.nudge(0.0, step),
+            _ => false,
+        };
+        if handled {
+            return glib::Propagation::Stop;
+        }
         match (control, letter.as_str()) {
             (true, "z") if shift => self.redo(),
             (true, "z") => self.undo(),
@@ -292,7 +313,7 @@ impl Editor {
             (true, "c") => self.copy(),
             (true, "s") => self.save(),
             (false, "Escape") => {
-                if !self.cancel_draft() {
+                if !(self.cancel_grab() || self.cancel_draft() || self.deselect()) {
                     window.close();
                 }
             }
@@ -380,6 +401,7 @@ impl Editor {
 
     fn say(&self, message: &str, problem: bool) {
         self.status.set_label(message);
+        self.status.set_tooltip_text(Some(message));
         if problem {
             self.status.add_css_class("problem");
         } else {

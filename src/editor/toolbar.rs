@@ -27,7 +27,7 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         let target = Rc::downgrade(editor);
         button.connect_toggled(move |button| {
             if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
-                editor.tool.set(tool);
+                editor.set_tool(tool);
             }
         });
         top.append(&button);
@@ -59,6 +59,7 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         button.connect_toggled(move |button| {
             if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
                 editor.color.set(color);
+                editor.restyle();
             }
         });
         bottom.append(&button);
@@ -72,6 +73,7 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         button.connect_toggled(move |button| {
             if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
                 editor.weight.set(weight);
+                editor.restyle();
             }
         });
         bottom.append(&button);

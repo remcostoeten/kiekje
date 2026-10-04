@@ -184,6 +184,7 @@ pub enum Shape {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tool {
+    Select,
     #[default]
     Rectangle,
     Ellipse,
@@ -196,7 +197,8 @@ pub enum Tool {
 }
 
 impl Tool {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
+        Self::Select,
         Self::Rectangle,
         Self::Ellipse,
         Self::Arrow,
@@ -209,6 +211,7 @@ impl Tool {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Select => "Select",
             Self::Rectangle => "Box",
             Self::Ellipse => "Ellipse",
             Self::Arrow => "Arrow",
@@ -222,6 +225,7 @@ impl Tool {
 
     pub fn key(self) -> &'static str {
         match self {
+            Self::Select => "v",
             Self::Rectangle => "r",
             Self::Ellipse => "e",
             Self::Arrow => "a",
@@ -281,6 +285,15 @@ impl Tool {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
     Add(Shape),
+    Replace {
+        index: usize,
+        before: Shape,
+        after: Shape,
+    },
+    Remove {
+        index: usize,
+        shape: Shape,
+    },
     Clear(Vec<Shape>),
 }
 
@@ -373,9 +386,28 @@ impl Document {
             + 1
     }
 
+    /// Returns the index of the topmost shape under `point`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let picked = document.hit(point, 6.0 / zoom);
+    /// ```
+    pub fn hit(&self, point: Point, slack: f64) -> Option<usize> {
+        self.shapes
+            .iter()
+            .rposition(|shape| shape.hit(point, slack))
+    }
+
     fn perform(&mut self, edit: &Edit) {
         match edit {
             Edit::Add(shape) => self.shapes.push(shape.clone()),
+            Edit::Replace { index, after, .. } => self.put(*index, after),
+            Edit::Remove { index, .. } => {
+                if *index < self.shapes.len() {
+                    self.shapes.remove(*index);
+                }
+            }
             Edit::Clear(_) => self.shapes.clear(),
         }
     }
@@ -385,7 +417,18 @@ impl Document {
             Edit::Add(_) => {
                 self.shapes.pop();
             }
+            Edit::Replace { index, before, .. } => self.put(*index, before),
+            Edit::Remove { index, shape } => {
+                let index = (*index).min(self.shapes.len());
+                self.shapes.insert(index, shape.clone());
+            }
             Edit::Clear(shapes) => self.shapes = shapes.clone(),
+        }
+    }
+
+    fn put(&mut self, index: usize, shape: &Shape) {
+        if let Some(slot) = self.shapes.get_mut(index) {
+            *slot = shape.clone();
         }
     }
 }
@@ -496,6 +539,37 @@ mod tests {
         assert!(document.shapes().is_empty());
         document.undo();
         assert_eq!(document.shapes(), [step(1)]);
+    }
+
+    #[test]
+    fn undoes_a_replace_and_a_remove_in_place() {
+        let mut document = Document::default();
+        for number in 1..=3 {
+            document.apply(Edit::Add(step(number)));
+        }
+        document.apply(Edit::Replace {
+            index: 1,
+            before: step(2),
+            after: step(9),
+        });
+        document.apply(Edit::Remove {
+            index: 0,
+            shape: step(1),
+        });
+        assert_eq!(document.shapes(), [step(9), step(3)]);
+        document.undo();
+        assert_eq!(document.shapes(), [step(1), step(9), step(3)]);
+        document.undo();
+        assert_eq!(document.shapes(), [step(1), step(2), step(3)]);
+    }
+
+    #[test]
+    fn picks_the_topmost_shape_under_a_point() {
+        let mut document = Document::default();
+        document.apply(Edit::Add(step(1)));
+        document.apply(Edit::Add(step(2)));
+        assert_eq!(document.hit(point(1.0, 1.0), 0.0), Some(1));
+        assert_eq!(document.hit(point(500.0, 500.0), 0.0), None);
     }
 
     #[test]

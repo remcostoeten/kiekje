@@ -37,6 +37,17 @@ impl View {
         }
     }
 
+    pub(super) fn zoom(self) -> f64 {
+        self.zoom
+    }
+
+    pub(super) fn to_widget(self, point: Point) -> (f64, f64) {
+        (
+            self.left + point.x * self.zoom,
+            self.top + point.y * self.zoom,
+        )
+    }
+
     fn to_image(self, x: f64, y: f64, image: (f64, f64)) -> Point {
         Point {
             x: ((x - self.left) / self.zoom).clamp(0.0, image.0),
@@ -70,6 +81,10 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         if let Some(editor) = started.upgrade() {
             editor.canvas.grab_focus();
             let point = editor.view.get().to_image(x, y, editor.size());
+            if editor.tool.get() == Tool::Select {
+                editor.grab(point);
+                return;
+            }
             editor.draft.replace(vec![point]);
             editor.canvas.queue_draw();
         }
@@ -84,7 +99,11 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     drag.connect_drag_end(move |gesture, dx, dy| {
         if let Some(editor) = ended.upgrade() {
             extend(&editor, gesture, dx, dy);
-            editor.commit();
+            if editor.tool.get() == Tool::Select {
+                editor.release();
+            } else {
+                editor.commit();
+            }
         }
     });
     editor.canvas.add_controller(drag);
@@ -96,6 +115,10 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
         return;
     };
     let point = editor.view.get().to_image(x + dx, y + dy, editor.size());
+    if editor.tool.get() == Tool::Select {
+        editor.drag_to(point);
+        return;
+    }
     let mut draft = editor.draft.borrow_mut();
     let Some(&start) = draft.first() else {
         return;
@@ -117,13 +140,29 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
 
 fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
     let (width, height) = editor.size();
+    cr.save()?;
     cr.translate(view.left, view.top);
     cr.scale(view.zoom, view.zoom);
     cr.rectangle(0.0, 0.0, width, height);
     cr.clip();
-    let document = editor.document.borrow();
-    let draft = editor.draft_shape();
-    render::draw(cr, &editor.layers, document.shapes().iter().chain(&draft))
+    let drawn = {
+        let document = editor.document.borrow();
+        let moving = editor.moving.borrow();
+        let draft = editor.draft_shape();
+        let shapes =
+            document
+                .shapes()
+                .iter()
+                .enumerate()
+                .map(|(index, shape)| match moving.as_ref() {
+                    Some(moving) if moving.index == index => &moving.preview,
+                    _ => shape,
+                });
+        render::draw(cr, &editor.layers, shapes.chain(&draft))
+    };
+    cr.restore()?;
+    drawn?;
+    editor.paint_selection(cr, view)
 }
 
 #[cfg(test)]
