@@ -10,6 +10,7 @@ const COMMANDS: &[&str] = &[
     "capture",
     "daemon",
     "quit",
+    "menu",
     "doctor",
     "install-desktop-file",
     "help",
@@ -62,6 +63,12 @@ const SESSION: &[Entry] = &[
         name: "quit",
         argument: "",
         description: "Stop the running instance",
+        note: "",
+    },
+    Entry {
+        name: "menu",
+        argument: "",
+        description: "Open or close the capture menu",
         note: "",
     },
 ];

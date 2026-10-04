@@ -1,0 +1,105 @@
+:root {
+  --bg: #0a0a0a;
+  --fg: #ededed;
+  --muted: #8a8a8a;
+  --accent: #fe5101;
+  --line: color-mix(in srgb, var(--fg) 16%, transparent);
+  --wash: color-mix(in srgb, var(--fg) 6%, transparent);
+  --accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
+  --ring: color-mix(in srgb, var(--accent) 70%, transparent);
+  --radius: 6px;
+  --sans: "Geist", "Inter", sans-serif;
+  --mono: "Geist Mono", "JetBrains Mono", monospace;
+}
+
+window.kiekje-popover {
+  background: transparent;
+}
+
+.popover-panel {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.caps {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.popover-panel button {
+  background: none;
+  background-color: transparent;
+  color: var(--fg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  box-shadow: none;
+  padding: 8px 10px;
+  transition: background-color 120ms ease-out, transform 120ms ease-out;
+}
+
+.popover-panel button:hover {
+  background-color: var(--wash);
+}
+
+.popover-panel button:active {
+  transform: scale(0.98);
+}
+
+.popover-panel button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.popover-panel button.primary {
+  border: 1px solid var(--accent);
+  background-color: var(--accent-wash);
+}
+
+.popover-panel button.primary:hover {
+  background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.popover-panel button.ghost {
+  border-color: transparent;
+}
+
+.action-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.shortcut {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.popover-panel button.thumbnail {
+  padding: 0;
+  min-width: 64px;
+  min-height: 44px;
+}
+
+.empty-recent {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  color: var(--muted);
+}
+
+.popover-panel separator.rule {
+  background: none;
+  border-top: 1px dashed var(--line);
+  min-height: 0;
+  margin: 4px 0;
+}

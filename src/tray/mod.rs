@@ -1,3 +1,4 @@
+pub mod popover;
 mod sni;
 
 use thiserror::Error;
@@ -7,17 +8,9 @@ use crate::capture::CaptureMode;
 pub use sni::SniTray;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TrayOrigin {
-    Icon,
-    Menu,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrayCommand {
-    Capture {
-        mode: CaptureMode,
-        origin: TrayOrigin,
-    },
+    Capture { mode: CaptureMode },
+    OpenMenu { x: i32, y: i32 },
     OpenCaptures,
     Quit,
 }

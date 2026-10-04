@@ -307,7 +307,7 @@ Because the native tray menu can't be themed, the styled dropdown is a separate 
   - Capture actions with their shortcuts shown in mono.
   - Recent captures as a row of 3 to 4 thumbnails.
   - Folder, Gallery, Settings, Quit.
-- **Placement**: on KWin, Hyprland and Sway it is a layer-shell surface, anchored to the panel corner nearest the click and closed on focus loss or Esc. The `Activate(x, y)` coordinates the tray host sends decide which corner. **Unverified**: whether Waybar on Omarchy sends usable coordinates. If it doesn't, the popover anchors under the cursor's output, top-right.
+- **Placement**: on KWin, Hyprland and Sway it is a transparent layer-shell surface over the monitor with the panel in the corner nearest the click, closed by a click outside the panel or Esc. The `Activate(x, y)` coordinates the tray host sends decide which corner. **Unverified**: whether Waybar on Omarchy sends usable coordinates. If it doesn't, the popover uses the first monitor's top right.
 - **GNOME and X11**: there is no layer-shell on GNOME, so the popover is a small undecorated window. GNOME places it, not us, so it may appear centred. On X11 it is positioned at the click.
 - **Right click** keeps the native SNI menu with the same actions. It's the accessible fallback, and it's what tray hosts without click events use.
 

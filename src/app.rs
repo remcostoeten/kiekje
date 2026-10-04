@@ -18,9 +18,12 @@ use crate::config::{self, Notifications};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
-use crate::shortcuts::{PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland};
+use crate::shortcuts::{
+    PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, display_trigger, hyprland,
+};
 use crate::storage::{self, Naming, last_region};
-use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost, TrayOrigin};
+use crate::tray::popover::{self, Pick};
+use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
@@ -33,11 +36,14 @@ struct Session {
     notifications: Cell<Notifications>,
     shortcuts: RefCell<Option<PortalGuard>>,
     tray: RefCell<Option<Box<dyn TrayGuard>>>,
+    popover: RefCell<Option<gtk::Window>>,
+    shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
 }
 
 pub enum Command {
     Daemon,
     Quit,
+    Menu,
     Capture(Request),
 }
 
@@ -125,20 +131,19 @@ pub fn run(command: Command) -> glib::ExitCode {
         notifications: Cell::new(Notifications::default()),
         shortcuts: RefCell::new(None),
         tray: RefCell::new(None),
+        popover: RefCell::new(None),
+        shortcut_labels: RefCell::new(Vec::new()),
     });
     install_actions(&app, &session);
     register_shortcuts(&app, &session);
     start_tray(&app, &session);
     write_default_config();
     let hold = app.hold();
-    let initial = match command {
-        Command::Capture(request) => Some(request),
-        Command::Daemon | Command::Quit => None,
-    };
-    let initial = Cell::new(initial);
+    let initial = Cell::new(Some(command));
     app.connect_activate(move |app| match initial.take() {
-        Some(request) => start_capture(app, request, &session),
-        None => {
+        Some(Command::Capture(request)) => start_capture(app, request, &session),
+        Some(Command::Menu) => toggle_menu(app, &session, None),
+        Some(Command::Daemon | Command::Quit) | None => {
             glib::idle_add_local_once(overlay::warm_up);
         }
     });
@@ -152,6 +157,7 @@ fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
     match command {
         Command::Daemon => println!("kiekje: already running"),
         Command::Quit => app.activate_action("quit", None),
+        Command::Menu => app.activate_action("menu", None),
         Command::Capture(request) => app.activate_action("capture", Some(&request.to_variant())),
     }
     if let Some(connection) = app.dbus_connection()
@@ -182,11 +188,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
             return;
         };
         println!("kiekje: shortcut {}", action.id());
-        let mode = match action {
-            ShortcutAction::CaptureRegion => CaptureMode::Region,
-            ShortcutAction::CaptureFullscreen => CaptureMode::Fullscreen,
-        };
-        start_capture(&app, Request::saved(mode), &session);
+        start_capture(&app, Request::saved(action_mode(action)), &session);
     };
     let session = Rc::downgrade(session);
     glib::spawn_future_local(async move {
@@ -194,14 +196,23 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
             Ok((guard, bindings)) => {
                 let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
                 let mut unbound = false;
+                let mut labels = Vec::new();
                 for binding in bindings {
+                    let mode = action_mode(binding.action);
                     match binding.trigger {
-                        Some(trigger) => println!(
-                            "kiekje: shortcut {} bound to {trigger} through {}",
-                            binding.action.id(),
-                            registrar.name()
-                        ),
-                        None if on_hyprland => unbound = true,
+                        Some(trigger) => {
+                            println!(
+                                "kiekje: shortcut {} bound to {trigger} through {}",
+                                binding.action.id(),
+                                registrar.name()
+                            );
+                            labels.push((mode, trigger));
+                        }
+                        None if on_hyprland => {
+                            unbound = true;
+                            labels
+                                .push((mode, display_trigger(binding.action.preferred_trigger())));
+                        }
                         None => println!(
                             "kiekje: shortcut {} registered through {} without a trigger; assign one in the desktop settings",
                             binding.action.id(),
@@ -213,6 +224,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                     install_hyprland_binds();
                 }
                 if let Some(session) = session.upgrade() {
+                    session.shortcut_labels.replace(labels);
                     session.shortcuts.replace(Some(guard));
                 }
             }
@@ -292,25 +304,75 @@ fn start_tray(app: &gtk::Application, session: &Rc<Session>) {
     });
 }
 
+fn action_mode(action: ShortcutAction) -> CaptureMode {
+    match action {
+        ShortcutAction::CaptureRegion => CaptureMode::Region,
+        ShortcutAction::CaptureFullscreen => CaptureMode::Fullscreen,
+    }
+}
+
 fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: TrayCommand) {
     match command {
-        TrayCommand::Capture { mode, origin } => {
+        TrayCommand::Capture { mode } => {
             println!("kiekje: tray capture-{}", mode.as_str());
-            let request = Request::saved(mode);
-            match origin {
-                TrayOrigin::Icon => start_capture(app, request, session),
-                TrayOrigin::Menu => {
-                    let app = app.clone();
-                    let session = session.clone();
-                    glib::timeout_add_local_once(TRAY_MENU_CLOSE, move || {
-                        start_capture(&app, request, &session)
-                    });
-                }
-            }
+            capture_after_menu(app, session, mode);
         }
+        TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
         TrayCommand::Quit => app.activate_action("quit", None),
     }
+}
+
+fn capture_after_menu(app: &gtk::Application, session: &Rc<Session>, mode: CaptureMode) {
+    let app = app.clone();
+    let session = session.clone();
+    glib::timeout_add_local_once(TRAY_MENU_CLOSE, move || {
+        start_capture(&app, Request::saved(mode), &session)
+    });
+}
+
+fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32, i32)>) {
+    if let Some(open) = session.popover.take() {
+        open.close();
+        return;
+    }
+    let app = app.clone();
+    let session = session.clone();
+    glib::spawn_future_local(async move {
+        let captures_dir = gio::spawn_blocking(|| config::load().storage.captures_dir())
+            .await
+            .unwrap_or_else(|_| storage::default_captures_dir());
+        let content = popover::Content {
+            shortcuts: session.shortcut_labels.borrow().clone(),
+            captures_dir,
+        };
+        let pick_app = app.downgrade();
+        let pick_session = Rc::downgrade(&session);
+        let window = popover::show(&app, click, content, move |pick| {
+            let (Some(app), Some(session)) = (pick_app.upgrade(), pick_session.upgrade()) else {
+                return;
+            };
+            match pick {
+                Pick::Capture(mode) => {
+                    println!("kiekje: menu capture-{}", mode.as_str());
+                    capture_after_menu(&app, &session, mode);
+                }
+                Pick::OpenCaptures => open_captures(),
+                Pick::Quit => app.activate_action("quit", None),
+            }
+        });
+        let closed_session = Rc::downgrade(&session);
+        window.connect_close_request(move |closed| {
+            if let Some(session) = closed_session.upgrade() {
+                let current = session.popover.borrow().clone();
+                if current.as_ref() == Some(closed) {
+                    session.popover.take();
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        session.popover.replace(Some(window));
+    });
 }
 
 fn write_default_config() {
@@ -386,6 +448,16 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         }
     });
     app.add_action(&quit);
+
+    let menu = gio::SimpleAction::new("menu", None);
+    let menu_app = app.downgrade();
+    let menu_session = Rc::downgrade(session);
+    menu.connect_activate(move |_, _| {
+        if let (Some(app), Some(session)) = (menu_app.upgrade(), menu_session.upgrade()) {
+            toggle_menu(&app, &session, None);
+        }
+    });
+    app.add_action(&menu);
 }
 
 fn start_capture(app: &gtk::Application, request: Request, session: &Rc<Session>) {
