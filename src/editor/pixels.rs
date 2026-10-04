@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use gtk::gdk_pixbuf::Pixbuf;
 use gtk::glib;
 
+use super::document::Area;
 use crate::capture::PixelFormat;
 use crate::output::Image;
 
@@ -73,6 +74,28 @@ impl Picture {
         }
     }
 
+    /// Copies the pixels inside `region`, which must lie within the picture.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let kept = picture.cropped(region);
+    /// ```
+    pub fn cropped(&self, region: Region) -> Self {
+        let stride = self.stride();
+        let row = region.width as usize * 4;
+        let mut data = Vec::with_capacity(row * region.height as usize);
+        for line in region.y..region.y + region.height {
+            let start = line as usize * stride + region.x as usize * 4;
+            data.extend_from_slice(&self.data[start..start + row]);
+        }
+        Self {
+            width: region.width,
+            height: region.height,
+            data,
+        }
+    }
+
     /// Averages square blocks of `block` pixels, aligned to the top left corner.
     ///
     /// The result is as large as the picture, so any part of it can stand in for the same part of
@@ -117,6 +140,37 @@ impl Picture {
             data,
         }
     }
+}
+
+/// A whole-pixel rectangle inside a picture: left, top, width and height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Region {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Rounds an area to whole pixels and clamps it to a `width` by `height` picture.
+///
+/// Returns `None` when nothing of the area is left inside the picture.
+///
+/// # Examples
+///
+/// ```ignore
+/// let region = pixels::region(crop, picture.width, picture.height);
+/// ```
+pub fn region(area: Area, width: u32, height: u32) -> Option<Region> {
+    let left = area.x.round().clamp(0.0, f64::from(width)) as u32;
+    let top = area.y.round().clamp(0.0, f64::from(height)) as u32;
+    let right = (area.x + area.width).round().clamp(0.0, f64::from(width)) as u32;
+    let bottom = (area.y + area.height).round().clamp(0.0, f64::from(height)) as u32;
+    (right > left && bottom > top).then_some(Region {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
 }
 
 /// Picks a pixelation block that hides text on both small and large images.
@@ -253,6 +307,55 @@ mod tests {
         let hidden = Picture::from_image(&source).mosaic(2).to_image();
         let values: Vec<u8> = hidden.data.chunks(4).map(|pixel| pixel[0]).collect();
         assert_eq!(values, [100, 100, 60, 100, 100, 60]);
+    }
+
+    #[test]
+    fn rounds_and_clamps_a_crop_region() {
+        let area = |x, y, width, height| Area {
+            x,
+            y,
+            width,
+            height,
+        };
+        assert_eq!(
+            region(area(1.4, 2.6, 5.2, 3.0), 100, 100),
+            Some(Region {
+                x: 1,
+                y: 3,
+                width: 6,
+                height: 3
+            })
+        );
+        assert_eq!(
+            region(area(-10.0, 90.0, 50.0, 50.0), 100, 100),
+            Some(Region {
+                x: 0,
+                y: 90,
+                width: 40,
+                height: 10
+            })
+        );
+        assert_eq!(region(area(200.0, 0.0, 10.0, 10.0), 100, 100), None);
+    }
+
+    #[test]
+    fn copies_the_pixels_inside_a_region() {
+        let gray = |value: u8| [value, value, value, 255];
+        let source = image(
+            PixelFormat::Rgba,
+            &[gray(1), gray(2), gray(3), gray(4), gray(5), gray(6)],
+            3,
+        );
+        let kept = Picture::from_image(&source)
+            .cropped(Region {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 2,
+            })
+            .to_image();
+        let values: Vec<u8> = kept.data.chunks(4).map(|pixel| pixel[0]).collect();
+        assert_eq!(values, [2, 3, 5, 6]);
     }
 
     #[test]
