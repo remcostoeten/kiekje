@@ -5,6 +5,7 @@ mod clipboard;
 mod config;
 mod desktop_file;
 mod doctor;
+mod editor;
 mod help;
 mod library;
 mod mascot;
