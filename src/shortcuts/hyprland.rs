@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use gtk::glib;
 
-use super::{ShortcutAction, hyprland_bind};
+use super::{ShortcutAction, Shortcuts, hyprland_bind};
 use crate::storage;
 
 const MAX_SOURCE_DEPTH: usize = 4;
@@ -31,20 +31,23 @@ pub fn main_config_path() -> PathBuf {
     glib::user_config_dir().join("hypr").join("hyprland.conf")
 }
 
-/// Renders the managed include with one `bind` per shortcut action.
+/// Renders the managed include with one `bind` per shortcut that has a key.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// assert!(include_text("dev.example.App").contains("global, dev.example.App:capture-region"));
+/// let text = include_text("dev.example.App", &Shortcuts::default());
+/// assert!(text.contains("global, dev.example.App:capture-region"));
 /// ```
-pub fn include_text(app_id: &str) -> String {
+pub fn include_text(app_id: &str, shortcuts: &Shortcuts) -> String {
     let mut text = String::from(
         "# Written by Kiekje. Edits are replaced; copy a bind into your own config to change it.\n",
     );
     for action in ShortcutAction::ALL {
-        text.push_str(&hyprland_bind(action, app_id));
-        text.push('\n');
+        if let Some(trigger) = shortcuts.slot(action).trigger() {
+            text.push_str(&hyprland_bind(action, trigger, app_id));
+            text.push('\n');
+        }
     }
     text
 }
@@ -56,10 +59,10 @@ pub fn include_text(app_id: &str) -> String {
 /// # Examples
 ///
 /// ```ignore
-/// let changed = write_include(&include_path(), APP_ID)?;
+/// let changed = write_include(&include_path(), APP_ID, &config.shortcuts)?;
 /// ```
-pub fn write_include(path: &Path, app_id: &str) -> io::Result<bool> {
-    let text = include_text(app_id);
+pub fn write_include(path: &Path, app_id: &str, shortcuts: &Shortcuts) -> io::Result<bool> {
+    let text = include_text(app_id, shortcuts);
     match fs::read_to_string(path) {
         Ok(current) if current == text => return Ok(false),
         Ok(_) => {}
@@ -78,11 +81,7 @@ pub fn write_include(path: &Path, app_id: &str) -> io::Result<bool> {
 /// assert_eq!(source_line(&include_path()), "source = ~/.config/kiekje/hyprland.conf");
 /// ```
 pub fn source_line(include: &Path) -> String {
-    let home = glib::home_dir();
-    match include.strip_prefix(&home) {
-        Ok(relative) => format!("source = ~/{}", relative.display()),
-        Err(_) => format!("source = {}", include.display()),
-    }
+    format!("source = {}", storage::tilde(include))
 }
 
 /// Reports whether the Hyprland config at `main`, or a file it sources, sources `include`.
@@ -143,20 +142,30 @@ mod tests {
     }
 
     #[test]
-    fn binds_every_action_in_the_include() {
-        let text = include_text("dev.example.App");
+    fn binds_every_action_with_a_key_in_the_include() {
+        let mut shortcuts = Shortcuts::default();
+        let text = include_text("dev.example.App", &shortcuts);
         for action in ShortcutAction::ALL {
-            assert!(text.contains(&hyprland_bind(action, "dev.example.App")));
+            let trigger = shortcuts.slot(action).trigger().unwrap();
+            assert!(text.contains(&hyprland_bind(action, trigger, "dev.example.App")));
         }
         assert!(text.starts_with('#'));
+        shortcuts.set(
+            ShortcutAction::CaptureFullscreen,
+            crate::shortcuts::Slot::Off,
+        );
+        let text = include_text("dev.example.App", &shortcuts);
+        assert!(!text.contains("capture-fullscreen"));
+        assert!(text.contains("capture-region"));
     }
 
     #[test]
     fn rewrites_the_include_only_when_it_changes() {
         let path = scratch("write").join("hyprland.conf");
-        assert!(write_include(&path, "dev.example.App").unwrap());
-        assert!(!write_include(&path, "dev.example.App").unwrap());
-        assert!(write_include(&path, "dev.example.Other").unwrap());
+        let shortcuts = Shortcuts::default();
+        assert!(write_include(&path, "dev.example.App", &shortcuts).unwrap());
+        assert!(!write_include(&path, "dev.example.App", &shortcuts).unwrap());
+        assert!(write_include(&path, "dev.example.Other", &shortcuts).unwrap());
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

@@ -1,3 +1,5 @@
+pub mod settings;
+
 use std::cell::Cell;
 
 use gtk::{gdk, gio};
@@ -27,6 +29,7 @@ pub fn load_stylesheet() {
         eprintln!("kiekje: no display, the stylesheet is not applied");
         return;
     };
+    gtk::Settings::for_display(&display).set_gtk_application_prefer_dark_theme(true);
     let provider = gtk::CssProvider::new();
     provider.connect_parsing_error(|_, section, error| {
         eprintln!("kiekje: style.css {}: {error}", section.to_str());

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::Table;
 
+use crate::shortcuts::{Conflict, ShortcutAction, Shortcuts, Slot};
 use crate::storage::{self, Template};
 pub use migrate::{MigrateError, VERSION};
 
@@ -20,6 +21,8 @@ pub struct Config {
     pub storage: Storage,
     #[serde(default)]
     pub notifications: Notifications,
+    #[serde(default)]
+    pub shortcuts: Shortcuts,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -57,6 +60,8 @@ pub enum ConfigError {
     Migrate { path: PathBuf, source: MigrateError },
     #[error("could not write {}: {source}", path.display())]
     Write { path: PathBuf, source: io::Error },
+    #[error("{}: {source}", path.display())]
+    Shortcuts { path: PathBuf, source: Conflict },
     #[error("could not encode the config: {0}")]
     Encode(#[from] toml::ser::Error),
 }
@@ -71,6 +76,7 @@ impl Default for Config {
             version: VERSION,
             storage: Storage::default(),
             notifications: Notifications::default(),
+            shortcuts: Shortcuts::default(),
         }
     }
 }
@@ -213,6 +219,33 @@ pub fn ensure_file(path: &Path) -> Result<bool, ConfigError> {
     Ok(true)
 }
 
+/// Sets one shortcut in the config at `path` and returns the shortcuts as saved.
+///
+/// The rest of the file is kept. A trigger another action already uses, or a config that
+/// can't be read, leaves the file untouched. Touches the disk, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let shortcuts = config::set_shortcut(&config::path(), ShortcutAction::CaptureRegion, Slot::Off)?;
+/// ```
+pub fn set_shortcut(
+    path: &Path,
+    action: ShortcutAction,
+    slot: Slot,
+) -> Result<Shortcuts, ConfigError> {
+    let mut config = load_from(path)?.unwrap_or_default();
+    config.shortcuts.set(action, slot);
+    if let Some(source) = config.shortcuts.conflict() {
+        return Err(ConfigError::Shortcuts {
+            path: path.to_path_buf(),
+            source,
+        });
+    }
+    save_to(path, &config)?;
+    Ok(config.shortcuts)
+}
+
 fn parse(text: &str, path: &Path) -> Result<Config, ConfigError> {
     let parse_error = |source| ConfigError::Parse {
         path: path.to_path_buf(),
@@ -223,12 +256,20 @@ fn parse(text: &str, path: &Path) -> Result<Config, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    table.try_into().map_err(parse_error)
+    let config: Config = table.try_into().map_err(parse_error)?;
+    if let Some(source) = config.shortcuts.conflict() {
+        return Err(ConfigError::Shortcuts {
+            path: path.to_path_buf(),
+            source,
+        });
+    }
+    Ok(config)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shortcuts::Trigger;
 
     fn scratch(name: &str) -> PathBuf {
         std::env::temp_dir()
@@ -278,6 +319,40 @@ mod tests {
     }
 
     #[test]
+    fn reads_shortcuts_and_an_empty_one_as_off() {
+        let config = parse(
+            "[shortcuts]\ncapture-region = \"super+shift+S\"\ncapture-fullscreen = \"\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.shortcuts.capture_region,
+            Slot::Key(Trigger::parse("SHIFT+LOGO+s").unwrap())
+        );
+        assert_eq!(config.shortcuts.capture_fullscreen, Slot::Off);
+    }
+
+    #[test]
+    fn rejects_a_shortcut_that_breaks_the_rules() {
+        let error = parse(
+            "[shortcuts]\ncapture-region = \"s\"",
+            Path::new("config.toml"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::Parse { .. }));
+    }
+
+    #[test]
+    fn rejects_one_trigger_on_two_actions() {
+        let error = parse(
+            "[shortcuts]\ncapture-region = \"Print\"\ncapture-fullscreen = \"Print\"",
+            Path::new("config.toml"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::Shortcuts { .. }));
+    }
+
+    #[test]
     fn rejects_a_relative_folder() {
         assert_eq!(
             Folder::parse("Shots".into(), Path::new("/home/test")),
@@ -319,12 +394,41 @@ mod tests {
         let mut config = Config::default();
         config.storage.folder = Some(Folder::parse("/srv/shots".into(), Path::new("/")).unwrap());
         config.storage.filename = Template::parse("{date} {time}").unwrap();
+        config.shortcuts.capture_fullscreen = Slot::Off;
         save_to(&path, &config).unwrap();
         save_to(&path, &config).unwrap();
         assert_eq!(load_from(&path).unwrap(), Some(config));
         let leftovers = fs::read_dir(path.parent().unwrap()).unwrap().count();
         assert_eq!(leftovers, 1);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn sets_one_shortcut_and_keeps_the_rest() {
+        let path = scratch("set-shortcut");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[storage]\nfilename = \"mine\"").unwrap();
+        let trigger = Trigger::parse("CTRL+ALT+s").unwrap();
+        let shortcuts = set_shortcut(
+            &path,
+            ShortcutAction::CaptureRegion,
+            Slot::Key(trigger.clone()),
+        )
+        .unwrap();
+        assert_eq!(shortcuts.capture_region, Slot::Key(trigger));
+        let saved = load_from(&path).unwrap().unwrap();
+        assert_eq!(saved.shortcuts, shortcuts);
+        assert_eq!(saved.storage.filename.to_string(), "mine");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_shortcut_another_action_uses() {
+        let path = scratch("set-conflict");
+        let taken = Shortcuts::default().capture_fullscreen;
+        let error = set_shortcut(&path, ShortcutAction::CaptureRegion, taken).unwrap_err();
+        assert!(matches!(error, ConfigError::Shortcuts { .. }));
+        assert!(!path.exists());
     }
 
     #[test]
