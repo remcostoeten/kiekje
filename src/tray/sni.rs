@@ -98,6 +98,13 @@ impl Tray for Item {
                     origin: TrayOrigin::Menu,
                 },
             ),
+            command_item(
+                "Repeat last region",
+                TrayCommand::Capture {
+                    mode: CaptureMode::Repeat,
+                    origin: TrayOrigin::Menu,
+                },
+            ),
             command_item("Open captures folder", TrayCommand::OpenCaptures),
             MenuItem::Separator,
             command_item("Quit", TrayCommand::Quit),

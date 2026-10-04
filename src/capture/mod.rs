@@ -3,27 +3,44 @@ pub mod mapping;
 use std::fmt;
 
 use gtk::gdk;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureMode {
     Region,
     Fullscreen,
+    Repeat,
 }
 
 impl CaptureMode {
+    pub const ALL: [Self; 3] = [Self::Region, Self::Fullscreen, Self::Repeat];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Region => "region",
             Self::Fullscreen => "fullscreen",
+            Self::Repeat => "repeat",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "region" => Some(Self::Region),
-            "fullscreen" => Some(Self::Fullscreen),
-            _ => None,
+        Self::ALL.into_iter().find(|mode| mode.as_str() == value)
+    }
+
+    /// The word a capture of this mode gets in its file name.
+    ///
+    /// A repeated region is still a region, so both name their files the same way.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(CaptureMode::Repeat.file_label(), "region");
+    /// ```
+    pub fn file_label(self) -> &'static str {
+        match self {
+            Self::Region | Self::Repeat => "region",
+            Self::Fullscreen => "fullscreen",
         }
     }
 }
@@ -85,7 +102,7 @@ impl fmt::Display for BackendKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct LogicalRect {
     pub x: i32,
     pub y: i32,
@@ -240,6 +257,8 @@ pub enum CaptureError {
     Unauthorized,
     #[error("the portal request was canceled")]
     Canceled,
+    #[error("no region was selected yet; run `kiekje-next capture region` first")]
+    NoLastRegion,
     #[error("backend unavailable: {0}")]
     Unavailable(String),
     #[error("unsupported pixel format {0}")]
@@ -265,5 +284,24 @@ impl CaptureError {
                 | Self::UnsupportedFormat(_)
                 | Self::Wayland(_)
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_every_mode_from_its_name() {
+        for mode in CaptureMode::ALL {
+            assert_eq!(CaptureMode::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(CaptureMode::parse("window"), None);
+    }
+
+    #[test]
+    fn names_a_repeated_region_like_a_region() {
+        assert_eq!(CaptureMode::Repeat.file_label(), "region");
+        assert_eq!(CaptureMode::Fullscreen.file_label(), "fullscreen");
     }
 }

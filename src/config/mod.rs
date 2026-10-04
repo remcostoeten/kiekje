@@ -1,7 +1,7 @@
 mod migrate;
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, ErrorKind, Write};
+use std::fs;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use gtk::glib;
@@ -168,29 +168,10 @@ pub fn load() -> Config {
 /// ```
 pub fn save_to(path: &Path, config: &Config) -> Result<(), ConfigError> {
     let text = toml::to_string_pretty(config)?;
-    let write_error = |source| ConfigError::Write {
+    storage::write_atomic(path, text.as_bytes()).map_err(|source| ConfigError::Write {
         path: path.to_path_buf(),
         source,
-    };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(write_error)?;
-    }
-    let temporary = path.with_extension(format!("toml.{}.tmp", std::process::id()));
-    let written = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .and_then(|mut file| {
-            file.write_all(text.as_bytes())?;
-            file.sync_all()
-        })
-        .and_then(|()| fs::rename(&temporary, path));
-    if let Err(error) = written {
-        // Best-effort cleanup; the write error is the one to report.
-        let _ = fs::remove_file(&temporary);
-        return Err(write_error(error));
-    }
-    Ok(())
+    })
 }
 
 /// Writes the default config when none exists yet, so there is a file to edit.

@@ -14,6 +14,7 @@ const DIM: f64 = 0.45;
 const MIN_SELECTION: i32 = 3;
 
 pub struct Selection {
+    pub rect: LogicalRect,
     pub plan: SelectionPlan,
 }
 
@@ -206,7 +207,7 @@ fn build_surface(
             .then(|| plan_selection(rect, &end_shared.geometry))
             .flatten();
         match plan {
-            Some(plan) => finish(&end_shared, Some(Selection { plan })),
+            Some(plan) => finish(&end_shared, Some(Selection { rect, plan })),
             None => redraw(&end_shared),
         }
     });

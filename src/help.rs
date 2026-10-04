@@ -43,6 +43,12 @@ const CAPTURE: &[Entry] = &[
         description: "Freeze the screen and keep all of it",
         note: "",
     },
+    Entry {
+        name: "capture",
+        argument: "repeat",
+        description: "Capture the last selected region again",
+        note: "",
+    },
 ];
 
 const SESSION: &[Entry] = &[
@@ -100,6 +106,12 @@ const MODES: &[Entry] = &[
         description: "Freeze the screen and keep all of it",
         note: "",
     },
+    Entry {
+        name: "repeat",
+        argument: "",
+        description: "Capture the last selected region again",
+        note: "",
+    },
 ];
 
 const FLAGS: &[Entry] = &[
@@ -108,6 +120,12 @@ const FLAGS: &[Entry] = &[
         argument: "<name>",
         description: "Force auto, kwin, wlroots or portal",
         note: "(default: auto)",
+    },
+    Entry {
+        name: "--delay",
+        argument: "<seconds>",
+        description: "Wait before freezing the screen, up to 60",
+        note: "(default: 0)",
     },
     Entry {
         name: "--no-save",
@@ -119,6 +137,10 @@ const FLAGS: &[Entry] = &[
 
 const EXAMPLES: &[(&str, &str)] = &[
     ("Select a region, copy it and save it", "capture"),
+    (
+        "Open a menu, then capture after 5 seconds",
+        "capture --delay 5",
+    ),
     (
         "Grab every monitor through KWin, clipboard only",
         "capture fullscreen --backend kwin --no-save",
@@ -290,7 +312,7 @@ fn animate_intro(style: &Style) -> std::io::Result<()> {
 fn usage(style: &Style, topic: Topic) -> String {
     let (command, arguments) = match topic {
         Topic::Overview => ("<command>", "[...flags]"),
-        Topic::Capture => ("capture", "[region|fullscreen] [...flags]"),
+        Topic::Capture => ("capture", "[region|fullscreen|repeat] [...flags]"),
     };
     format!(
         "{} {} {} {}\n",

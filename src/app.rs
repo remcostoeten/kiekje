@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::backends;
-use crate::capture::mapping::SelectionPlan;
+use crate::capture::mapping::{self, SelectionPlan};
 use crate::capture::{
     BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
 };
@@ -20,7 +20,7 @@ use crate::overlay::{self, Selection};
 use crate::shortcuts::{
     PortalGuard, PortalShortcuts, ShortcutAction, ShortcutRegistrar, hyprland_bind,
 };
-use crate::storage::{self, Naming};
+use crate::storage::{self, Naming, last_region};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost, TrayOrigin};
 
 pub const APP_ID: &str = "dev.remcostoeten.KiekjeNext";
@@ -28,6 +28,7 @@ const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
 
 struct Session {
     busy: Cell<bool>,
+    last_region: Cell<Option<LogicalRect>>,
     clipboard: Option<Clipboard>,
     shortcuts: RefCell<Option<PortalGuard>>,
     tray: RefCell<Option<Box<dyn TrayGuard>>>,
@@ -44,28 +45,41 @@ pub struct Request {
     pub mode: CaptureMode,
     pub backend: BackendChoice,
     pub save: bool,
+    pub delay: Duration,
     pub trigger_us: i64,
 }
 
-type RequestVariant = (String, String, bool, i64);
+type RequestVariant = (String, String, bool, u32, i64);
 
 impl Request {
+    fn saved(mode: CaptureMode) -> Self {
+        Self {
+            mode,
+            backend: BackendChoice::Auto,
+            save: true,
+            delay: Duration::ZERO,
+            trigger_us: glib::monotonic_time(),
+        }
+    }
+
     fn to_variant(self) -> glib::Variant {
         (
             self.mode.as_str().to_owned(),
             self.backend.as_str().to_owned(),
             self.save,
+            u32::try_from(self.delay.as_millis()).unwrap_or(u32::MAX),
             self.trigger_us,
         )
             .to_variant()
     }
 
     fn from_variant(variant: &glib::Variant) -> Option<Self> {
-        let (mode, backend, save, trigger_us) = variant.get::<RequestVariant>()?;
+        let (mode, backend, save, delay_ms, trigger_us) = variant.get::<RequestVariant>()?;
         Some(Self {
             mode: CaptureMode::parse(&mode)?,
             backend: BackendChoice::parse(&backend)?,
             save,
+            delay: Duration::from_millis(u64::from(delay_ms)),
             trigger_us,
         })
     }
@@ -104,6 +118,7 @@ pub fn run(command: Command) -> glib::ExitCode {
     };
     let session = Rc::new(Session {
         busy: Cell::new(false),
+        last_region: Cell::new(None),
         clipboard,
         shortcuts: RefCell::new(None),
         tray: RefCell::new(None),
@@ -168,13 +183,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
             ShortcutAction::CaptureRegion => CaptureMode::Region,
             ShortcutAction::CaptureFullscreen => CaptureMode::Fullscreen,
         };
-        let request = Request {
-            mode,
-            backend: BackendChoice::Auto,
-            save: true,
-            trigger_us: glib::monotonic_time(),
-        };
-        start_capture(&app, request, &session);
+        start_capture(&app, Request::saved(mode), &session);
     };
     let session = Rc::downgrade(session);
     glib::spawn_future_local(async move {
@@ -252,12 +261,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
     match command {
         TrayCommand::Capture { mode, origin } => {
             println!("kiekje: tray capture-{}", mode.as_str());
-            let request = Request {
-                mode,
-                backend: BackendChoice::Auto,
-                save: true,
-                trigger_us: glib::monotonic_time(),
-            };
+            let request = Request::saved(mode);
             match origin {
                 TrayOrigin::Icon => start_capture(app, request, session),
                 TrayOrigin::Menu => {
@@ -354,13 +358,40 @@ fn start_capture(app: &gtk::Application, request: Request, session: &Rc<Session>
         eprintln!("kiekje: a capture is already running, ignoring this trigger");
         return;
     }
+    if request.delay.is_zero() {
+        grab(app, request, session);
+        return;
+    }
+    println!("kiekje: capturing in {:.1} s", request.delay.as_secs_f64());
+    let app = app.clone();
+    let session = session.clone();
+    glib::timeout_add_local_once(request.delay, move || {
+        let request = Request {
+            trigger_us: glib::monotonic_time(),
+            ..request
+        };
+        grab(&app, request, &session);
+    });
+}
+
+fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
     let received_us = glib::monotonic_time();
     let monitors = gdk_monitors();
     let infos: Vec<MonitorInfo> = monitors.iter().map(monitor_info).collect();
+    let known_region = session.last_region.get();
 
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
-        let result = backends::capture(request.backend, &infos, false);
+        let result = match request.mode {
+            CaptureMode::Repeat => match known_region.or_else(last_region::load) {
+                Some(region) => backends::capture(request.backend, &infos, false)
+                    .map(|capture| (capture, Some(region))),
+                None => Err(CaptureError::NoLastRegion),
+            },
+            CaptureMode::Region | CaptureMode::Fullscreen => {
+                backends::capture(request.backend, &infos, false).map(|capture| (capture, None))
+            }
+        };
         // The receiver only disappears when the app is quitting.
         let _ = sender.send_blocking((result, glib::monotonic_time()));
     });
@@ -375,7 +406,9 @@ fn start_capture(app: &gtk::Application, request: Request, session: &Rc<Session>
         log_timing("trigger -> instance", request.trigger_us, received_us);
         log_timing("instance -> frames", received_us, captured_us);
         match result {
-            Ok(capture) => handle_capture(&app, request, capture, &monitors, session),
+            Ok((capture, region)) => {
+                handle_capture(&app, request, capture, region, &monitors, session)
+            }
             Err(CaptureError::Canceled) => {
                 println!("kiekje: capture canceled");
                 session.busy.set(false);
@@ -392,6 +425,7 @@ fn handle_capture(
     app: &gtk::Application,
     request: Request,
     capture: Capture,
+    region: Option<LogicalRect>,
     monitors: &[gdk::Monitor],
     session: Rc<Session>,
 ) {
@@ -413,12 +447,19 @@ fn handle_capture(
         );
     }
 
-    match request.mode {
-        CaptureMode::Fullscreen => {
+    match (request.mode, region) {
+        (CaptureMode::Fullscreen, _) => {
             let frames = capture.frames;
             deliver(Box::new(move || output::stitch(&frames)), request, session);
         }
-        CaptureMode::Region => {
+        (CaptureMode::Repeat, Some(region)) => {
+            repeat_region(request, capture.frames, region, session)
+        }
+        (CaptureMode::Repeat, None) => {
+            eprintln!("kiekje: capture failed: {}", CaptureError::NoLastRegion);
+            session.busy.set(false);
+        }
+        (CaptureMode::Region, _) => {
             let frames = Arc::new(capture.frames);
             let selection_frames = frames.clone();
             let trigger_us = request.trigger_us;
@@ -427,7 +468,8 @@ fn handle_capture(
                 frames,
                 monitors,
                 move |selection| match selection {
-                    Some(Selection { plan }) => {
+                    Some(Selection { rect, plan }) => {
+                        remember_region(&session, rect);
                         log_selection(&selection_frames, plan);
                         deliver(
                             Box::new(move || {
@@ -452,6 +494,41 @@ fn handle_capture(
             );
         }
     }
+}
+
+fn repeat_region(request: Request, frames: Vec<Frame>, region: LogicalRect, session: Rc<Session>) {
+    let geometry: Vec<(LogicalRect, (u32, u32))> = frames
+        .iter()
+        .map(|frame| (frame.monitor.logical, (frame.width, frame.height)))
+        .collect();
+    let Some(plan) = mapping::plan_selection(region, &geometry) else {
+        eprintln!(
+            "kiekje: capture failed: the last region {}x{}{:+}{:+} is not on any monitor now",
+            region.width, region.height, region.x, region.y,
+        );
+        session.busy.set(false);
+        return;
+    };
+    log_selection(&frames, plan);
+    deliver(
+        Box::new(move || Some(output::render_selection(&frames, plan))),
+        request,
+        session,
+    );
+}
+
+fn remember_region(session: &Session, region: LogicalRect) {
+    if session.last_region.replace(Some(region)) == Some(region) {
+        return;
+    }
+    glib::spawn_future_local(async move {
+        match gio::spawn_blocking(move || last_region::save_to(&last_region::path(), region)).await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => eprintln!("kiekje: {error}"),
+            Err(_) => eprintln!("kiekje: the last region worker stopped"),
+        }
+    });
 }
 
 type Render = Box<dyn FnOnce() -> Option<Image> + Send>;
@@ -591,4 +668,32 @@ fn log_timing(label: &str, from_us: i64, to_us: i64) {
         "kiekje: timing {label}: {:.1} ms",
         (to_us - from_us) as f64 / 1000.0
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn carries_a_request_through_its_variant() {
+        let request = Request {
+            mode: CaptureMode::Repeat,
+            backend: BackendChoice::Wlroots,
+            save: false,
+            delay: Duration::from_secs(3),
+            trigger_us: 42,
+        };
+        let decoded = Request::from_variant(&request.to_variant()).unwrap();
+        assert_eq!(decoded.mode, CaptureMode::Repeat);
+        assert_eq!(decoded.backend, BackendChoice::Wlroots);
+        assert!(!decoded.save);
+        assert_eq!(decoded.delay, Duration::from_secs(3));
+        assert_eq!(decoded.trigger_us, 42);
+    }
+
+    #[test]
+    fn rejects_a_variant_from_an_older_build() {
+        let old = ("region".to_owned(), "auto".to_owned(), true, 7_i64).to_variant();
+        assert!(Request::from_variant(&old).is_none());
+    }
 }

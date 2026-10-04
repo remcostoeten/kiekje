@@ -14,6 +14,8 @@ mod storage;
 mod style;
 mod tray;
 
+use std::time::Duration;
+
 use gtk::glib;
 
 use app::{Command, Request};
@@ -80,11 +82,14 @@ fn pin_mmap_threshold() {
 #[cfg(not(target_env = "gnu"))]
 fn pin_mmap_threshold() {}
 
+const MAX_DELAY_SECONDS: u64 = 60;
+
 fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, String> {
     let mut request = Request {
         mode: CaptureMode::Region,
         backend: BackendChoice::Auto,
         save: true,
+        delay: Duration::ZERO,
         trigger_us,
     };
     let mut remaining = arguments.iter();
@@ -96,6 +101,10 @@ fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, Strin
                 request.backend =
                     BackendChoice::parse(value).ok_or(format!("unknown backend `{value}`"))?;
             }
+            "--delay" => {
+                let value = remaining.next().ok_or("--delay needs a value")?;
+                request.delay = parse_delay(value)?;
+            }
             value => {
                 request.mode = CaptureMode::parse(value).ok_or(format!("unknown mode `{value}`"))?
             }
@@ -104,8 +113,59 @@ fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, Strin
     Ok(request)
 }
 
+fn parse_delay(value: &str) -> Result<Duration, String> {
+    value
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| *seconds <= MAX_DELAY_SECONDS)
+        .map(Duration::from_secs)
+        .ok_or(format!(
+            "--delay takes whole seconds from 0 to {MAX_DELAY_SECONDS}, not `{value}`"
+        ))
+}
+
 fn is_help_request(arguments: &[String]) -> bool {
     arguments
         .iter()
         .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<Request, String> {
+        let arguments: Vec<String> = arguments
+            .iter()
+            .map(|argument| (*argument).into())
+            .collect();
+        parse_capture(&arguments, 0)
+    }
+
+    #[test]
+    fn captures_a_region_now_by_default() {
+        let request = parse(&[]).unwrap();
+        assert_eq!(request.mode, CaptureMode::Region);
+        assert_eq!(request.delay, Duration::ZERO);
+        assert!(request.save);
+    }
+
+    #[test]
+    fn parses_a_delayed_repeat_of_the_last_region() {
+        let request = parse(&["repeat", "--delay", "5", "--no-save"]).unwrap();
+        assert_eq!(request.mode, CaptureMode::Repeat);
+        assert_eq!(request.delay, Duration::from_secs(5));
+        assert!(!request.save);
+    }
+
+    #[test]
+    fn rejects_a_delay_that_is_not_whole_seconds_in_range() {
+        for value in ["-1", "1.5", "61", "soon"] {
+            assert!(parse(&["--delay", value]).is_err(), "{value}");
+        }
+        assert_eq!(
+            parse(&["--delay"]).err().as_deref(),
+            Some("--delay needs a value")
+        );
+    }
 }
