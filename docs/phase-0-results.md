@@ -280,6 +280,18 @@ Tested on 2026-10-03 on Plasma 6.7.5 in `test-kde`, clicking through QEMU:
 
 The styled left-click popover from proposal section 10 is not built yet; left click captures a region until it exists.
 
+## Capture delay and repeat last region
+
+`capture --delay <seconds>` waits up to 60 s on the main loop before grabbing the frame, so the frozen frame shows what was on screen after the delay. The capture counts as in flight while it waits, so other triggers are dropped. `capture repeat` and the tray item "Repeat last region" grab every monitor and crop the last selected region without opening the overlay. The region is kept in desktop logical coordinates in `$XDG_DATA_HOME/kiekje/last-region.toml`, written atomically after each region selection, and the crop goes through the same plan as a drag, so it stays native-resolution and may cross monitors. Files are named like region captures.
+
+Checked on 2026-10-04 in a cloud container with sway 1.9 headless (pixman, one 1280x800 output) through `wlr-screencopy`:
+
+- `capture repeat` with no stored region logged `no region was selected yet` and the next trigger worked.
+- With a stored 300x200+100+50 region, `capture repeat --delay 2` logged `capturing in 2.0 s`, dropped a `capture fullscreen` sent during the wait, then saved a 300x200 PNG named `kiekje-region-...`.
+- A stored region outside every monitor logged `the last region ... is not on any monitor now` and saved nothing.
+
+Unverified: storing the region from a real drag, the tray item, and any desktop other than headless sway.
+
 ## Follow-up for Phase 1
 
 1. Done: clipboard through `ext-data-control-v1` for captures that have no focused window, with a focused-window fallback on desktops without it (GNOME).

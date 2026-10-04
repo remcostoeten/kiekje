@@ -6,7 +6,7 @@ The architecture, capability matrix, phases and acceptance tests live in [`docs/
 
 ## Status
 
-Phase 0 is done, phase 1 is in progress: lab coverage on five desktops, overlay warm-up, portal global shortcuts, selection across monitors, the tray with its native menu, and the TOML config with filename templates are in. Nothing is released. Results live in [`docs/phase-0-results.md`](./docs/phase-0-results.md).
+Phase 0 is done, phase 1 is in progress: lab coverage on five desktops, overlay warm-up, portal global shortcuts, selection across monitors, the tray with its native menu, the TOML config with filename templates, capture delay and repeat last region are in. Nothing is released. Results live in [`docs/phase-0-results.md`](./docs/phase-0-results.md).
 
 Decided:
 

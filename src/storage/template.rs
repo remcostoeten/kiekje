@@ -164,7 +164,7 @@ impl Template {
         for part in &self.parts {
             match part {
                 Part::Text(text) => name.push_str(text),
-                Part::Token(Token::Mode) => name.push_str(naming.mode.as_str()),
+                Part::Token(Token::Mode) => name.push_str(naming.mode.file_label()),
                 Part::Token(Token::Date) => name.push_str(&format!(
                     "{:04}-{:02}-{:02}",
                     stamp.year, stamp.month, stamp.day
@@ -247,6 +247,18 @@ mod tests {
     fn renders_the_default_template() {
         assert_eq!(
             Template::default().render(&naming()),
+            "kiekje-region-2026-03-07-09-05-04"
+        );
+    }
+
+    #[test]
+    fn names_a_repeated_region_as_a_region() {
+        let repeat = Naming {
+            mode: CaptureMode::Repeat,
+            ..naming()
+        };
+        assert_eq!(
+            Template::default().render(&repeat),
             "kiekje-region-2026-03-07-09-05-04"
         );
     }

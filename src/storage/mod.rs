@@ -1,3 +1,4 @@
+pub mod last_region;
 pub mod template;
 
 use std::fs::{self, File, OpenOptions};
@@ -73,6 +74,40 @@ pub fn save_png(png: &[u8], directory: &Path, base: &str) -> io::Result<PathBuf>
     Ok(path)
 }
 
+/// Replaces the file at `path` with `bytes` through a temporary file and a rename.
+///
+/// Readers see the old file or the new one, never half of either. Missing parent folders are
+/// created.
+///
+/// # Examples
+///
+/// ```ignore
+/// write_atomic(&config::path(), text.as_bytes())?;
+/// ```
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}.tmp", std::process::id()));
+    let temporary = path.with_file_name(name);
+    let written = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&temporary, path));
+    if let Err(error) = written {
+        // Best-effort cleanup; the write error is the one to report.
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn create_unique(directory: &Path, base: &str, extension: &str) -> io::Result<(PathBuf, File)> {
     for attempt in 1..=1000 {
         let name = if attempt == 1 {
@@ -109,6 +144,17 @@ mod tests {
         let (second, _) = create_unique(&directory, "same", "png").unwrap();
         assert_ne!(first, second);
         assert!(second.ends_with("same-2.png"));
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn replaces_a_file_atomically_without_leftovers() {
+        let directory = scratch("atomic");
+        let path = directory.join("nested").join("state.toml");
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"second");
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
         fs::remove_dir_all(&directory).unwrap();
     }
 
