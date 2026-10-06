@@ -16,6 +16,32 @@ VIRTIOFSD="${KIEKJE_LAB_VIRTIOFSD:-/usr/lib/virtiofsd}"
 QEMU_IMG="${KIEKJE_LAB_QEMU_IMG:-/usr/bin/qemu-img}"
 BOOTSTRAP_PORT="${KIEKJE_LAB_PORT:-8649}"
 STEPS=(new installed bootstrap provision sync install snapshot)
+declare -A STEP_NOTES=(
+    [new]="create the VM and boot the installer"
+    [installed]="wait for the OS install and a login"
+    [bootstrap]="SSH, guest agent and your key"
+    [provision]="build dependencies"
+    [sync]="copy the repo into the VM"
+    [install]="build, install and doctor"
+    [snapshot]="take the clean snapshot"
+)
+LOW_MEMORY_MIB=512
+ACCENT='1;38;2;254;81;1'
+TTY=0
+[[ -t 1 ]] && TTY=1
+COLOR=0
+if [[ -z "${NO_COLOR:-}" && ("$TTY" == 1 || "${KIEKJE_LAB_COLOR:-}" == 1) ]]; then
+    COLOR=1
+fi
+LAYOUT_UNDO=()
+RUN=""
+BIN=""
+DAEMON=""
+PATTERN=""
+READONLY_DIR=""
+PLAN=()
+STAGE=0
+STARTED=$SECONDS
 
 declare -A PACKAGES=(
     [arch]="gcc make pkgconf gtk4 gtk4-layer-shell wayland dbus xdg-desktop-portal rsync curl"
@@ -75,6 +101,8 @@ HELP_ENV=(
     "KIEKJE_LAB_KEY|SSH key for guests (default: ~/.ssh/id_ed25519)"
     "KIEKJE_LAB_USER|Guest user name (default: kiek)"
     "KIEKJE_LAB_PORT|Port that serves the bootstrap script (default: 8649)"
+    "KIEKJE_LAB_JOBS|Cargo jobs for builds (default: what free memory allows)"
+    "KIEKJE_LAB_IGNORE_MEMORY|Set to 1 to start a VM the host has no room for"
 )
 
 HELP_EXAMPLES=(
@@ -85,7 +113,7 @@ HELP_EXAMPLES=(
 )
 
 function paint {
-    if [[ "$HELP_COLOR" == 1 && -n "$2" ]]; then
+    if [[ "$COLOR" == 1 && -n "$2" ]]; then
         printf '\e[%sm%s\e[0m' "$1" "$2"
     else
         printf '%s' "$2"
@@ -100,9 +128,7 @@ function help_row {
 
 function print_help {
     local entry name argument description
-    HELP_COLOR=0
-    [[ -t 1 && -z "${NO_COLOR:-}" ]] && HELP_COLOR=1
-    printf '\n  %s  %s\n' "$(paint '1;38;2;254;81;1' kiekje-lab)" "$(paint 2 'VM test bench for Kiekje')"
+    printf '\n  %s  %s\n' "$(paint "$ACCENT" kiekje-lab)" "$(paint 2 'VM test bench for Kiekje')"
     printf '  %s\n\n' "$(paint 2 'Builds and tests the app on this session or inside libvirt VMs, one log folder per run.')"
     printf '%s %s %s %s\n' "$(paint 1 Usage:)" "$(paint 1 kiekje-lab)" "$(paint 1 '<command>')" "$(paint '1;36' '[...args]')"
     for entry in "${HELP_GROUPS[@]}"; do
@@ -113,7 +139,7 @@ function print_help {
             entry="${entry#*|}"
             description="${entry##*|}"
             argument="${entry%|*}"
-            help_row "$name" "$argument" "$description" '1;38;2;254;81;1'
+            help_row "$name" "$argument" "$description" "$ACCENT"
         fi
     done
     printf '\n%s\n' "$(paint 1 'VM flags:')"
@@ -142,12 +168,152 @@ function help_note {
 }
 
 function fail {
-    echo "kiekje-lab: $*" >&2
+    if [[ "${COLOR:-0}" == 1 ]]; then
+        printf '\n  \e[1;31m✗ %s\e[0m\n' "$*" >&2
+    else
+        echo "kiekje-lab: $*" >&2
+    fi
     exit 1
 }
 
 function say {
-    echo "kiekje-lab: $*"
+    if ((COLOR)); then
+        printf '  %s %s\n' "$(paint "$ACCENT" '›')" "$*"
+    else
+        echo "kiekje-lab: $*"
+    fi
+}
+
+function warn {
+    if ((COLOR)); then
+        printf '  %s %s\n' "$(paint '1;33' '!')" "$(paint 33 "$*")" >&2
+    else
+        echo "kiekje-lab: warning: $*" >&2
+    fi
+}
+
+function clock {
+    printf '%d:%02d' $(($1 / 60)) $(($1 % 60))
+}
+
+function mem_available_mib {
+    awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo
+}
+
+function swap_free_mib {
+    awk '/^SwapFree:/ {print int($2 / 1024)}' /proc/meminfo
+}
+
+function format_mib {
+    awk -v mib="$1" 'BEGIN { if (mib >= 1024) printf "%.1f GB", mib / 1024; else printf "%d MB", mib }'
+}
+
+function build_jobs {
+    local jobs cores
+    if [[ -n "${KIEKJE_LAB_JOBS:-}" ]]; then
+        echo "$KIEKJE_LAB_JOBS"
+        return
+    fi
+    cores="$(nproc)"
+    jobs=$(($(mem_available_mib) / 1536))
+    ((jobs >= 1)) || jobs=1
+    ((jobs <= cores)) || jobs=$cores
+    echo "$jobs"
+}
+
+function require_build_memory {
+    local free swap
+    free="$(mem_available_mib)"
+    swap="$(swap_free_mib)"
+    ((free + swap >= 1024)) && return 0
+    fail "only $(format_mib "$free") of memory and $(format_mib "$swap") of swap are free; a release build needs about 1 GB. Close apps or give this machine more RAM"
+}
+
+function build_failure_reason {
+    if grep -qiE 'SIGKILL|signal: 9|^Killed|out of memory|memory allocation of .* failed|cannot allocate memory' "$1"; then
+        echo "the build was killed, most likely out of memory ($(format_mib "$(mem_available_mib)") free now). Retry with KIEKJE_LAB_JOBS=1 or give this machine more RAM; full log in $1"
+    else
+        echo "the build failed; full log in $1"
+    fi
+}
+
+function run_quietly {
+    local log="$1" pid status=0 began=$SECONDS last
+    shift
+    "$@" >"$log" 2>&1 &
+    pid=$!
+    if ((TTY && COLOR)); then
+        while kill -0 "$pid" 2>/dev/null; do
+            last="$(grep -oE '(Compiling|Building|Finished) .*' "$log" 2>/dev/null | tail -n 1 | cut -c1-60 || true)"
+            printf '\r\e[K    %s  %s' "$(paint 2 "$(clock $((SECONDS - began)))")" "$(paint 2 "$last")"
+            sleep 0.5
+        done
+        printf '\r\e[K'
+    fi
+    wait "$pid" || status=$?
+    return "$status"
+}
+
+function vm_memory_mib {
+    vsh dominfo "$1" | awk '/^Max memory:/ {print int($3 / 1024)}'
+}
+
+function check_host_memory {
+    local need="$1" what="$2" free
+    free="$(mem_available_mib)"
+    ((free >= need)) && return 0
+    if ((free * 2 < need)) && [[ "${KIEKJE_LAB_IGNORE_MEMORY:-}" != 1 ]]; then
+        fail "$what needs $(format_mib "$need") but the host has $(format_mib "$free") free. Close apps or stop other VMs first, or set KIEKJE_LAB_IGNORE_MEMORY=1 to start it anyway"
+    fi
+    warn "$what needs $(format_mib "$need") but the host has $(format_mib "$free") free; expect swapping"
+}
+
+function heading {
+    printf '\n  %s  %s\n' "$(paint "$ACCENT" "$1")" "$(paint 2 "${2:-}")"
+}
+
+function print_plan {
+    local entry i=0
+    printf '\n  %s\n' "$(paint 1 "$1")"
+    shift
+    for entry in "$@"; do
+        i=$((i + 1))
+        printf '  %s  %-12s %s\n' "$(paint 2 "$(printf '%2d' "$i")")" "${entry%%|*}" "$(paint 2 "${entry#*|}")"
+    done
+}
+
+function stage {
+    local entry note="" free
+    for entry in "${PLAN[@]}"; do
+        [[ "${entry%%|*}" == "$1" ]] && note="${entry#*|}"
+    done
+    STAGE=$((STAGE + 1))
+    free="$(mem_available_mib)"
+    printf '\n  %s %s  %s  %s\n' "$(paint "$ACCENT" "[$STAGE/${#PLAN[@]}]")" "$(paint 1 "$1")" "$note" \
+        "$(paint 2 "$(clock $((SECONDS - STARTED))) · $(format_mib "$free") free")"
+    ((free >= LOW_MEMORY_MIB)) || warn "only $(format_mib "$free") of memory is free; captures may stall or the OOM killer may stop the daemon"
+    if [[ -n "$DAEMON" ]] && ! daemon_alive; then
+        warn "the daemon is no longer running; see $RUN/daemon.log$(oom_hint)"
+        DAEMON=""
+    fi
+}
+
+function oom_hint {
+    if journalctl -k -q --since "-1h" 2>/dev/null | grep -qE 'Out of memory: Killed process [0-9]+ \(kiekje\)'; then
+        echo " (the kernel OOM killer stopped it)"
+    fi
+}
+
+function on_error {
+    local status="$1" line="$2" command="$3"
+    # Command substitutions run without errexit, so failures there are expected and handled by the caller.
+    ((BASH_SUBSHELL == 0)) || return 0
+    if ((COLOR)); then
+        printf '\n  \e[1;31m✗ stopped:\e[0m %s %s\n' "$command" "$(paint 2 "exited $status at line $line in ${FUNCNAME[1]:-main}")" >&2
+    else
+        echo "kiekje-lab: stopped: $command exited $status at line $line in ${FUNCNAME[1]:-main}" >&2
+    fi
+    [[ -z "$RUN" ]] || echo "  partial results in $RUN" >&2
 }
 
 function import_session_env {
@@ -283,6 +449,26 @@ function leave_gnome_overview {
 
 function check_output {
     echo "$1=$2" >>"$RUN/checks.txt"
+    print_check "$1" "$2"
+}
+
+function print_check {
+    local verdict="${2%% *}" detail="${2#* }" mark
+    verdict="${verdict%,}"
+    [[ "$detail" != "$2" ]] || detail=""
+    case "$verdict" in
+    pass) mark="$(paint 32 ✓)" ;;
+    fail) mark="$(paint 31 ✗)" ;;
+    unverified | unavailable)
+        mark="$(paint 33 '?')"
+        detail="$2"
+        ;;
+    *)
+        mark="$(paint 2 ·)"
+        detail="$2"
+        ;;
+    esac
+    printf '    %s %s  %s\n' "$mark" "$(paint 1 "$1")" "$(paint 2 "$detail")"
 }
 
 function start_pattern {
@@ -483,12 +669,14 @@ function check_readonly_save {
     local dir start verdict
     dir="$(captures_dir)"
     mkdir -p "$dir"
+    READONLY_DIR="$dir"
     chmod a-w "$dir"
     start=$(($(wc -l <"$RUN/daemon.log") + 1))
     mark "read-only save"
     capture_and_wait capture fullscreen
     wait_for_log '^kiekje: (saved|save failed)' 10 "$start" || true
     chmod u+w "$dir"
+    READONLY_DIR=""
     if log_since "$start" | grep -q '^kiekje: save failed' && log_since "$start" | grep -q '^kiekje: copied' && daemon_alive; then
         verdict="pass save failed with a logged error, the clipboard still got the image"
     else
@@ -652,7 +840,89 @@ function apply_layout {
 
 function restore_layout {
     ((${#LAYOUT_UNDO[@]})) || return 0
-    "${LAYOUT_UNDO[@]}" || say "could not restore the output layout"
+    "${LAYOUT_UNDO[@]}" || warn "could not restore the output layout"
+    LAYOUT_UNDO=()
+}
+
+function cleanup_run {
+    local status=$?
+    stop_pattern
+    [[ -z "$READONLY_DIR" ]] || chmod u+w "$READONLY_DIR" || true
+    if [[ -n "$DAEMON" ]] && daemon_alive; then
+        "$BIN" quit >>"$RUN/cli.log" 2>&1 || kill "$DAEMON" 2>/dev/null || true
+    fi
+    restore_layout
+    ((status == 0)) || warn "the run stopped early; the daemon is stopped, the layout restored, and what ran is in $RUN"
+}
+
+function capture_dots {
+    local backend="$1" i start ok=0
+    printf '    %-9s ' "$backend"
+    for ((i = 1; i <= CAPTURES; i++)); do
+        start=$(($(wc -l <"$RUN/daemon.log") + 1))
+        mark "fullscreen $backend $i"
+        capture_and_wait capture fullscreen --no-save --backend "$backend"
+        if log_since "$start" | grep -q '^kiekje: copied'; then
+            ok=$((ok + 1))
+            paint 32 ●
+        else
+            paint 31 ●
+        fi
+        sleep 1
+    done
+    if ((ok == CAPTURES)); then
+        printf '  %s\n' "$(paint 2 "$ok/$CAPTURES copied")"
+    else
+        printf '  %s  %s\n' "$(paint 31 "$ok/$CAPTURES copied")" \
+            "$(paint 2 "$(sed -n "/^=== fullscreen $backend 1 ===/,\$p" "$RUN/daemon.log" | grep -E 'capture failed|lab timeout' | tail -n 1 | cut -c1-80)")"
+    fi
+}
+
+function run_plan {
+    local mode="$1"
+    PLAN=(
+        "build|release build of kiekje and lab_probe"
+        "doctor|detect the capture backends"
+        "daemon|start the daemon, idle memory, global shortcuts"
+        "fullscreen|$CAPTURES fullscreen captures per backend"
+        "pixels|position pattern, pixel and clipboard checks"
+    )
+    [[ "$mode" != driven ]] || PLAN[4]="pixels|position pattern, pixels, clipboard, Escape and a driven drag"
+    PLAN+=("robustness|memory, save burst, read-only folder, missing backend, single instance")
+    [[ "$mode" != interactive ]] || PLAN+=("by hand|Escape and selection on the overlay, answered here")
+    PLAN+=("quit|lifecycle and summary")
+}
+
+function print_run_summary {
+    local name value pass=0 failed=0 other=0
+    heading summary "$(clock $((SECONDS - STARTED))) total"
+    echo
+    {
+        print_summary_header
+        cat "$RUN/summary.tsv"
+    } | column -t -s $'\t' | sed 's/^/    /'
+    if [[ -f "$RUN/checks.txt" ]]; then
+        while IFS='=' read -r name value; do
+            case "${value%% *}" in
+            pass) pass=$((pass + 1)) ;;
+            fail)
+                failed=$((failed + 1))
+                [[ $failed -gt 1 ]] || echo
+                print_check "$name" "$value"
+                ;;
+            *) other=$((other + 1)) ;;
+            esac
+        done <"$RUN/checks.txt"
+    fi
+    if [[ -f "$RUN/manual.txt" ]]; then
+        echo
+        sed 's/^/    /' "$RUN/manual.txt"
+    fi
+    local tone=2
+    ((failed == 0)) || tone=31
+    printf '\n    %s  %s  %s\n' "$(paint 32 "$pass passed")" "$(paint "$tone" "$failed failed")" \
+        "$(paint 2 "$other unverified or info")"
+    printf '    %s %s\n' "$(paint 2 results)" "$RUN"
 }
 
 function run_tests {
@@ -677,50 +947,71 @@ function run_tests {
     [[ "$layout" == single ]] || RUN="$RUN-$layout"
     mkdir -p "$RUN"
     print_env >"$RUN/env.txt"
-    echo "kiekje-lab: logging to $RUN"
+    trap cleanup_run EXIT
+    run_plan "$mode"
+
+    local jobs
+    jobs="$(build_jobs)"
+    heading "kiekje-lab run" "$LABEL"
+    printf '    %s\n' "$(paint 2 "$mode · layout $layout · $CAPTURES captures per backend · $(nproc) threads · $(format_mib "$(mem_available_mib)") free")"
+    printf '    %s %s\n' "$(paint 2 logs)" "$RUN"
+    print_plan Plan "${PLAN[@]}"
     apply_layout "$layout"
 
-    (cd "$REPO" && cargo build --release --bin kiekje --example lab_probe 2>&1 | tail -n 3) >"$RUN/build.log" ||
-        fail "build failed, see $RUN/build.log"
+    stage build
+    require_build_memory
+    ((jobs == $(nproc))) || say "building with $jobs of $(nproc) jobs to stay within $(format_mib "$(mem_available_mib)") of free memory"
+    run_quietly "$RUN/build.log" cargo build --manifest-path "$REPO/Cargo.toml" --release -j "$jobs" --bin kiekje --example lab_probe ||
+        {
+            tail -n 15 "$RUN/build.log" | sed 's/^/    /'
+            fail "$(build_failure_reason "$RUN/build.log")"
+        }
     BIN="$(binary_path)"
     PROBE="$(probe_path)"
     [[ -x "$BIN" && -x "$PROBE" ]] || fail "no binary at $BIN or $PROBE, see $RUN/build.log"
+    printf '    %s %s\n' "$(paint 32 ✓)" "$(paint 2 "$(grep -E '^\s*Finished' "$RUN/build.log" | xargs)")"
 
+    stage doctor
     "$BIN" install-desktop-file >>"$RUN/cli.log" 2>&1
     leave_gnome_overview
     "$BIN" doctor >"$RUN/doctor.txt" 2>&1 || true
     "$BIN" quit >>"$RUN/cli.log" 2>&1 || true
+    local backends
+    backends="$(backends_from_doctor "$RUN/doctor.txt" | paste -sd' ')"
+    if [[ -n "$backends" ]]; then
+        printf '    %s %s\n' "$(paint 32 ✓)" "backends: $backends"
+    else
+        printf '    %s %s\n' "$(paint 31 ✗)" "doctor found no capture backend; see $RUN/doctor.txt"
+    fi
 
+    stage daemon
     : >"$RUN/daemon.log"
     "$BIN" daemon >>"$RUN/daemon.log" 2>&1 &
     DAEMON=$!
     MEMORY=()
     sleep 1
+    daemon_alive || fail "the daemon exited right after starting; see $RUN/daemon.log"
     memory_sample "idle:"
+    print_check daemon "${MEMORY[0]}"
     check_shortcuts
 
-    local backend i
-    for backend in auto $(backends_from_doctor "$RUN/doctor.txt"); do
-        echo "kiekje-lab: $CAPTURES fullscreen captures with $backend"
-        for ((i = 1; i <= CAPTURES; i++)); do
-            mark "fullscreen $backend $i"
-            capture_and_wait capture fullscreen --no-save --backend "$backend"
-            sleep 1
-        done
+    stage fullscreen
+    local backend
+    for backend in auto $backends; do
+        capture_dots "$backend"
     done
 
-    echo "kiekje-lab: pixel and clipboard checks on a position pattern"
+    stage pixels
     if start_pattern; then
         pixel_fullscreen
         if [[ "$mode" == driven ]]; then
-            echo "kiekje-lab: region checks driven by the host"
             driven_region escape
             driven_region select
         fi
         stop_pattern
     fi
 
-    echo "kiekje-lab: save, error path, memory and lifecycle checks"
+    stage robustness
     check_memory
     check_save_burst
     check_readonly_save
@@ -728,39 +1019,34 @@ function run_tests {
     check_second_daemon
 
     if [[ "$mode" == interactive ]]; then
-        echo
-        echo "Region test: an overlay will open over the screen in 3 seconds."
-        echo "Press Escape WITHOUT clicking first. If nothing happens after 10 seconds, click once and press Escape."
-        read -rp "Press Enter to start it. " _
+        stage "by hand"
+        say "Region test: an overlay will open over the screen in 3 seconds."
+        say "Press Escape WITHOUT clicking first. If nothing happens after 10 seconds, click once and press Escape."
+        read -rp "    Press Enter to start it. " _
         mark "region escape"
         sleep 3
         capture_and_wait capture region --no-save
         local answer
-        read -rp "Did Escape cancel it without clicking first? [y/n] " answer
+        read -rp "    Did Escape cancel it without clicking first? [y/n] " answer
         echo "escape_without_click=$answer" >>"$RUN/manual.txt"
-        read -rp "Any other notes (Enter to skip): " answer
+        read -rp "    Any other notes (Enter to skip): " answer
         [[ -n "$answer" ]] && echo "notes=$answer" >>"$RUN/manual.txt"
 
         echo
-        echo "Selection test: drag a rectangle on the overlay."
-        read -rp "Press Enter to start it. " _
+        say "Selection test: drag a rectangle on the overlay."
+        read -rp "    Press Enter to start it. " _
         mark "region select"
         capture_and_wait capture region --no-save
-        read -rp "Did the overlay look right and the selection outline follow the pointer? [y/n] " answer
+        read -rp "    Did the overlay look right and the selection outline follow the pointer? [y/n] " answer
         echo "selection_ok=$answer" >>"$RUN/manual.txt"
     fi
 
+    stage quit
     check_quit
+    DAEMON=""
     restore_layout
     summarize_run
-    echo
-    print_summary_header
-    cat "$RUN/summary.tsv"
-    local notes
-    for notes in "$RUN/manual.txt" "$RUN/checks.txt"; do
-        [[ -f "$notes" ]] && cat "$notes"
-    done
-    echo "kiekje-lab: done, results in $RUN"
+    print_run_summary
 }
 
 function print_summary_header {
@@ -771,14 +1057,15 @@ function show_results {
     [[ -d "$RESULTS" ]] || fail "no results yet in $RESULTS"
     local machine
     for machine in "$RESULTS"/*/; do
-        echo "## $(basename "$machine")"
+        heading "$(basename "$machine")"
+        echo
         {
             print_summary_header
             cat "$machine"*/summary.tsv 2>/dev/null
-        } | column -t -s $'\t'
+        } | column -t -s $'\t' | sed 's/^/    /'
         local notes
         for notes in "$machine"*/manual.txt "$machine"*/region.txt "$machine"*/checks.txt; do
-            [[ -f "$notes" ]] && echo "$(basename "$(dirname "$notes")"): $(paste -sd' ' "$notes")"
+            [[ -f "$notes" ]] && printf '    %s %s\n' "$(paint 2 "$(basename "$(dirname "$notes")"):")" "$(paste -sd' ' "$notes")"
         done
         echo
     done
@@ -916,7 +1203,8 @@ function remote {
     resolve_ssh "$vm"
     ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" "bash -s -- $(printf '%q ' "$@")" < <(
         echo "set -euo pipefail"
-        declare -f fail os_release import_session_env guest_require_sudo "$fn"
+        declare -f fail os_release import_session_env guest_require_sudo mem_available_mib swap_free_mib format_mib \
+            build_jobs require_build_memory build_failure_reason "$fn"
         echo "$fn \"\$@\""
     )
 }
@@ -1045,7 +1333,15 @@ function guest_unmount_share {
 function guest_install_kiekje {
     export PATH="$HOME/.cargo/bin:$PATH" CARGO_TARGET_DIR="$HOME/kiekje-target"
     cd "$HOME/kiekje-next"
-    cargo build --release 2>&1 | tail -n 5
+    require_build_memory
+    local log="$HOME/kiekje-build.log" jobs
+    jobs="$(build_jobs)"
+    echo "kiekje-lab: building with $jobs of $(nproc) jobs, $(format_mib "$(mem_available_mib)") free"
+    if ! cargo build --release -j "$jobs" >"$log" 2>&1; then
+        tail -n 15 "$log"
+        fail "$(build_failure_reason "$log")"
+    fi
+    tail -n 1 "$log"
     [[ -x "$CARGO_TARGET_DIR/release/kiekje" ]] || fail "the release build failed"
     install -Dm755 "$CARGO_TARGET_DIR/release/kiekje" "$HOME/.local/bin/kiekje"
     "$HOME/.local/bin/kiekje" quit >/dev/null 2>&1 || true
@@ -1217,6 +1513,7 @@ function new_vm {
     allow_qemu_read "$iso"
     template="$(vars_template)"
     osinfo="$(guess_osinfo "$(basename "$iso")")"
+    check_host_memory "$(ram_mib "$ram")" "$vm"
     say "creating $vm ($osinfo, $ram RAM, $cpus CPUs, $disk disk) from $(basename "$iso")"
 
     local args=(--connect "$LIBVIRT" --name "$vm" --memory "$(ram_mib "$ram")" --vcpus "$cpus"
@@ -1496,9 +1793,10 @@ function reset_vm {
         [[ "$answer" == [yY] ]] || fail "not reverted"
     fi
     local start=$SECONDS
+    [[ "$(domain_state "$vm")" == running ]] || check_host_memory "$(vm_memory_mib "$vm")" "$vm"
     vsh snapshot-revert "$vm" "$label" --running >/dev/null
     agent "$vm" "{\"execute\":\"guest-set-time\",\"arguments\":{\"time\":$(date +%s%N)}}" >/dev/null ||
-        say "could not set the clock of $vm through the guest agent; run timestamps may be off"
+        warn "could not set the clock of $vm through the guest agent; run timestamps may be off"
     say "$vm is back at $label after $((SECONDS - start)) s"
 }
 
@@ -1537,50 +1835,63 @@ function rm_vm {
 }
 
 function step_banner {
-    echo
-    echo "== [$(($(step_index "$1") + 1))/${#STEPS[@]}] $1: $2"
+    printf '\n  %s %s  %s  %s\n' "$(paint "$ACCENT" "[$(($(step_index "$1") + 1))/${#STEPS[@]}]")" "$(paint 1 "$1")" \
+        "${STEP_NOTES[$1]}" "$(paint 2 "$(clock $((SECONDS - STARTED)))")"
+}
+
+function print_steps {
+    local vm="$1" step mark i=0
+    printf '\n  %s\n' "$(paint 1 Plan)"
+    for step in "${STEPS[@]}"; do
+        i=$((i + 1))
+        mark="$(paint 2 ·)"
+        domain_exists "$vm" && step_done "$vm" "$step" && mark="$(paint 32 ✓)"
+        printf '  %s %s  %-10s %s\n' "$(paint 2 "$(printf '%2d' "$i")")" "$mark" "$step" "$(paint 2 "${STEP_NOTES[$step]}")"
+    done
 }
 
 function up_vm {
     local vm="${1:-}"
     [[ -n "$vm" ]] || fail "usage: kiekje-lab up <vm> [iso|url] [--ram 6G] [--cpus 4] [--disk 40G] [--no-3d]"
+    heading "kiekje-lab up" "$vm"
+    print_steps "$vm"
     if ! domain_exists "$vm"; then
         [[ -n "${2:-}" ]] || fail "$vm does not exist yet; pass an ISO: kiekje-lab up $vm <iso|url>"
-        step_banner new "create the VM and boot the installer"
+        step_banner new
         new_vm "$@"
     elif ! step_done "$vm" new; then
         say "adopting the existing VM $vm"
         state_set "$vm" STEP new
     fi
     if ! step_done "$vm" installed; then
-        step_banner installed "wait for the OS install and a login"
+        step_banner installed
         [[ "$(domain_state "$vm")" == "running" ]] || vsh start "$vm" >/dev/null
         wait_for_install "$vm"
         finish_step "$vm" installed
     fi
     [[ "$(domain_state "$vm")" == "running" ]] || start_vm "$vm"
     if ! step_done "$vm" bootstrap; then
-        step_banner bootstrap "SSH, guest agent and your key"
+        step_banner bootstrap
         bootstrap_vm "$vm"
     fi
     if ! step_done "$vm" provision; then
-        step_banner provision "build dependencies"
+        step_banner provision
         provision_vm "$vm"
     fi
     if ! step_done "$vm" sync; then
-        step_banner sync "copy the repo into the VM"
+        step_banner sync
         sync_vm "$vm"
     fi
     if ! step_done "$vm" install; then
-        step_banner install "build, install and doctor"
+        step_banner install
         install_vm "$vm"
     fi
     if ! step_done "$vm" snapshot; then
-        step_banner snapshot "take the clean snapshot"
+        step_banner snapshot
         snapshot_vm "$vm" clean
     fi
     echo
-    say "$vm is ready. Test with: kiekje-lab run-vm $vm   Start over with: kiekje-lab reset $vm"
+    say "$vm is ready after $(clock $((SECONDS - STARTED))). Test with: kiekje-lab run-vm $vm   Start over with: kiekje-lab reset $vm"
 }
 
 function check_tool {
@@ -1634,15 +1945,18 @@ function list_vms {
 
 function start_vm {
     local vm="${1:?vm name}"
-    [[ "$(virsh -c "$LIBVIRT" domstate "$vm")" == "running" ]] || virsh -c "$LIBVIRT" start "$vm" >/dev/null
-    echo "kiekje-lab: waiting for $vm to get an address"
+    if [[ "$(virsh -c "$LIBVIRT" domstate "$vm")" != "running" ]]; then
+        check_host_memory "$(vm_memory_mib "$vm")" "$vm"
+        virsh -c "$LIBVIRT" start "$vm" >/dev/null
+    fi
+    say "waiting for $vm to get an address"
     local deadline=$((SECONDS + 120))
     until [[ -n "$(vm_address "$vm")" ]]; do
         ((SECONDS < deadline)) || fail "$vm has no address after 2 minutes"
         sleep 2
     done
     setsid -f virt-viewer -c "$LIBVIRT" "$vm" >/dev/null 2>&1
-    echo "kiekje-lab: $vm is up at $(vm_address "$vm")"
+    say "$vm is up at $(vm_address "$vm")"
 }
 
 function send_input {
@@ -1689,7 +2003,7 @@ function run_driven {
         fi
     done < <(
         ssh "${SSH_ARGS[@]}" -o BatchMode=yes "$SSH_TARGET" "bash -lc 'export PATH=\$HOME/.cargo/bin:\$PATH \
-CARGO_TARGET_DIR=\$HOME/kiekje-target KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES && \
+CARGO_TARGET_DIR=\$HOME/kiekje-target KIEKJE_LAB_RESULTS=\$HOME/kiekje-results KIEKJE_LAB_CAPTURES=$CAPTURES KIEKJE_LAB_COLOR=$COLOR && \
 cd \$HOME/kiekje-next && lab/kiekje-lab run --driven ${*:2}'" 2>&1
         echo "kiekje-lab: guest exit $?"
     )
@@ -1744,18 +2058,35 @@ function run_all {
     done
     ((${#vms[@]})) || mapfile -t vms < <(ready_vms)
     ((${#vms[@]})) || fail "no VM has a clean snapshot yet; create one with: kiekje-lab up <vm> <iso>"
+    local plan=() outcomes=() i=0 began
     for vm in "${vms[@]}"; do
-        echo
-        say "== $vm"
-        if ! (reset_vm "$vm" && wait_for_ssh "$vm" && sync_vm "$vm" && run_in_vm "$vm" --auto "${flags[@]}"); then
+        plan+=("$vm|reset to clean, sync, run --auto ${flags[*]}, shut down ($(format_mib "$(vm_memory_mib "$vm")") RAM)")
+    done
+    heading "kiekje-lab all" "${#vms[@]} VMs, one at a time"
+    print_plan Plan "${plan[@]}"
+    for vm in "${vms[@]}"; do
+        i=$((i + 1))
+        began=$SECONDS
+        printf '\n  %s %s  %s\n' "$(paint "$ACCENT" "[$i/${#vms[@]}]")" "$(paint 1 "$vm")" \
+            "$(paint 2 "$(clock $((SECONDS - STARTED))) · host $(format_mib "$(mem_available_mib)") free")"
+        if (reset_vm "$vm" && wait_for_ssh "$vm" && sync_vm "$vm" && run_in_vm "$vm" --auto "${flags[@]}"); then
+            outcomes+=("$(paint 32 ✓) $vm  $(paint 2 "$(clock $((SECONDS - began)))")")
+        else
             failed+=("$vm")
+            outcomes+=("$(paint 31 ✗) $vm  $(paint 2 "$(clock $((SECONDS - began)))")")
         fi
         vsh destroy "$vm" >/dev/null 2>&1 || true
     done
     echo
     show_results
+    heading VMs "$(clock $((SECONDS - STARTED))) total"
+    printf '    %s\n' "${outcomes[@]}"
     ((${#failed[@]} == 0)) || fail "failed: ${failed[*]}"
 }
+
+set -E
+trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+trap 'echo; fail "stopped by Ctrl-C"' INT
 
 case "${1:-}" in
 env) print_env ;;

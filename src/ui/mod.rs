@@ -32,7 +32,9 @@ pub fn load_stylesheet() {
         eprintln!("kiekje: no display, the stylesheet is not applied");
         return;
     };
-    gtk::Settings::for_display(&display).set_gtk_application_prefer_dark_theme(true);
+    let settings = gtk::Settings::for_display(&display);
+    settings.set_gtk_theme_name(Some("Default"));
+    settings.set_gtk_application_prefer_dark_theme(true);
     let provider = gtk::CssProvider::new();
     provider.connect_parsing_error(|_, section, error| {
         eprintln!("kiekje: style.css {}: {error}", section.to_str());

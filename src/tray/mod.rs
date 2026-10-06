@@ -15,6 +15,7 @@ pub enum TrayCommand {
     OpenMenu { x: i32, y: i32 },
     OpenCaptures,
     OpenGallery,
+    OpenSettings,
     Quit,
 }
 

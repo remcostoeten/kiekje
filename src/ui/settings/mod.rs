@@ -12,7 +12,8 @@ use gtk::{gdk, gio, glib};
 use crate::app::APP_ID;
 use crate::config::{self, Capture, Config, ConfigError, Notifications, Storage};
 use crate::shortcuts::{
-    Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, record,
+    Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
+    record,
 };
 use crate::storage;
 use crate::ui;
@@ -31,6 +32,7 @@ type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
 struct Editor {
     host: ShortcutHost,
     shortcuts: RefCell<Shortcuts>,
+    bound: RefCell<Vec<(ShortcutAction, String)>>,
     recording: Cell<Option<ShortcutAction>>,
     saving: Cell<bool>,
     buttons: HashMap<&'static str, gtk::Button>,
@@ -40,8 +42,10 @@ struct Editor {
 
 /// Opens the settings window, or brings the open one to the front.
 ///
-/// Saving and notification changes are written to the config right away. On Hyprland each shortcut can be recorded and is saved to the config and the managed bind
-/// file. Where the desktop owns the keys, the rows show its bindings and say where to change them.
+/// Saving and notification changes are written to the config right away. On Hyprland and KDE
+/// each shortcut can be recorded; it is saved to the config and to the Hyprland bind file or
+/// KDE's global shortcuts. Where another desktop owns the keys, the rows show its bindings and
+/// say where to change them.
 ///
 /// # Examples
 ///
@@ -73,7 +77,7 @@ pub fn show(
     content.append(&caps("Shortcuts"));
     content.append(&note(&host_note(&model.host)));
 
-    let editable = model.host == ShortcutHost::Hyprland;
+    let editable = model.host.editable();
     let mut buttons = HashMap::new();
     let rows = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -93,7 +97,12 @@ pub fn show(
                 .build(),
         );
         let trigger = gtk::Button::builder()
-            .label(trigger_text(&model, action))
+            .label(trigger_text(
+                &model.host,
+                &model.shortcuts,
+                &model.bound,
+                action,
+            ))
             .sensitive(editable)
             .css_classes(["trigger"])
             .build();
@@ -143,6 +152,7 @@ pub fn show(
     let editor = Rc::new(Editor {
         host: model.host,
         shortcuts: RefCell::new(model.shortcuts),
+        bound: RefCell::new(model.bound),
         recording: Cell::new(None),
         saving: Cell::new(false),
         buttons,
@@ -185,7 +195,7 @@ pub fn show(
         danger::Danger::ClearGallery | danger::Danger::ClearThumbnails => on_cleared(),
     });
     about::append(&content);
-    danger::append(&content, editor.host == ShortcutHost::Hyprland, on_done);
+    danger::append(&content, &editor.host, on_done);
 
     let handle = Handle(Rc::downgrade(&editor));
     let keys = gtk::EventControllerKey::new();
@@ -224,11 +234,8 @@ impl Handle {
         let Some(editor) = self.0.upgrade() else {
             return;
         };
-        for action in ShortcutAction::ALL {
-            if let Some(button) = editor.buttons.get(action.id()) {
-                button.set_label(&bound_text(bound, action));
-            }
-        }
+        editor.bound.replace(bound.to_vec());
+        editor.refresh();
     }
 }
 
@@ -248,11 +255,21 @@ impl Editor {
 
     fn stop(&self) {
         self.recording.set(None);
+        for button in self.buttons.values() {
+            button.remove_css_class("recording");
+        }
+        self.refresh();
+    }
+
+    fn refresh(&self) {
         let shortcuts = self.shortcuts.borrow();
+        let bound = self.bound.borrow();
         for action in ShortcutAction::ALL {
+            if self.recording.get() == Some(action) {
+                continue;
+            }
             if let Some(button) = self.buttons.get(action.id()) {
-                button.set_label(&slot_text(shortcuts.slot(action)));
-                button.remove_css_class("recording");
+                button.set_label(&trigger_text(&self.host, &shortcuts, &bound, action));
             }
         }
     }
@@ -267,13 +284,19 @@ impl Editor {
             return;
         }
         self.recording.set(None);
-        let hyprland = self.host == ShortcutHost::Hyprland;
+        let host = self.host.clone();
         let editor = self.clone();
         glib::spawn_future_local(async move {
-            let saved = gio::spawn_blocking(move || store(action, slot, hyprland)).await;
+            let saved = gio::spawn_blocking(move || store(action, slot, &host)).await;
             editor.saving.set(false);
             match saved {
                 Ok(Ok(shortcuts)) => {
+                    let label = slot_text(shortcuts.slot(action));
+                    editor
+                        .bound
+                        .borrow_mut()
+                        .retain(|(bound, _)| *bound != action);
+                    editor.bound.borrow_mut().push((action, label));
                     editor.shortcuts.replace(shortcuts);
                     editor.stop();
                     editor.complain("");
@@ -292,7 +315,12 @@ impl Editor {
     }
 }
 
-fn store(action: ShortcutAction, slot: Slot, hyprland: bool) -> Result<Shortcuts, String> {
+fn store(action: ShortcutAction, slot: Slot, host: &ShortcutHost) -> Result<Shortcuts, String> {
+    let on_kde = *host == ShortcutHost::Kde;
+    if on_kde && let Some(trigger) = slot.trigger() {
+        kde::check(APP_ID, trigger).map_err(|error| format!("{error}."))?;
+    }
+    let trigger = slot.trigger().cloned();
     let shortcuts =
         config::set_shortcut(&config::path(), action, slot).map_err(|error| match error {
             ConfigError::Shortcuts { source, .. } => {
@@ -309,7 +337,12 @@ fn store(action: ShortcutAction, slot: Slot, hyprland: bool) -> Result<Shortcuts
             }
             other => other.to_string(),
         })?;
-    if hyprland {
+    if on_kde {
+        kde::set(APP_ID, action, trigger.as_ref()).map_err(|error| {
+            format!("Saved to the config, but KDE kept the old shortcut: {error}")
+        })?;
+    }
+    if *host == ShortcutHost::Hyprland {
         let include = hyprland::include_path();
         hyprland::write_include(&include, APP_ID, &shortcuts).map_err(|error| {
             format!(
@@ -327,6 +360,9 @@ fn host_note(host: &ShortcutHost) -> String {
             "Saved to {}, which Hyprland reloads by itself.",
             storage::tilde(&hyprland::include_path())
         ),
+        ShortcutHost::Kde => {
+            "Saved to KDE's global shortcuts, the same list System Settings shows.".to_owned()
+        }
         ShortcutHost::Desktop {
             name,
             configurable: true,
@@ -342,11 +378,16 @@ fn host_note(host: &ShortcutHost) -> String {
     }
 }
 
-fn trigger_text(model: &Model, action: ShortcutAction) -> String {
-    if let ShortcutHost::Desktop { .. } = model.host {
-        return bound_text(&model.bound, action);
+fn trigger_text(
+    host: &ShortcutHost,
+    shortcuts: &Shortcuts,
+    bound: &[(ShortcutAction, String)],
+    action: ShortcutAction,
+) -> String {
+    match host {
+        ShortcutHost::Desktop { .. } | ShortcutHost::Kde => bound_text(bound, action),
+        _ => slot_text(shortcuts.slot(action)),
     }
-    slot_text(model.shortcuts.slot(action))
 }
 
 fn bound_text(bound: &[(ShortcutAction, String)], action: ShortcutAction) -> String {

@@ -125,9 +125,13 @@ fn item_widget(shape: Shape) -> gtk::Box {
         .spacing(8)
         .css_classes([class])
         .build();
+    let fit = match shape {
+        Shape::Card => gtk::ContentFit::Contain,
+        Shape::Row => gtk::ContentFit::Cover,
+    };
     widget.append(
         &gtk::Picture::builder()
-            .content_fit(gtk::ContentFit::Cover)
+            .content_fit(fit)
             .width_request(width)
             .height_request(height)
             .css_classes(["skeleton"])

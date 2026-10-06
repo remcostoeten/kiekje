@@ -22,7 +22,7 @@ use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
 use crate::shortcuts::{
     Binding, PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar,
-    Shortcuts, hyprland,
+    Shortcuts, hyprland, kde,
 };
 use crate::storage::{self, Naming, last_region};
 use crate::tray::popover::{self, Pick};
@@ -233,7 +233,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
         let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
             .await
             .unwrap_or_default();
-        let registrar = PortalShortcuts::new(connection, shortcuts.clone());
+        let registrar = PortalShortcuts::new(connection.clone(), shortcuts.clone());
         match registrar.bind(on_activated).await {
             Ok((mut guard, bindings)) => {
                 let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
@@ -266,6 +266,7 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                 if unbound {
                     install_hyprland_binds(shortcuts);
                 }
+                let on_kde = !on_hyprland && kde::holds(&connection, APP_ID).await;
                 if let Some(session) = session.upgrade() {
                     if !on_hyprland {
                         let changed_session = Rc::downgrade(&session);
@@ -277,6 +278,8 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
                     }
                     session.shortcut_host.replace(if on_hyprland {
                         ShortcutHost::Hyprland
+                    } else if on_kde {
+                        ShortcutHost::Kde
                     } else {
                         ShortcutHost::Desktop {
                             name: registrar.name(),
@@ -430,6 +433,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
         TrayCommand::OpenGallery => open_gallery(app, session),
+        TrayCommand::OpenSettings => open_settings(app, session),
         TrayCommand::Quit => app.activate_action("quit", None),
     }
 }

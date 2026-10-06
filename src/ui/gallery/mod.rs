@@ -62,8 +62,8 @@ impl Textures {
 
 /// Opens the gallery window with every saved capture that is still on disk, newest first.
 ///
-/// Captures can be searched by name, filtered by kind and age, sorted, and shown as a grid or a
-/// list. Thumbnails load off the main thread as items scroll into view. The library is read again
+/// A sidebar switches between all captures and missing ones, tabs filter by kind, and the search
+/// row filters by name and age, sorts, and switches between a grid and a list. Thumbnails load off the main thread as items scroll into view. The library is read again
 /// whenever the window becomes active.
 ///
 /// # Examples
@@ -84,7 +84,8 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
-        .css_classes(["panel", "settings", "gallery"])
+        .hexpand(true)
+        .css_classes(["main"])
         .build();
     let header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -94,11 +95,13 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         &gtk::Label::builder()
             .label("Gallery")
             .xalign(0.0)
-            .hexpand(true)
-            .css_classes(["caps"])
+            .css_classes(["title"])
             .build(),
     );
-    let count = gtk::Label::builder().css_classes(["shortcut"]).build();
+    let count = gtk::Label::builder()
+        .valign(gtk::Align::Baseline)
+        .css_classes(["caps", "count"])
+        .build();
     header.append(&count);
     content.append(&header);
 
@@ -173,10 +176,17 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     });
     let search = parts.search;
     let _ = gallery.missing.set(parts.missing);
+    content.append(&parts.tabs);
     content.append(&parts.bar);
     content.append(&gallery.stack);
     content.append(&gallery.status);
-    window.set_child(Some(&content));
+    let shell = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .css_classes(["panel", "settings", "gallery"])
+        .build();
+    shell.append(&parts.sidebar);
+    shell.append(&content);
+    window.set_child(Some(&shell));
     search.set_key_capture_widget(Some(&window));
 
     let reload = gallery.clone();
@@ -306,7 +316,7 @@ impl Gallery {
                 _ => "items",
             });
         if let Some(toggle) = self.missing.get() {
-            toggle.set_label(&format!("Missing {missing}"));
+            toolbar::set_nav_label(toggle, &format!("Missing {missing}"));
             toggle.set_visible(missing > 0 || query.missing);
         }
         let texts: Vec<String> = shown

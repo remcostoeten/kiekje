@@ -106,6 +106,7 @@ impl Tray for Item {
             ),
             command_item("Open gallery", TrayCommand::OpenGallery),
             command_item("Open captures folder", TrayCommand::OpenCaptures),
+            command_item("Settings", TrayCommand::OpenSettings),
             MenuItem::Separator,
             command_item("Quit", TrayCommand::Quit),
         ]

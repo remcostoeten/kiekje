@@ -1,4 +1,5 @@
 pub mod hyprland;
+pub mod kde;
 mod portal;
 mod trigger;
 
@@ -59,7 +60,14 @@ pub enum ShortcutHost {
         name: &'static str,
         configurable: bool,
     },
+    Kde,
     Hyprland,
+}
+
+impl ShortcutHost {
+    pub fn editable(&self) -> bool {
+        matches!(self, Self::Kde | Self::Hyprland)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
