@@ -11,6 +11,8 @@ root="${DESTDIR:-}$prefix"
 
 install -Dm755 "$binary" "$root/bin/kiekje"
 install -Dm644 "$repo/packaging/dev.remcostoeten.Kiekje.desktop" "$root/share/applications/dev.remcostoeten.Kiekje.desktop"
+# KWin grants ScreenShot2 only when Exec matches the installed binary path.
+sed -i "s|^Exec=/usr/bin/kiekje |Exec=$prefix/bin/kiekje |" "$root/share/applications/dev.remcostoeten.Kiekje.desktop"
 for icon in "$repo"/resources/icons/hicolor/*/apps/*; do
     install -Dm644 "$icon" "$root/share/icons/hicolor/${icon#"$repo/resources/icons/hicolor/"}"
 done
