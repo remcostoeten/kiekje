@@ -63,10 +63,15 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         let Some(editor) = painter.upgrade() else {
             return;
         };
+        let max_zoom = if editor.is_inline() {
+            f64::INFINITY
+        } else {
+            1.0 / f64::from(area.scale_factor().max(1))
+        };
         let view = View::fit(
             (f64::from(width), f64::from(height)),
             editor.size(),
-            1.0 / f64::from(area.scale_factor().max(1)),
+            max_zoom,
         );
         editor.view.set(view);
         if let Err(error) = paint(&editor, cr, view) {
