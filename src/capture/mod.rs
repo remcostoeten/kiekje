@@ -1,4 +1,5 @@
 pub mod mapping;
+pub mod windows;
 
 use std::fmt;
 
@@ -247,6 +248,7 @@ pub struct Capture {
     pub backend: BackendKind,
     pub frames: Vec<Frame>,
     pub fallback_reason: Option<String>,
+    pub windows: Vec<LogicalRect>,
 }
 
 #[derive(Debug, Error)]

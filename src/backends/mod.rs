@@ -1,6 +1,7 @@
 pub mod detect;
 pub mod kwin;
 pub mod portal;
+pub mod windows;
 pub mod wlroots;
 
 use crate::capture::{BackendChoice, BackendKind, Capture, CaptureError, Frame, MonitorInfo};
@@ -85,6 +86,7 @@ pub fn capture(
                     backend: kind,
                     frames,
                     fallback_reason: (!skipped.is_empty()).then(|| skipped.join("; ")),
+                    windows: Vec::new(),
                 });
             }
             Err(error) if kinds.peek().is_some() && error.allows_fallback() => {

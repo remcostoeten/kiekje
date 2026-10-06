@@ -9,6 +9,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::backends;
+use crate::backends::windows::WindowError;
 use crate::capture::mapping::{self, SelectionPlan};
 use crate::capture::{
     BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
@@ -768,6 +769,8 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
 
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
+        let windows =
+            (request.mode == CaptureMode::Region).then(|| thread::spawn(snapshot_windows));
         let config = config::load();
         let notifications = config.notifications;
         let inline = config.capture.after_selection == AfterSelection::Edit;
@@ -782,6 +785,10 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
                 backends::capture(request.backend, &infos, false).map(|capture| (capture, None))
             }
         };
+        let windows = windows
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
+        let result = result.map(|(capture, region)| (Capture { windows, ..capture }, region));
         // The receiver only disappears when the app is quitting.
         let _ = sender.send_blocking((
             result,
@@ -882,6 +889,7 @@ fn handle_capture(
             overlay::show(
                 app,
                 frames,
+                &capture.windows,
                 monitors,
                 options,
                 move |selection| match selection {
@@ -931,6 +939,20 @@ fn handle_capture(
                     )
                 },
             );
+        }
+    }
+}
+
+fn snapshot_windows() -> Vec<LogicalRect> {
+    match backends::windows::snapshot() {
+        Ok((source, windows)) => {
+            println!("kiekje: {} windows from {source}", windows.len());
+            windows
+        }
+        Err(WindowError::Unavailable) => Vec::new(),
+        Err(error) => {
+            eprintln!("kiekje: window snapping is off for this capture: {error}");
+            Vec::new()
         }
     }
 }

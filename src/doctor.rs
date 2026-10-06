@@ -5,6 +5,7 @@ use gtk::prelude::*;
 
 use crate::app::{APP_ID, gdk_monitors, monitor_info};
 use crate::backends::detect::{self, Environment, LAYER_SHELL};
+use crate::backends::windows::{self, WindowSourceKind};
 use crate::backends::{Capabilities, backend, candidates};
 use crate::capture::{BackendChoice, BackendKind};
 use crate::config::{self, Config};
@@ -83,6 +84,7 @@ struct Report {
     available: Vec<(BackendKind, Capabilities)>,
     kwin_present: bool,
     kwin_access: Option<KwinAccess>,
+    window_snap: Option<WindowSourceKind>,
     config_path: PathBuf,
     config: Result<Option<Config>, String>,
     hyprland: Option<HyprlandBinds>,
@@ -152,6 +154,7 @@ fn collect() -> Report {
         available,
         kwin_present: environment.has_kwin(),
         kwin_access: environment.has_kwin().then(kwin_access),
+        window_snap: windows::choose(windows::hyprland::socket_path().is_some(), &environment),
         config: config::load_from(&config_path).map_err(|error| {
             error
                 .to_string()
@@ -395,6 +398,11 @@ fn render(report: &Report, style: &Style) -> String {
         };
         text.push_str(&field(style, "pins", &pins));
     }
+    let snap = match report.window_snap {
+        Some(source) => style.good(&source.to_string()),
+        None => style.dim("unavailable, drag to select"),
+    };
+    text.push_str(&field(style, "window snap", &snap));
     if let Ok(bus) = &report.bus {
         let daemon = if bus.daemon_running {
             style.good("running")
@@ -564,6 +572,7 @@ mod tests {
             available: vec![(BackendKind::Kwin, backend(BackendKind::Kwin).capabilities())],
             kwin_present: true,
             kwin_access: Some(KwinAccess::Ready),
+            window_snap: Some(WindowSourceKind::Kwin),
             config_path: PathBuf::from("/etc/kiekje/config.toml"),
             config: Ok(None),
             hyprland: None,

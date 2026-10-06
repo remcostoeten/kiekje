@@ -16,6 +16,10 @@ use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::editor::{Ending, Finish, Inline};
 use crate::output::{self, Image};
 
+mod snap;
+
+use snap::Snap;
+
 const ACCENT: gdk::RGBA = gdk::RGBA::new(254.0 / 255.0, 81.0 / 255.0, 1.0 / 255.0, 1.0);
 const DIM: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.45);
 const LABEL_BACKGROUND: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.9);
@@ -49,6 +53,12 @@ struct Drag {
     frame_index: usize,
     start: (f64, f64),
     current: (f64, f64),
+}
+
+impl Drag {
+    fn moved(&self) -> bool {
+        !snap::is_click(self.start, self.current)
+    }
 }
 
 type DoneCallback = Box<dyn FnOnce(Outcome)>;
@@ -105,6 +115,7 @@ struct Shared {
     frames: Arc<Vec<Frame>>,
     geometry: Vec<(LogicalRect, (u32, u32))>,
     edit: bool,
+    snap: Snap,
     drag: RefCell<Option<Drag>>,
     chosen: Cell<Option<LogicalRect>>,
     inline: RefCell<Option<Inline>>,
@@ -125,29 +136,33 @@ struct Shared {
 /// on screen with the annotation tools until the user accepts or cancels. With `magnifier`, a
 /// loupe follows the pointer until a selection is made. Escape cancels, and
 /// unplugging a monitor that shows a frame ends the selection. `on_done` runs once with the
-/// outcome.
+/// outcome. `windows` are the visible window frames at trigger time, topmost first; hovering
+/// one highlights it and a click without a drag selects it.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// overlay::show(&app, frames, monitors, Options::default(), |outcome| {}, || {});
+/// overlay::show(&app, frames, &windows, monitors, Options::default(), |outcome| {}, || {});
 /// ```
 pub fn show(
     app: &gtk::Application,
     frames: Arc<Vec<Frame>>,
+    windows: &[LogicalRect],
     monitors: &[gdk::Monitor],
     options: Options,
     on_done: impl FnOnce(Outcome) + 'static,
     on_first_paint: impl FnOnce() + 'static,
 ) {
-    let geometry = frames
+    let geometry: Vec<(LogicalRect, (u32, u32))> = frames
         .iter()
         .map(|frame| (frame.monitor.logical, (frame.width, frame.height)))
         .collect();
+    let logical: Vec<LogicalRect> = geometry.iter().map(|(rect, _)| *rect).collect();
     let shared = Rc::new(Shared {
         frames: frames.clone(),
         geometry,
         edit: options.edit,
+        snap: Snap::new(windows, &logical),
         drag: RefCell::new(None),
         chosen: Cell::new(None),
         inline: RefCell::new(None),
@@ -303,15 +318,25 @@ fn build_surface(
         let Some(drag) = end_shared.drag.borrow_mut().take() else {
             return;
         };
-        let rect = rect_from_drag(drag.start, (drag.start.0 + dx, drag.start.1 + dy));
-        let plan = (rect.width >= MIN_SELECTION && rect.height >= MIN_SELECTION)
-            .then(|| plan_selection(rect, &end_shared.geometry))
-            .flatten();
+        let end = (drag.start.0 + dx, drag.start.1 + dy);
+        let rect = if snap::is_click(drag.start, end) {
+            end_shared.snap.at(drag.start)
+        } else {
+            Some(rect_from_drag(drag.start, end))
+        };
+        let plan = rect
+            .filter(|rect| rect.width >= MIN_SELECTION && rect.height >= MIN_SELECTION)
+            .and_then(|rect| {
+                plan_selection(rect, &end_shared.geometry).map(|plan| Selection { rect, plan })
+            });
         match plan {
-            Some(plan @ SelectionPlan::Crop { frame_index, .. }) if end_shared.edit => {
-                begin_edit(&end_shared, Selection { rect, plan }, frame_index);
-            }
-            Some(plan) => finish(&end_shared, Outcome::Selected(Selection { rect, plan })),
+            Some(
+                selection @ Selection {
+                    plan: SelectionPlan::Crop { frame_index, .. },
+                    ..
+                },
+            ) if end_shared.edit => begin_edit(&end_shared, selection, frame_index),
+            Some(selection) => finish(&end_shared, Outcome::Selected(selection)),
             None => redraw(&end_shared),
         }
     });
@@ -319,7 +344,16 @@ fn build_surface(
 
     let motion = gtk::EventControllerMotion::new();
     let motion_shared = shared.clone();
-    motion.connect_motion(move |_, x, y| point_at(&motion_shared, Some(to_desktop(x, y))));
+    let hover = move |x: f64, y: f64| {
+        let point = to_desktop(x, y);
+        if motion_shared.chosen.get().is_none() && motion_shared.snap.hover(point) {
+            redraw(&motion_shared);
+        }
+        point_at(&motion_shared, Some(point));
+    };
+    let enter = hover.clone();
+    motion.connect_enter(move |_, x, y| enter(x, y));
+    motion.connect_motion(move |_, x, y| hover(x, y));
     let leave_shared = shared.clone();
     motion.connect_leave(move |_| {
         if leave_shared.drag.borrow().is_none() {
@@ -403,7 +437,8 @@ fn paint_selection(
 ) {
     let (width, height) = (widget.width() as f32, widget.height() as f32);
     let drag = shared.drag.borrow();
-    let (rect, dragged_on) = match (drag.as_ref(), shared.chosen.get()) {
+    let moved = drag.as_ref().filter(|drag| drag.moved());
+    let (rect, dragged_on) = match (moved, shared.chosen.get().or(shared.snap.hovered())) {
         (Some(drag), _) => (
             rect_from_drag(drag.start, drag.current),
             Some(drag.frame_index),
@@ -580,8 +615,10 @@ fn redraw(shared: &Shared) {
         .drag
         .borrow()
         .as_ref()
+        .filter(|drag| drag.moved())
         .map(|drag| rect_from_drag(drag.start, drag.current))
-        .or(shared.chosen.get());
+        .or(shared.chosen.get())
+        .or(shared.snap.hovered());
     for area in shared.areas.borrow().iter() {
         let monitor = shared.frames[area.frame_index].monitor.logical;
         let showing = selection.is_some_and(|rect| {
