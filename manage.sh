@@ -195,7 +195,7 @@ function help_main() {
     row "install"   "Build a release and install it"
     row "uninstall" "Remove an installed build"
     row "build"     "Compile, optionally with fmt, clippy and tests"
-    row "update"    "Pull main, rebuild and reinstall"
+    row "update"    "Pull master, rebuild and reinstall"
     row "view"      "Open the gallery or the captures folder"
     row "clean"     "Delete captures from the captures folder"
     row "backup"    "Zip the captures folder"
