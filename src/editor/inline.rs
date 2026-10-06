@@ -22,6 +22,7 @@ pub enum Finish {
     Copy,
     Save,
     SaveAs,
+    Pin,
 }
 
 /// How inline editing ended.
@@ -201,6 +202,12 @@ fn action_bar(editor: &Rc<Editor>, selection: LogicalRect) -> gtk::Box {
             save_as,
         ),
         ("Copy", "Copy to the clipboard (Ctrl+C)", false, copy),
+        (
+            "Pin",
+            "Keep it on screen above other windows (Ctrl+P)",
+            false,
+            pin,
+        ),
     ] {
         let button = toolbar::action(label, tooltip);
         if primary {
@@ -235,6 +242,10 @@ fn save_as(editor: &Rc<Editor>) {
 
 fn copy(editor: &Rc<Editor>) {
     editor.conclude(Finish::Copy);
+}
+
+fn pin(editor: &Rc<Editor>) {
+    editor.conclude(Finish::Pin);
 }
 
 fn bar() -> gtk::Box {

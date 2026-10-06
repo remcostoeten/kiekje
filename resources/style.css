@@ -501,3 +501,45 @@ window.settings-window {
 .gallery .card picture {
   background-color: color-mix(in srgb, var(--fg) 3%, transparent);
 }
+
+window.kiekje-pin {
+  background-color: var(--bg);
+}
+
+.pin {
+  border: 1px solid var(--line);
+}
+
+.pin:focus-within {
+  border-color: var(--accent);
+}
+
+.pin-toast {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  margin: 6px;
+}
+
+window.kiekje-pin popover.menu contents {
+  background-color: var(--bg);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+
+window.kiekje-pin popover.menu modelbutton {
+  font-family: var(--sans);
+  color: var(--fg);
+  border-radius: var(--radius);
+}
+
+window.kiekje-pin popover.menu modelbutton:hover,
+window.kiekje-pin popover.menu modelbutton:focus-visible {
+  background-color: var(--accent-wash);
+}

@@ -10,6 +10,7 @@ use crate::capture::{BackendChoice, BackendKind};
 use crate::config::{self, Config};
 use crate::desktop_file;
 use crate::overlay;
+use crate::pin::{self, Stacking};
 use crate::shortcuts::hyprland;
 use crate::storage;
 use crate::style::{Style, pad};
@@ -76,6 +77,7 @@ struct Report {
     session_type: String,
     desktop: String,
     overlay: Option<Overlay>,
+    pins: Option<Stacking>,
     monitors: Vec<Monitor>,
     bus: Result<Bus, String>,
     available: Vec<(BackendKind, Capabilities)>,
@@ -144,6 +146,7 @@ fn collect() -> Report {
         session_type: variable("XDG_SESSION_TYPE"),
         desktop: variable("XDG_CURRENT_DESKTOP"),
         overlay,
+        pins: gtk_ready.then(pin::stacking),
         monitors,
         bus,
         available,
@@ -384,6 +387,14 @@ fn render(report: &Report, style: &Style) -> String {
         None => style.error("unavailable"),
     };
     text.push_str(&field(style, "overlay", &overlay));
+    if let Some(pins) = report.pins {
+        let pins = if pins.stays_on_top() {
+            style.good("kept on top")
+        } else {
+            style.warn("on top not guaranteed")
+        };
+        text.push_str(&field(style, "pins", &pins));
+    }
     if let Ok(bus) = &report.bus {
         let daemon = if bus.daemon_running {
             style.good("running")
@@ -536,6 +547,7 @@ mod tests {
             session_type: "wayland".into(),
             desktop: "KDE".into(),
             overlay: Some(Overlay::LayerShell),
+            pins: Some(Stacking::Layer),
             monitors: vec![Monitor {
                 connector: "DP-2".into(),
                 width: 3840,
@@ -639,6 +651,15 @@ mod tests {
         empty.kwin_present = false;
         empty.kwin_access = None;
         assert!(render(&empty, &PLAIN).contains("✗ No capture backend is available"));
+    }
+
+    #[test]
+    fn says_when_pins_may_fall_behind_other_windows() {
+        assert!(render(&report(), &PLAIN).contains("pins              kept on top"));
+        let mut gnome = report();
+        gnome.overlay = Some(Overlay::Fullscreen);
+        gnome.pins = Some(Stacking::Toplevel);
+        assert!(render(&gnome, &PLAIN).contains("pins              on top not guaranteed"));
     }
 
     #[test]

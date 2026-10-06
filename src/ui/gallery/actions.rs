@@ -7,6 +7,7 @@ use gtk::{gdk, gio, glib};
 use super::Gallery;
 use crate::editor;
 use crate::library::{self, Library};
+use crate::pin;
 use crate::ui::files;
 
 const GROUP: &str = "gallery";
@@ -15,6 +16,7 @@ const GROUP: &str = "gallery";
 pub(super) enum FileAction {
     Open,
     Edit,
+    Pin,
     Reveal,
     CopyImage,
     CopyPath,
@@ -25,9 +27,10 @@ pub(super) enum FileAction {
 }
 
 impl FileAction {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 10] = [
         Self::Open,
         Self::Edit,
+        Self::Pin,
         Self::Reveal,
         Self::Locate,
         Self::CopyImage,
@@ -41,6 +44,7 @@ impl FileAction {
         match self {
             Self::Open => "open",
             Self::Edit => "edit",
+            Self::Pin => "pin",
             Self::Reveal => "reveal",
             Self::CopyImage => "copy-image",
             Self::CopyPath => "copy-path",
@@ -55,6 +59,7 @@ impl FileAction {
         match self {
             Self::Open => "Open",
             Self::Edit => "Edit",
+            Self::Pin => "Pin on screen",
             Self::Reveal => "Show in folder",
             Self::CopyImage => "Copy image",
             Self::CopyPath => "Copy path",
@@ -69,6 +74,7 @@ impl FileAction {
         match self {
             Self::Open => None,
             Self::Edit => Some("<Ctrl>e"),
+            Self::Pin => Some("<Ctrl>p"),
             Self::Reveal => Some("<Ctrl>Return"),
             Self::CopyImage => Some("<Ctrl>c"),
             Self::CopyPath => Some("<Ctrl><Alt>c"),
@@ -109,7 +115,11 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
     let remove = gio::Menu::new();
     for action in FileAction::ALL {
         let section = match action {
-            FileAction::Open | FileAction::Edit | FileAction::Reveal | FileAction::Locate => &open,
+            FileAction::Open
+            | FileAction::Edit
+            | FileAction::Pin
+            | FileAction::Reveal
+            | FileAction::Locate => &open,
             FileAction::CopyImage | FileAction::CopyPath => &copy,
             FileAction::Trash | FileAction::Forget | FileAction::ForgetMissing => &remove,
         };
@@ -289,6 +299,7 @@ impl Gallery {
                 });
             }
             FileAction::Edit => self.edit(path),
+            FileAction::Pin => self.pin(path),
             FileAction::Locate => self.locate(path),
             FileAction::ForgetMissing => {}
         }
@@ -313,6 +324,20 @@ impl Gallery {
             return;
         };
         editor::open(&app, editor::Source::File { path, mode });
+    }
+
+    fn pin(self: &Rc<Self>, path: PathBuf) {
+        let window = self.status.root().and_downcast::<gtk::Window>();
+        let Some(app) = window.as_ref().and_then(|window| window.application()) else {
+            self.say("Pinning needs the running app", true);
+            return;
+        };
+        let gallery = self.clone();
+        glib::spawn_future_local(async move {
+            if let Err(error) = pin::open_file(&app, path, window.as_ref()).await {
+                gallery.say(&format!("Not pinned: {error}"), true);
+            }
+        });
     }
 
     fn locate(self: &Rc<Self>, path: PathBuf) {

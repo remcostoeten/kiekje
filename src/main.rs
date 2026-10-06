@@ -12,12 +12,14 @@ mod mascot;
 mod notify;
 mod output;
 mod overlay;
+mod pin;
 mod shortcuts;
 mod storage;
 mod style;
 mod tray;
 mod ui;
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gtk::glib;
@@ -40,6 +42,17 @@ fn main() -> glib::ExitCode {
             Ok(request) => app::run(Command::Capture(request)),
             Err(message) => {
                 help::print_error(&message, Topic::Capture);
+                glib::ExitCode::FAILURE
+            }
+        },
+        Some("pin") if is_help_request(&arguments[1..]) => {
+            help::print(Topic::Overview);
+            glib::ExitCode::SUCCESS
+        }
+        Some("pin") => match parse_pin(&arguments[1..]) {
+            Ok(path) => app::run(Command::Pin(path)),
+            Err(message) => {
+                help::print_error(&message, Topic::Overview);
                 glib::ExitCode::FAILURE
             }
         },
@@ -133,6 +146,18 @@ fn parse_delay(value: &str) -> Result<Duration, String> {
         ))
 }
 
+fn parse_pin(arguments: &[String]) -> Result<PathBuf, String> {
+    let [path] = arguments else {
+        return Err("pin takes the path of one image".into());
+    };
+    let absolute = std::path::absolute(path)
+        .map_err(|error| format!("could not resolve `{path}`: {error}"))?;
+    if !absolute.is_file() {
+        return Err(format!("`{path}` is not a file"));
+    }
+    Ok(absolute)
+}
+
 fn is_help_request(arguments: &[String]) -> bool {
     arguments
         .iter()
@@ -171,6 +196,16 @@ mod tests {
     fn asks_for_the_editor_with_edit() {
         assert!(parse(&["--edit"]).unwrap().edit);
         assert!(!parse(&[]).unwrap().edit);
+    }
+
+    #[test]
+    fn pins_one_existing_file_by_its_absolute_path() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let path = parse_pin(&[format!("{manifest}/Cargo.toml")]).unwrap();
+        assert!(path.is_absolute());
+        assert!(parse_pin(&[]).is_err());
+        assert!(parse_pin(&[format!("{manifest}/missing.png")]).is_err());
+        assert!(parse_pin(&["a.png".into(), "b.png".into()]).is_err());
     }
 
     #[test]

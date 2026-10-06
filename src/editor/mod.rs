@@ -388,6 +388,7 @@ impl Editor {
             (true, "c") => self.copy(),
             (true, "s") if shift && self.is_inline() => self.conclude(Finish::SaveAs),
             (true, "s") => self.save(),
+            (true, "p") if self.is_inline() => self.conclude(Finish::Pin),
             (false, "Return" | "KP_Enter") if self.is_inline() => self.conclude(Finish::Accept),
             (false, "Escape") => {
                 if !(self.cancel_grab() || self.cancel_draft() || self.deselect()) {

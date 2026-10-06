@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "menu",
     "settings",
     "gallery",
+    "pin",
     "doctor",
     "install-desktop-file",
     "help",
@@ -83,6 +84,12 @@ const SESSION: &[Entry] = &[
         name: "gallery",
         argument: "",
         description: "Open the gallery of saved captures",
+        note: "",
+    },
+    Entry {
+        name: "pin",
+        argument: "<path>",
+        description: "Keep an image on screen above other windows",
         note: "",
     },
 ];

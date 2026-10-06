@@ -20,6 +20,7 @@ use crate::library::{self, Library, NewCapture, thumbs};
 use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
+use crate::pin;
 use crate::shortcuts::{
     Binding, PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar,
     Shortcuts, hyprland, kde,
@@ -56,6 +57,7 @@ pub enum Command {
     Settings,
     Gallery,
     Capture(Request),
+    Pin(std::path::PathBuf),
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +179,7 @@ pub fn run(command: Command) -> glib::ExitCode {
         Some(Command::Menu) => toggle_menu(app, &session, None),
         Some(Command::Settings) => open_settings(app, &session),
         Some(Command::Gallery) => open_gallery(app, &session),
+        Some(Command::Pin(path)) => pin_file(app, path),
         Some(Command::Daemon | Command::Quit) | None => {
             glib::idle_add_local_once(overlay::warm_up);
         }
@@ -195,6 +198,16 @@ fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
         Command::Settings => app.activate_action("settings", None),
         Command::Gallery => app.activate_action("gallery", None),
         Command::Capture(request) => app.activate_action("capture", Some(&request.to_variant())),
+        Command::Pin(path) => {
+            let Some(path) = path.to_str() else {
+                eprintln!(
+                    "kiekje: {} is not valid UTF-8, so it can't be pinned",
+                    path.display()
+                );
+                return glib::ExitCode::FAILURE;
+            };
+            app.activate_action("pin", Some(&path.to_variant()));
+        }
     }
     if let Some(connection) = app.dbus_connection()
         && let Err(error) = connection.flush_sync(gio::Cancellable::NONE)
@@ -558,6 +571,7 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
     let quit_app = app.downgrade();
     let quit_session = Rc::downgrade(session);
     quit.connect_activate(move |_, _| {
+        pin::close_all();
         if let Some(guard) = quit_session
             .upgrade()
             .and_then(|session| session.tray.take())
@@ -599,6 +613,31 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         }
     });
     app.add_action(&gallery);
+
+    let pin = gio::SimpleAction::new("pin", Some(glib::VariantTy::STRING));
+    let pin_app = app.downgrade();
+    pin.connect_activate(move |_, parameter| {
+        let (Some(app), Some(path)) = (
+            pin_app.upgrade(),
+            parameter.and_then(glib::Variant::get::<String>),
+        ) else {
+            eprintln!("kiekje: ignored a malformed pin request");
+            return;
+        };
+        pin_file(&app, std::path::PathBuf::from(path));
+    });
+    app.add_action(&pin);
+}
+
+fn pin_file(app: &gtk::Application, path: std::path::PathBuf) {
+    let app = app.clone();
+    glib::spawn_future_local(async move {
+        let shown = path.display().to_string();
+        match pin::open_file(&app, path, None).await {
+            Ok(()) => println!("kiekje: pinned {shown}"),
+            Err(error) => eprintln!("kiekje: not pinned: {error}"),
+        }
+    });
 }
 
 fn open_gallery(app: &gtk::Application, session: &Rc<Session>) {
@@ -828,6 +867,7 @@ fn handle_capture(
             let frames = Arc::new(capture.frames);
             let selection_frames = frames.clone();
             let trigger_us = request.trigger_us;
+            let pin_app = app.clone();
             overlay::show(
                 app,
                 frames,
@@ -852,6 +892,11 @@ fn handle_capture(
                     } => {
                         remember_region(&session, rect);
                         log_selection(&selection_frames, plan);
+                        if finish == Finish::Pin {
+                            pin::open_image(&pin_app, image, Some(rect));
+                            session.busy.set(false);
+                            return;
+                        }
                         finish_edit(image, finish, request, session);
                     }
                     Outcome::Canceled => {
@@ -1022,6 +1067,12 @@ fn finish_edit(image: Image, finish: Finish, request: Request, session: Rc<Sessi
         ),
         Finish::Save => save_only(image, request, session),
         Finish::SaveAs => save_as(image, request, session),
+        Finish::Pin => {
+            if let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() {
+                pin::open_image(&app, image, None);
+            }
+            session.busy.set(false);
+        }
     }
 }
 
