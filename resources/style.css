@@ -6,7 +6,8 @@
   --line: color-mix(in srgb, var(--fg) 16%, transparent);
   --wash: color-mix(in srgb, var(--fg) 6%, transparent);
   --accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
-  --ring: color-mix(in srgb, var(--accent) 70%, transparent);
+  --focus-wash: color-mix(in srgb, var(--fg) 10%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 24%, transparent);
   --radius: 6px;
   --sans: "Geist", "Inter", sans-serif;
   --mono: "Geist Mono", "JetBrains Mono", monospace;
@@ -57,9 +58,14 @@ window.kiekje-popover {
   color: var(--muted);
 }
 
+.panel,
+.panel * {
+  outline: none;
+}
+
 .panel button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  border-style: solid;
+  border-color: var(--accent);
 }
 
 .panel button.primary {
@@ -67,8 +73,9 @@ window.kiekje-popover {
   background-color: var(--accent-wash);
 }
 
-.panel button.primary:hover {
-  background-color: color-mix(in srgb, var(--accent) 24%, transparent);
+.panel button.primary:hover,
+.panel button.primary:focus-visible {
+  background-color: var(--accent-strong);
 }
 
 .panel button.ghost {
@@ -179,8 +186,12 @@ window.settings-window {
 }
 
 .settings checkbutton:focus-visible check {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  border-color: var(--accent);
+  background-color: var(--wash);
+}
+
+.settings checkbutton:focus-visible check:checked {
+  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .panel button.trigger {
@@ -208,7 +219,7 @@ window.settings-window {
 .gallery listview > row {
   padding: 6px;
   border-radius: var(--radius);
-  transition: background-color 120ms ease-out;
+  transition: background-color 150ms ease-out;
 }
 
 .gallery gridview > child:hover,
@@ -223,8 +234,12 @@ window.settings-window {
 
 .gallery gridview > child:focus-visible,
 .gallery listview > row:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
+  background-color: var(--focus-wash);
+}
+
+.gallery gridview > child:selected:focus-visible,
+.gallery listview > row:selected:focus-visible {
+  background-color: var(--accent-strong);
 }
 
 .card {
@@ -256,12 +271,29 @@ window.settings-window {
   text-transform: uppercase;
   padding: 4px 10px;
   color: var(--muted);
+  border-color: transparent;
+  transition: color 150ms ease-out, background-color 150ms ease-out, transform 120ms ease-out;
+}
+
+.panel button.chip:hover {
+  color: var(--fg);
+  background-color: var(--wash);
+}
+
+.panel button.chip:focus-visible {
+  border-color: transparent;
+  color: var(--fg);
+  background-color: var(--focus-wash);
 }
 
 .panel button.chip:checked {
   color: var(--fg);
-  border: 1px solid var(--accent);
   background-color: var(--accent-wash);
+}
+
+.panel button.chip:checked:hover,
+.panel button.chip:checked:focus-visible {
+  background-color: var(--accent-strong);
 }
 
 .gallery entry,
@@ -276,8 +308,8 @@ window.settings-window {
 
 .gallery entry:focus-within,
 .settings entry:focus-within {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  border-style: solid;
+  border-color: var(--accent);
 }
 
 .gallery dropdown > button {
@@ -317,8 +349,8 @@ window.settings-window {
 }
 
 .editor .canvas:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  border-style: solid;
+  border-color: var(--accent);
 }
 
 .panel button.chip.swatch {
@@ -342,12 +374,23 @@ window.settings-window {
 }
 
 .editor entry:focus-within {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  border-style: solid;
+  border-color: var(--accent);
 }
 
-.settings checkbutton:disabled check {
-  opacity: 0.5;
+.settings checkbutton:disabled label {
+  color: var(--muted);
+  opacity: 1;
+  filter: none;
+}
+
+.settings checkbutton:disabled check,
+.settings checkbutton:disabled check:checked {
+  border-color: var(--line);
+  background-color: transparent;
+  color: var(--muted);
+  opacity: 1;
+  filter: none;
 }
 
 .panel button.danger {
@@ -362,4 +405,75 @@ window.settings-window {
 .settings .about-name {
   font-size: 20px;
   font-weight: 600;
+}
+
+.panel.gallery {
+  padding: 0;
+}
+
+.gallery .sidebar {
+  background-color: var(--bg);
+  min-width: 180px;
+  padding: 20px 12px;
+  border-right: 1px dashed var(--line);
+}
+
+.gallery .brand {
+  color: var(--fg);
+  margin: 0 8px 12px;
+}
+
+.gallery .main {
+  padding: 20px;
+}
+
+.gallery .title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.gallery .count {
+  margin-top: 0;
+}
+
+.gallery button.nav {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  color: var(--muted);
+  transition: color 150ms ease-out, background-color 150ms ease-out;
+}
+
+.gallery button.nav > label {
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.gallery button.nav:hover {
+  background-color: var(--wash);
+  color: var(--fg);
+}
+
+.gallery button.nav:checked {
+  background-color: var(--accent-wash);
+  color: var(--fg);
+}
+
+.gallery button.nav:focus-visible {
+  border-color: transparent;
+  color: var(--fg);
+  background-color: var(--focus-wash);
+}
+
+.gallery button.nav:checked:hover,
+.gallery button.nav:checked:focus-visible {
+  background-color: var(--accent-strong);
+}
+
+.gallery .card picture {
+  background-color: color-mix(in srgb, var(--fg) 3%, transparent);
 }
