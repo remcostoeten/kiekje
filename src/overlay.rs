@@ -3,14 +3,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gtk::prelude::*;
-use gtk::{cairo, gdk, glib, graphene};
+use gtk::subclass::prelude::*;
+use gtk::{gdk, glib, graphene, gsk, pango};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::capture::mapping::{SelectionPlan, plan_selection, rect_from_drag};
 use crate::capture::{Frame, LogicalRect};
 
-const ACCENT: (f64, f64, f64) = (254.0 / 255.0, 81.0 / 255.0, 1.0 / 255.0);
-const DIM: f64 = 0.45;
+const ACCENT: gdk::RGBA = gdk::RGBA::new(254.0 / 255.0, 81.0 / 255.0, 1.0 / 255.0, 1.0);
+const DIM: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.45);
+const LABEL_BACKGROUND: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.9);
+const LABEL_TEXT: gdk::RGBA = gdk::RGBA::new(237.0 / 255.0, 237.0 / 255.0, 237.0 / 255.0, 1.0);
 const MIN_SELECTION: i32 = 3;
 
 pub struct Selection {
@@ -32,13 +35,60 @@ struct Drag {
 
 type DoneCallback = Box<dyn FnOnce(Outcome)>;
 type PaintCallback = Box<dyn FnOnce()>;
+type Painter = Box<dyn Fn(&gtk::Widget, &gtk::Snapshot)>;
+
+mod imp {
+    use super::*;
+
+    #[derive(Default)]
+    pub struct SelectionLayer {
+        pub painter: RefCell<Option<Painter>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for SelectionLayer {
+        const NAME: &'static str = "KiekjeSelectionLayer";
+        type Type = super::SelectionLayer;
+        type ParentType = gtk::Widget;
+    }
+
+    impl ObjectImpl for SelectionLayer {}
+
+    impl WidgetImpl for SelectionLayer {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            if let Some(painter) = self.painter.borrow().as_ref() {
+                painter(self.obj().upcast_ref(), snapshot);
+            }
+        }
+    }
+}
+
+glib::wrapper! {
+    pub struct SelectionLayer(ObjectSubclass<imp::SelectionLayer>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl SelectionLayer {
+    fn new(painter: impl Fn(&gtk::Widget, &gtk::Snapshot) + 'static) -> Self {
+        let layer: Self = glib::Object::new();
+        layer.imp().painter.replace(Some(Box::new(painter)));
+        layer
+    }
+}
+
+struct Area {
+    frame_index: usize,
+    layer: SelectionLayer,
+    showing: Cell<bool>,
+}
 
 struct Shared {
     frames: Arc<Vec<Frame>>,
     geometry: Vec<(LogicalRect, (u32, u32))>,
     drag: RefCell<Option<Drag>>,
     windows: RefCell<Vec<gtk::Window>>,
-    areas: RefCell<Vec<gtk::DrawingArea>>,
+    areas: RefCell<Vec<Area>>,
     finished: Cell<bool>,
     on_done: RefCell<Option<DoneCallback>>,
     watched: RefCell<Vec<(gdk::Monitor, glib::SignalHandlerId)>>,
@@ -134,11 +184,16 @@ pub fn warm_up() {
         );
         let snapshot = gtk::Snapshot::new();
         snapshot.append_texture(&texture, &bounds);
-        let context = snapshot.append_cairo(&bounds);
-        context.set_source_rgba(0.0, 0.0, 0.0, DIM);
-        report(context.paint());
-        draw_size_label(&context, "1 × 1", 0.0, 32.0, 64, 64);
-        drop(context);
+        snapshot.append_color(&DIM, &bounds);
+        paint_size_label(
+            window.upcast_ref(),
+            &snapshot,
+            "1 × 1",
+            0.0,
+            32.0,
+            64.0,
+            64.0,
+        );
         if let Some(node) = snapshot.to_node() {
             renderer.render_texture(&node, Some(&bounds));
         }
@@ -171,7 +226,10 @@ fn build_surface(
     picture.set_content_fit(gtk::ContentFit::Fill);
     picture.set_can_shrink(true);
 
-    let area = gtk::DrawingArea::new();
+    let paint_shared = shared.clone();
+    let area = SelectionLayer::new(move |widget, snapshot| {
+        paint(&paint_shared, frame_index, widget, snapshot);
+    });
     area.set_hexpand(true);
     area.set_vexpand(true);
     area.set_cursor_from_name(Some("crosshair"));
@@ -180,11 +238,6 @@ fn build_surface(
     overlay.set_child(Some(&picture));
     overlay.add_overlay(&area);
     window.set_child(Some(&overlay));
-
-    let draw_shared = shared.clone();
-    area.set_draw_func(move |_, context, width, height| {
-        draw(&draw_shared, frame_index, context, width, height);
-    });
 
     let drag = gtk::GestureDrag::new();
     let origin = shared.frames[frame_index].monitor.logical;
@@ -246,7 +299,11 @@ fn build_surface(
         });
     });
 
-    shared.areas.borrow_mut().push(area);
+    shared.areas.borrow_mut().push(Area {
+        frame_index,
+        layer: area,
+        showing: Cell::new(false),
+    });
     shared.windows.borrow_mut().push(window.clone());
     window.present();
 }
@@ -263,31 +320,40 @@ fn place_on_layer(window: &gtk::Window, monitor: &gdk::Monitor) {
     window.set_keyboard_mode(KeyboardMode::Exclusive);
 }
 
-fn draw(shared: &Shared, frame_index: usize, context: &cairo::Context, width: i32, height: i32) {
-    context.set_source_rgba(0.0, 0.0, 0.0, DIM);
-    context.rectangle(0.0, 0.0, f64::from(width), f64::from(height));
-
+fn paint(shared: &Shared, frame_index: usize, widget: &gtk::Widget, snapshot: &gtk::Snapshot) {
+    let (width, height) = (widget.width() as f32, widget.height() as f32);
     let drag = shared.drag.borrow();
     let Some(drag) = drag.as_ref() else {
-        report(context.fill());
+        snapshot.append_color(&DIM, &graphene::Rect::new(0.0, 0.0, width, height));
         return;
     };
     let rect = rect_from_drag(drag.start, drag.current);
     let origin = shared.frames[frame_index].monitor.logical;
     let (x, y, w, h) = (
-        f64::from(rect.x - origin.x),
-        f64::from(rect.y - origin.y),
-        f64::from(rect.width),
-        f64::from(rect.height),
+        (rect.x - origin.x) as f32,
+        (rect.y - origin.y) as f32,
+        rect.width as f32,
+        rect.height as f32,
     );
-    context.rectangle(x, y, w, h);
-    context.set_fill_rule(cairo::FillRule::EvenOdd);
-    report(context.fill());
-
-    context.set_source_rgb(ACCENT.0, ACCENT.1, ACCENT.2);
-    context.set_line_width(1.0);
-    context.rectangle(x + 0.5, y + 0.5, (w - 1.0).max(0.0), (h - 1.0).max(0.0));
-    report(context.stroke());
+    let (left, right) = (x.clamp(0.0, width), (x + w).clamp(0.0, width));
+    let (top, bottom) = (y.clamp(0.0, height), (y + h).clamp(0.0, height));
+    for (dim_x, dim_y, dim_w, dim_h) in [
+        (0.0, 0.0, width, top),
+        (0.0, bottom, width, height - bottom),
+        (0.0, top, left, bottom - top),
+        (right, top, width - right, bottom - top),
+    ] {
+        if dim_w > 0.0 && dim_h > 0.0 {
+            snapshot.append_color(&DIM, &graphene::Rect::new(dim_x, dim_y, dim_w, dim_h));
+        }
+    }
+    if w > 0.0 && h > 0.0 {
+        snapshot.append_border(
+            &gsk::RoundedRect::from_rect(graphene::Rect::new(x, y, w, h), 0.0),
+            &[1.0; 4],
+            &[ACCENT; 4],
+        );
+    }
 
     if label_frame(shared, rect, drag.frame_index) != frame_index {
         return;
@@ -296,8 +362,9 @@ fn draw(shared: &Shared, frame_index: usize, context: &cairo::Context, width: i3
         return;
     };
     let (pixels_wide, pixels_high) = plan.size();
-    draw_size_label(
-        context,
+    paint_size_label(
+        widget,
+        snapshot,
         &format!("{pixels_wide} × {pixels_high}"),
         x,
         y + h,
@@ -314,42 +381,54 @@ fn label_frame(shared: &Shared, rect: LogicalRect, fallback: usize) -> usize {
         .unwrap_or(fallback)
 }
 
-fn draw_size_label(
-    context: &cairo::Context,
+fn paint_size_label(
+    widget: &gtk::Widget,
+    snapshot: &gtk::Snapshot,
     text: &str,
-    x: f64,
-    bottom: f64,
-    width: i32,
-    height: i32,
+    x: f32,
+    bottom: f32,
+    width: f32,
+    height: f32,
 ) {
-    context.select_font_face(
-        "Geist Mono",
-        cairo::FontSlant::Normal,
-        cairo::FontWeight::Normal,
-    );
-    context.set_font_size(12.0);
-    let Ok(extents) = context.text_extents(text) else {
-        return;
-    };
+    let layout = widget.create_pango_layout(Some(text));
+    layout.set_font_description(Some(&pango::FontDescription::from_string(
+        "Geist Mono 12px",
+    )));
+    let (_, logical) = layout.pixel_extents();
     let padding = 6.0;
-    let label_width = extents.x_advance() + padding * 2.0;
+    let label_width = logical.width() as f32 + padding * 2.0;
     let label_height = 22.0;
-    let left = x.min(f64::from(width) - label_width).max(0.0);
-    let top = (bottom + 6.0)
-        .min(f64::from(height) - label_height)
-        .max(0.0);
+    let left = x.min(width - label_width).max(0.0);
+    let top = (bottom + 6.0).min(height - label_height).max(0.0);
 
-    context.set_source_rgba(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.9);
-    context.rectangle(left, top, label_width, label_height);
-    report(context.fill());
-    context.set_source_rgb(237.0 / 255.0, 237.0 / 255.0, 237.0 / 255.0);
-    context.move_to(left + padding, top + 15.0);
-    report(context.show_text(text));
+    snapshot.append_color(
+        &LABEL_BACKGROUND,
+        &graphene::Rect::new(left, top, label_width, label_height),
+    );
+    snapshot.save();
+    snapshot.translate(&graphene::Point::new(
+        left + padding,
+        top + (label_height - logical.height() as f32) / 2.0,
+    ));
+    snapshot.append_layout(&layout, &LABEL_TEXT);
+    snapshot.restore();
 }
 
 fn redraw(shared: &Shared) {
+    let selection = shared
+        .drag
+        .borrow()
+        .as_ref()
+        .map(|drag| rect_from_drag(drag.start, drag.current));
     for area in shared.areas.borrow().iter() {
-        area.queue_draw();
+        let monitor = shared.frames[area.frame_index].monitor.logical;
+        let showing = selection.is_some_and(|rect| {
+            rect.intersection(monitor).is_some() || monitor.contains_point(rect.x, rect.y)
+        });
+        if showing || area.showing.get() {
+            area.layer.queue_draw();
+        }
+        area.showing.set(showing);
     }
 }
 
@@ -379,10 +458,4 @@ fn finish(shared: &Shared, outcome: Outcome) {
         window.close();
     }
     shared.areas.borrow_mut().clear();
-}
-
-fn report(result: Result<(), cairo::Error>) {
-    if let Err(error) = result {
-        eprintln!("kiekje: overlay drawing failed: {error}");
-    }
 }
