@@ -430,6 +430,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
         TrayCommand::OpenGallery => open_gallery(app, session),
+        TrayCommand::OpenSettings => open_settings(app, session),
         TrayCommand::Quit => app.activate_action("quit", None),
     }
 }
