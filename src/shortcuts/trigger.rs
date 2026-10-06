@@ -182,6 +182,14 @@ impl Trigger {
         parts.join("+")
     }
 
+    pub fn modifiers(&self) -> Modifiers {
+        self.modifiers
+    }
+
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
     /// The modifiers and key as Hyprland's `bind` takes them, such as `("SUPER SHIFT", "s")`.
     ///
     /// # Examples

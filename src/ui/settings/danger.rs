@@ -8,7 +8,7 @@ use super::{caps, note};
 use crate::app::APP_ID;
 use crate::config::{self, Config};
 use crate::library::{self, Library, thumbs};
-use crate::shortcuts::{Shortcuts, hyprland};
+use crate::shortcuts::{ShortcutHost, Shortcuts, hyprland, kde};
 use crate::storage;
 
 const ARMED_FOR: Duration = Duration::from_secs(4);
@@ -48,7 +48,7 @@ impl Danger {
 
 pub(super) type DoneCallback = Rc<dyn Fn(Danger)>;
 
-pub(super) fn append(content: &gtk::Box, hyprland: bool, on_done: DoneCallback) {
+pub(super) fn append(content: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback) {
     content.append(&caps("Danger zone"));
     let result = note("");
     result.set_visible(false);
@@ -66,6 +66,7 @@ pub(super) fn append(content: &gtk::Box, hyprland: bool, on_done: DoneCallback) 
             .build();
         let result = result.clone();
         let on_done = on_done.clone();
+        let host = host.clone();
         button.connect_clicked(move |button| {
             if !button.has_css_class("armed") {
                 arm(button, danger);
@@ -76,8 +77,9 @@ pub(super) fn append(content: &gtk::Box, hyprland: bool, on_done: DoneCallback) 
             let result = result.clone();
             let on_done = on_done.clone();
             let button = button.clone();
+            let host = host.clone();
             glib::spawn_future_local(async move {
-                let outcome = gio::spawn_blocking(move || run(danger, hyprland)).await;
+                let outcome = gio::spawn_blocking(move || run(danger, &host)).await;
                 button.set_sensitive(true);
                 let message = match outcome {
                     Ok(Ok(message)) => {
@@ -118,21 +120,37 @@ fn disarm(button: &gtk::Button, danger: Danger) {
     button.set_tooltip_text(None);
 }
 
-fn run(danger: Danger, hyprland: bool) -> Result<String, String> {
+fn run(danger: Danger, host: &ShortcutHost) -> Result<String, String> {
     match danger {
         Danger::ResetSettings => {
             config::save_to(&config::path(), &Config::default())
                 .map_err(|error| format!("Settings were not reset: {error}"))?;
-            if hyprland {
-                let include = hyprland::include_path();
-                hyprland::write_include(&include, APP_ID, &Shortcuts::default()).map_err(
-                    |error| {
-                        format!(
-                            "Settings were reset, but {} could not be written: {error}",
-                            storage::tilde(&include)
-                        )
-                    },
-                )?;
+            match host {
+                ShortcutHost::Hyprland => {
+                    let include = hyprland::include_path();
+                    hyprland::write_include(&include, APP_ID, &Shortcuts::default()).map_err(
+                        |error| {
+                            format!(
+                                "Settings were reset, but {} could not be written: {error}",
+                                storage::tilde(&include)
+                            )
+                        },
+                    )?;
+                }
+                ShortcutHost::Kde => {
+                    let skipped = kde::set_all(APP_ID, &Shortcuts::default()).map_err(|error| {
+                        format!("Settings were reset, but KDE kept the old shortcuts: {error}")
+                    })?;
+                    if !skipped.is_empty() {
+                        let reasons: Vec<String> =
+                            skipped.iter().map(ToString::to_string).collect();
+                        return Ok(format!(
+                            "Settings are back to their defaults. Some shortcuts kept their keys: {}.",
+                            reasons.join("; ")
+                        ));
+                    }
+                }
+                ShortcutHost::Desktop { .. } | ShortcutHost::Off(_) | ShortcutHost::Starting => {}
             }
             Ok("Settings are back to their defaults.".to_owned())
         }
