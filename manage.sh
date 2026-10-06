@@ -8,6 +8,7 @@ readonly GITHUB_URL="https://github.com/remcostoeten/kiekje"
 readonly CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/kiekje/config.toml"
 readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/kiekje"
 readonly CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/kiekje"
+readonly AUTOSTART_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/$APP_ID.desktop"
 SCRIPT="$(basename "$0")"
 readonly SCRIPT
 
@@ -149,6 +150,26 @@ function stop_running() {
     command -v kiekje >/dev/null 2>&1 && kiekje quit >/dev/null 2>&1 || pkill -x kiekje || true
 }
 
+function write_autostart() {
+    mkdir -p "${AUTOSTART_FILE%/*}"
+    cat >"$AUTOSTART_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Kiekje
+Comment=Start the Kiekje tray at login
+Exec=$1 daemon
+Icon=$APP_ID
+Terminal=false
+NoDisplay=true
+X-KDE-autostart-phase=2
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2
+EOF
+}
+
+function start_daemon() {
+    setsid -f "$1" daemon >/dev/null 2>&1 </dev/null
+}
+
 function refresh_desktop_caches() {
     local scope="$1" prefix="$2"
     if command -v gtk-update-icon-cache >/dev/null 2>&1 && [[ -f "$prefix/share/icons/hicolor/index.theme" ]]; then
@@ -204,11 +225,12 @@ function help_interactive() {
 
 function help_install() {
     banner "install"
-    printf '  %sUSAGE%s  %s install [--system] [--skip-build]\n\n' "$DIM" "$RESET" "$SCRIPT"
+    printf '  %sUSAGE%s  %s install [--system] [--skip-build] [--no-autostart]\n\n' "$DIM" "$RESET" "$SCRIPT"
     section "OPTIONS"
     row "--user"       "Install to ~/.local (default, no sudo)"
     row "--system"     "Install to /usr with sudo"
     row "--skip-build" "Install the existing target/release binary"
+    row "--no-autostart" "Do not start the tray at login or after installing"
     row "-h, --help"   "Show this help"
     printf '\n'
 }
@@ -608,12 +630,13 @@ function cmd_build() {
 }
 
 function cmd_install() {
-    local scope=user build=1
+    local scope=user build=1 autostart=1
     while (( $# )); do
         case "$1" in
             --user) scope=user ;;
             --system) scope=system ;;
             --skip-build) build=0 ;;
+            --no-autostart) autostart=0 ;;
             *) unknown_option install "$1" ;;
         esac
         shift
@@ -630,6 +653,12 @@ function cmd_install() {
     ok "Installed $("$binary" version 2>/dev/null || printf 'kiekje')"
     detail "binary" "$prefix/bin/kiekje"
     detail "launcher" "$prefix/share/applications/$APP_ID.desktop"
+    if (( autostart )); then
+        write_autostart "$prefix/bin/kiekje"
+        detail "autostart" "$AUTOSTART_FILE"
+        start_daemon "$prefix/bin/kiekje"
+        ok "Started the tray"
+    fi
     if [[ "$scope" == user && ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         warn "$HOME/.local/bin is not on PATH."
     fi
@@ -676,6 +705,10 @@ function cmd_uninstall() {
         as_root_if "$scope" rm -rf -- "${present[@]}"
         refresh_desktop_caches "$scope" "$prefix"
         ok "Uninstalled"
+    fi
+    if [[ -f "$AUTOSTART_FILE" ]]; then
+        rm -f -- "$AUTOSTART_FILE"
+        detail "autostart" "removed $AUTOSTART_FILE"
     fi
     if (( purge )); then
         local -a state=("${CONFIG_FILE%/*}" "$DATA_DIR" "$CACHE_DIR")
