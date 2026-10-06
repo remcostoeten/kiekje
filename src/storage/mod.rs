@@ -1,3 +1,4 @@
+pub mod autostart;
 pub mod last_region;
 pub mod template;
 

@@ -37,7 +37,7 @@ Kiekje is pre-release. It has been run in virtual machines running Plasma, Hyprl
 
 ## Usage
 
-Run `kiekje daemon` to start Kiekje in the tray, and add it to your session's autostart to have it at login. Click the tray icon for the capture menu.
+Run `kiekje daemon` to start Kiekje in the tray, and turn on Start Kiekje at login in Settings to have it at login. Click the tray icon for the capture menu.
 
 Press Print to capture a region or Shift+Print to capture every screen. Drag to select, then let go: the region is copied and saved. Escape cancels.
 

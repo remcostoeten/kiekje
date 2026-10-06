@@ -7,7 +7,7 @@ use gtk::{gio, glib};
 use super::{caps, note};
 use crate::capture::CaptureMode;
 use crate::config::{self, AfterSelection, Capture, Config, Folder, Notifications, Storage};
-use crate::storage::{self, Naming, Template, template::DEFAULT_TEMPLATE};
+use crate::storage::{self, Naming, Template, autostart, template::DEFAULT_TEMPLATE};
 
 type Change = Box<dyn FnOnce(&mut Config) + Send>;
 type Changes = async_channel::Sender<Change>;
@@ -26,6 +26,7 @@ pub(super) struct General {
     enabled: gtk::CheckButton,
     sound: gtk::CheckButton,
     edit: gtk::CheckButton,
+    autostart: gtk::CheckButton,
     problem: gtk::Label,
 }
 
@@ -36,6 +37,16 @@ pub(super) fn append(
     capture: Capture,
 ) -> Weak<General> {
     let (changes, receiver) = async_channel::unbounded::<Change>();
+
+    content.append(&caps("Startup"));
+    let autostart = gtk::CheckButton::builder()
+        .label("Start Kiekje at login")
+        .sensitive(false)
+        .build();
+    content.append(&autostart);
+    content.append(&note(
+        "Keeps the tray and shortcuts ready after you sign in.",
+    ));
 
     content.append(&caps("Capture"));
     let edit = gtk::CheckButton::builder()
@@ -104,10 +115,12 @@ pub(super) fn append(
         enabled,
         sound,
         edit,
+        autostart,
         problem,
     });
     general.show_preview();
     connect(&general, &choose, &changes);
+    connect_autostart(&general);
     let handle = Rc::downgrade(&general);
 
     glib::spawn_future_local(async move {
@@ -203,6 +216,53 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             &sender,
             Box::new(move |config| config.capture.after_selection = after),
         );
+    });
+}
+
+fn connect_autostart(general: &Rc<General>) {
+    let (requests, receiver) = async_channel::unbounded::<bool>();
+    let weak = Rc::downgrade(general);
+    general.autostart.connect_toggled(move |check| {
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        if requests.try_send(check.is_active()).is_err() {
+            eprintln!("kiekje: the autostart worker stopped, the change was not applied");
+        }
+    });
+
+    let weak = Rc::downgrade(general);
+    glib::spawn_future_local(async move {
+        let found = gio::spawn_blocking(|| autostart::is_enabled(&autostart::path())).await;
+        let Some(general) = weak.upgrade() else {
+            return;
+        };
+        match found {
+            Ok(Ok(enabled)) => general.show_autostart(enabled),
+            Ok(Err(error)) => general.complain(&format!("Start at login: {error}")),
+            Err(_) => general.complain("The settings worker stopped; start at login is unknown."),
+        }
+        general.autostart.set_sensitive(true);
+        drop(general);
+
+        while let Ok(enabled) = receiver.recv().await {
+            let applied = gio::spawn_blocking(move || autostart::set(enabled)).await;
+            let Some(general) = weak.upgrade() else {
+                return;
+            };
+            match applied {
+                Ok(Ok(())) => general.complain(""),
+                Ok(Err(error)) => {
+                    general.complain(&format!("Start at login not changed: {error}"));
+                    general.show_autostart(!enabled);
+                }
+                Err(_) => {
+                    general
+                        .complain("The settings worker stopped; start at login was not changed.");
+                    general.show_autostart(!enabled);
+                }
+            }
+        }
     });
 }
 
@@ -316,6 +376,12 @@ impl General {
         self.sound.set_active(config.notifications.sound);
         self.edit
             .set_active(config.capture.after_selection == AfterSelection::Edit);
+        self.quiet.set(false);
+    }
+
+    fn show_autostart(&self, enabled: bool) {
+        self.quiet.set(true);
+        self.autostart.set_active(enabled);
         self.quiet.set(false);
     }
 

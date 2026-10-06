@@ -151,13 +151,15 @@ function stop_running() {
 }
 
 function write_autostart() {
+    local launch="$1"
+    [[ "$launch" == /usr/* ]] && launch=kiekje
     mkdir -p "${AUTOSTART_FILE%/*}"
     cat >"$AUTOSTART_FILE" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Kiekje
 Comment=Start the Kiekje tray at login
-Exec=$1 daemon
+Exec=$launch daemon
 Icon=$APP_ID
 Terminal=false
 NoDisplay=true
