@@ -22,6 +22,8 @@ pub struct Config {
     #[serde(default)]
     pub capture: Capture,
     #[serde(default)]
+    pub overlay: Overlay,
+    #[serde(default)]
     pub notifications: Notifications,
     #[serde(default)]
     pub shortcuts: Shortcuts,
@@ -39,6 +41,12 @@ pub enum AfterSelection {
     #[default]
     Finish,
     Edit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Overlay {
+    pub magnifier: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -92,9 +100,16 @@ impl Default for Config {
             version: VERSION,
             storage: Storage::default(),
             capture: Capture::default(),
+            overlay: Overlay::default(),
             notifications: Notifications::default(),
             shortcuts: Shortcuts::default(),
         }
+    }
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self { magnifier: true }
     }
 }
 
@@ -427,6 +442,21 @@ mod tests {
             Config::default().capture.after_selection,
             AfterSelection::Finish
         );
+    }
+
+    #[test]
+    fn reads_the_magnifier_switch_and_defaults_it_on() {
+        let config = parse("[overlay]\nmagnifier = false", Path::new("config.toml")).unwrap();
+        assert!(!config.overlay.magnifier);
+        assert!(Config::default().overlay.magnifier);
+        let older = parse("version = 1\n[capture]", Path::new("config.toml")).unwrap();
+        assert!(older.overlay.magnifier);
+    }
+
+    #[test]
+    fn rejects_an_unknown_overlay_key() {
+        let error = parse("[overlay]\nloupe = true", Path::new("config.toml")).unwrap_err();
+        assert!(matches!(error, ConfigError::Parse { .. }));
     }
 
     #[test]

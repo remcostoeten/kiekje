@@ -771,6 +771,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         let config = config::load();
         let notifications = config.notifications;
         let inline = config.capture.after_selection == AfterSelection::Edit;
+        let magnifier = config.overlay.magnifier;
         let result = match request.mode {
             CaptureMode::Repeat => match known_region.or_else(last_region::load) {
                 Some(region) => backends::capture(request.backend, &infos, false)
@@ -782,13 +783,20 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             }
         };
         // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking((result, notifications, inline, glib::monotonic_time()));
+        let _ = sender.send_blocking((
+            result,
+            notifications,
+            inline,
+            magnifier,
+            glib::monotonic_time(),
+        ));
     });
 
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let Ok((result, notifications, inline, captured_us)) = receiver.recv().await else {
+        let Ok((result, notifications, inline, magnifier, captured_us)) = receiver.recv().await
+        else {
             session.busy.set(false);
             return;
         };
@@ -797,8 +805,11 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         log_timing("instance -> frames", received_us, captured_us);
         match result {
             Ok((capture, region)) => {
-                let edit = request.edit || inline;
-                handle_capture(&app, request, capture, region, &monitors, edit, session)
+                let options = overlay::Options {
+                    edit: request.edit || inline,
+                    magnifier,
+                };
+                handle_capture(&app, request, capture, region, &monitors, options, session)
             }
             Err(CaptureError::Canceled) => {
                 println!("kiekje: capture canceled");
@@ -824,7 +835,7 @@ fn handle_capture(
     capture: Capture,
     region: Option<LogicalRect>,
     monitors: &[gdk::Monitor],
-    edit: bool,
+    options: overlay::Options,
     session: Rc<Session>,
 ) {
     println!("kiekje: backend {}", capture.backend);
@@ -872,7 +883,7 @@ fn handle_capture(
                 app,
                 frames,
                 monitors,
-                edit,
+                options,
                 move |selection| match selection {
                     Outcome::Selected(Selection { rect, plan }) => {
                         remember_region(&session, rect);

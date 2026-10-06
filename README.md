@@ -41,6 +41,8 @@ Run `kiekje daemon` to start Kiekje in the tray, and turn on Start Kiekje at log
 
 Press Print to capture a region or Shift+Print to capture every screen. Drag to select, then let go: the region is copied and saved. Escape cancels.
 
+A loupe next to the pointer shows the pixels under it, the position in physical pixels and the colour as hex. Z hides or shows it and C copies the hex colour. Set `[overlay] magnifier = false` in the config to start with it hidden.
+
 Turn on "Edit a region on screen before copying and saving it" in settings, or run `kiekje capture region --edit`, to mark up the selection on the overlay. Enter accepts and Escape cancels.
 
 `kiekje gallery` opens the gallery and `kiekje settings` opens settings, where you set the save folder, the file name template, notifications and shortcuts. Settings are stored in `~/.config/kiekje/config.toml`.

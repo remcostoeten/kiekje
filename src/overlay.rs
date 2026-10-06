@@ -7,6 +7,10 @@ use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
+mod magnifier;
+
+use magnifier::Magnifier;
+
 use crate::capture::mapping::{SelectionPlan, plan_selection, rect_from_drag};
 use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::editor::{Ending, Finish, Inline};
@@ -17,6 +21,12 @@ const DIM: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.45);
 const LABEL_BACKGROUND: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.9);
 const LABEL_TEXT: gdk::RGBA = gdk::RGBA::new(237.0 / 255.0, 237.0 / 255.0, 237.0 / 255.0, 1.0);
 const MIN_SELECTION: i32 = 3;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    pub edit: bool,
+    pub magnifier: bool,
+}
 
 #[derive(Clone, Copy)]
 pub struct Selection {
@@ -105,26 +115,28 @@ struct Shared {
     on_done: RefCell<Option<DoneCallback>>,
     watched: RefCell<Vec<(gdk::Monitor, glib::SignalHandlerId)>>,
     on_first_paint: RefCell<Option<PaintCallback>>,
+    magnifier: Magnifier,
 }
 
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
 ///
 /// Surfaces are layer-shell overlays when the compositor supports it and fullscreen windows
 /// otherwise. A drag may cross monitor edges. With `edit`, a selection inside one monitor stays
-/// on screen with the annotation tools until the user accepts or cancels. Escape cancels, and
+/// on screen with the annotation tools until the user accepts or cancels. With `magnifier`, a
+/// loupe follows the pointer until a selection is made. Escape cancels, and
 /// unplugging a monitor that shows a frame ends the selection. `on_done` runs once with the
 /// outcome.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// overlay::show(&app, frames, monitors, false, |outcome| {}, || {});
+/// overlay::show(&app, frames, monitors, Options::default(), |outcome| {}, || {});
 /// ```
 pub fn show(
     app: &gtk::Application,
     frames: Arc<Vec<Frame>>,
     monitors: &[gdk::Monitor],
-    edit: bool,
+    options: Options,
     on_done: impl FnOnce(Outcome) + 'static,
     on_first_paint: impl FnOnce() + 'static,
 ) {
@@ -135,7 +147,7 @@ pub fn show(
     let shared = Rc::new(Shared {
         frames: frames.clone(),
         geometry,
-        edit,
+        edit: options.edit,
         drag: RefCell::new(None),
         chosen: Cell::new(None),
         inline: RefCell::new(None),
@@ -146,6 +158,7 @@ pub fn show(
         on_done: RefCell::new(Some(Box::new(on_done))),
         watched: RefCell::new(Vec::new()),
         on_first_paint: RefCell::new(Some(Box::new(on_first_paint))),
+        magnifier: Magnifier::new(options.magnifier),
     });
 
     for (frame_index, frame) in frames.iter().enumerate() {
@@ -273,13 +286,16 @@ fn build_surface(
             start,
             current: start,
         }));
+        point_at(&begin_shared, Some(start));
         redraw(&begin_shared);
     });
     let update_shared = shared.clone();
     drag.connect_drag_update(move |_, dx, dy| {
-        if let Some(drag) = update_shared.drag.borrow_mut().as_mut() {
+        let current = update_shared.drag.borrow_mut().as_mut().map(|drag| {
             drag.current = (drag.start.0 + dx, drag.start.1 + dy);
-        }
+            drag.current
+        });
+        point_at(&update_shared, current);
         redraw(&update_shared);
     });
     let end_shared = shared.clone();
@@ -301,12 +317,31 @@ fn build_surface(
     });
     area.add_controller(drag);
 
+    let motion = gtk::EventControllerMotion::new();
+    let motion_shared = shared.clone();
+    motion.connect_motion(move |_, x, y| point_at(&motion_shared, Some(to_desktop(x, y))));
+    let leave_shared = shared.clone();
+    motion.connect_leave(move |_| {
+        if leave_shared.drag.borrow().is_none() {
+            point_at(&leave_shared, None);
+        }
+    });
+    area.add_controller(motion);
+
     let keys = gtk::EventControllerKey::new();
     let key_shared = shared.clone();
     keys.connect_key_pressed(move |_, key, _, state| {
         let inline = key_shared.inline.borrow().clone();
         if let Some(inline) = inline {
             return inline.key(key, state);
+        }
+        if key_shared.chosen.get().is_none()
+            && key_shared.magnifier.key(key, state, &key_shared.frames)
+        {
+            for area in key_shared.areas.borrow().iter() {
+                area.layer.queue_draw();
+            }
+            return glib::Propagation::Stop;
         }
         if key == gdk::Key::Escape {
             finish(&key_shared, Outcome::Canceled);
@@ -352,6 +387,20 @@ fn place_on_layer(window: &gtk::Window, monitor: &gdk::Monitor) {
 }
 
 fn paint(shared: &Shared, frame_index: usize, widget: &gtk::Widget, snapshot: &gtk::Snapshot) {
+    paint_selection(shared, frame_index, widget, snapshot);
+    if shared.chosen.get().is_none() {
+        shared
+            .magnifier
+            .paint(&shared.frames[frame_index], widget, snapshot);
+    }
+}
+
+fn paint_selection(
+    shared: &Shared,
+    frame_index: usize,
+    widget: &gtk::Widget,
+    snapshot: &gtk::Snapshot,
+) {
     let (width, height) = (widget.width() as f32, widget.height() as f32);
     let drag = shared.drag.borrow();
     let (rect, dragged_on) = match (drag.as_ref(), shared.chosen.get()) {
@@ -542,6 +591,23 @@ fn redraw(shared: &Shared) {
             area.layer.queue_draw();
         }
         area.showing.set(showing);
+    }
+}
+
+fn point_at(shared: &Shared, point: Option<(f64, f64)>) {
+    let previous = shared.magnifier.move_to(point);
+    if !shared.magnifier.enabled() || shared.chosen.get().is_some() {
+        return;
+    }
+    for area in shared.areas.borrow().iter() {
+        let monitor = shared.frames[area.frame_index].monitor.logical;
+        if [previous, point]
+            .into_iter()
+            .flatten()
+            .any(|point| magnifier::on_monitor(point, monitor))
+        {
+            area.layer.queue_draw();
+        }
     }
 }
 

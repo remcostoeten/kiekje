@@ -151,6 +151,34 @@ pub fn density(logical: LogicalRect, size: (u32, u32)) -> f64 {
     f64::from(size.0) / f64::from(logical.width.max(1))
 }
 
+/// Converts a monitor-local logical point to the frame pixel under it.
+///
+/// Uses the same frame-to-monitor scale as [`logical_to_pixels`], so fractional scaling maps
+/// to the physical pixel the point falls in. Points past an edge clamp to the nearest pixel.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(logical_point_to_pixel((10.5, 3.0), (1920, 1080), (2880, 1620)), Some((15, 4)));
+/// ```
+pub fn logical_point_to_pixel(
+    point: (f64, f64),
+    monitor_size: (i32, i32),
+    frame_size: (u32, u32),
+) -> Option<(u32, u32)> {
+    if monitor_size.0 <= 0 || monitor_size.1 <= 0 || frame_size.0 == 0 || frame_size.1 == 0 {
+        return None;
+    }
+    let map = |value: f64, monitor: i32, frame: u32| {
+        let pixel = (value * f64::from(frame) / f64::from(monitor)).floor();
+        pixel.clamp(0.0, f64::from(frame - 1)) as u32
+    };
+    Some((
+        map(point.0, monitor_size.0, frame_size.0),
+        map(point.1, monitor_size.1, frame_size.1),
+    ))
+}
+
 /// Normalizes a drag from `start` to `end` into a rectangle with positive size.
 ///
 /// # Examples
@@ -317,6 +345,50 @@ mod tests {
     fn rejects_a_selection_outside_every_monitor() {
         let frames = [(rect(0, 0, 100, 100), (100, 100))];
         assert_eq!(plan_selection(rect(200, 200, 10, 10), &frames), None);
+    }
+
+    #[test]
+    fn maps_a_point_to_its_pixel_at_scale_one() {
+        assert_eq!(
+            logical_point_to_pixel((10.9, 20.0), (1024, 768), (1024, 768)),
+            Some((10, 20))
+        );
+    }
+
+    #[test]
+    fn maps_a_point_to_its_pixel_at_fractional_scale() {
+        assert_eq!(
+            logical_point_to_pixel((10.5, 3.0), (1920, 1080), (2880, 1620)),
+            Some((15, 4))
+        );
+        assert_eq!(
+            logical_point_to_pixel((1.0, 1.0), (2560, 1440), (3200, 1800)),
+            Some((1, 1))
+        );
+        assert_eq!(
+            logical_point_to_pixel((2.0, 2.0), (2560, 1440), (3200, 1800)),
+            Some((2, 2))
+        );
+    }
+
+    #[test]
+    fn clamps_a_point_past_the_frame_edge_to_the_last_pixel() {
+        assert_eq!(
+            logical_point_to_pixel((1920.0, -4.0), (1920, 1080), (3840, 2160)),
+            Some((3839, 0))
+        );
+    }
+
+    #[test]
+    fn rejects_a_point_on_an_empty_monitor_or_frame() {
+        assert_eq!(
+            logical_point_to_pixel((1.0, 1.0), (0, 100), (100, 100)),
+            None
+        );
+        assert_eq!(
+            logical_point_to_pixel((1.0, 1.0), (100, 100), (0, 100)),
+            None
+        );
     }
 
     #[test]
