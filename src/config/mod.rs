@@ -47,6 +47,7 @@ pub enum AfterSelection {
 #[serde(default, deny_unknown_fields)]
 pub struct Overlay {
     pub magnifier: bool,
+    pub window_snap: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -109,7 +110,10 @@ impl Default for Config {
 
 impl Default for Overlay {
     fn default() -> Self {
-        Self { magnifier: true }
+        Self {
+            magnifier: true,
+            window_snap: true,
+        }
     }
 }
 
@@ -451,6 +455,14 @@ mod tests {
         assert!(Config::default().overlay.magnifier);
         let older = parse("version = 1\n[capture]", Path::new("config.toml")).unwrap();
         assert!(older.overlay.magnifier);
+    }
+
+    #[test]
+    fn reads_the_window_snap_switch_and_defaults_it_on() {
+        let config = parse("[overlay]\nwindow_snap = false", Path::new("config.toml")).unwrap();
+        assert!(!config.overlay.window_snap);
+        assert!(config.overlay.magnifier);
+        assert!(Config::default().overlay.window_snap);
     }
 
     #[test]

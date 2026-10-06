@@ -41,7 +41,11 @@ Run `kiekje daemon` to start Kiekje in the tray, and turn on Start Kiekje at log
 
 Press Print to capture a region or Shift+Print to capture every screen. Drag to select, then let go: the region is copied and saved. Escape cancels.
 
-A loupe next to the pointer shows the pixels under it, the position in physical pixels and the colour as hex. Z hides or shows it and C copies the hex colour. Set `[overlay] magnifier = false` in the config to start with it hidden.
+A loupe next to the pointer shows the pixels under it, the position in physical pixels and the colour as hex. Z hides or shows it and C copies the hex colour. Turn it off in Settings to start with it hidden.
+
+On KDE Plasma 6 and Hyprland the window under the pointer lights up; click without dragging to select that window. Turn it off in Settings if you prefer a plain drag.
+
+To keep a capture in view while you work, pin it: use Pin on the overlay action bar, Pin on screen in the gallery menu, or `kiekje pin <path>`. Drag a pin to move it, scroll to zoom and press Escape or double-click to close it. On GNOME and X11 a pin is a normal window that may end up behind others.
 
 Turn on "Edit a region on screen before copying and saving it" in settings, or run `kiekje capture region --edit`, to mark up the selection on the overlay. Enter accepts and Escape cancels.
 

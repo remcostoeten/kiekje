@@ -688,6 +688,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             storage: config.storage,
             notifications: config.notifications,
             capture: config.capture,
+            overlay: config.overlay,
             host: session.shortcut_host.borrow().clone(),
             bound,
         };
@@ -769,9 +770,9 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
 
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
-        let windows =
-            (request.mode == CaptureMode::Region).then(|| thread::spawn(snapshot_windows));
         let config = config::load();
+        let windows = (request.mode == CaptureMode::Region && config.overlay.window_snap)
+            .then(|| thread::spawn(snapshot_windows));
         let notifications = config.notifications;
         let inline = config.capture.after_selection == AfterSelection::Edit;
         let magnifier = config.overlay.magnifier;

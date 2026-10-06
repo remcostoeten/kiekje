@@ -6,7 +6,9 @@ use gtk::{gio, glib};
 
 use super::{caps, note};
 use crate::capture::CaptureMode;
-use crate::config::{self, AfterSelection, Capture, Config, Folder, Notifications, Storage};
+use crate::config::{
+    self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, Storage,
+};
 use crate::storage::{self, Naming, Template, autostart, template::DEFAULT_TEMPLATE};
 
 type Change = Box<dyn FnOnce(&mut Config) + Send>;
@@ -26,6 +28,8 @@ pub(super) struct General {
     enabled: gtk::CheckButton,
     sound: gtk::CheckButton,
     edit: gtk::CheckButton,
+    magnifier: gtk::CheckButton,
+    window_snap: gtk::CheckButton,
     autostart: gtk::CheckButton,
     problem: gtk::Label,
 }
@@ -35,6 +39,7 @@ pub(super) fn append(
     storage: &Storage,
     notifications: Notifications,
     capture: Capture,
+    overlay: Overlay,
 ) -> Weak<General> {
     let (changes, receiver) = async_channel::unbounded::<Change>();
 
@@ -57,6 +62,18 @@ pub(super) fn append(
     content.append(&note(
         "Enter accepts, Esc cancels. Off: a region is copied and saved when you let go.",
     ));
+    let magnifier = gtk::CheckButton::builder()
+        .label("Show a magnifier with the pixel colour while selecting")
+        .active(overlay.magnifier)
+        .build();
+    content.append(&magnifier);
+    content.append(&note("Z hides it for one capture, C copies the colour."));
+    let window_snap = gtk::CheckButton::builder()
+        .label("Highlight the window under the pointer; click to select it")
+        .active(overlay.window_snap)
+        .build();
+    content.append(&window_snap);
+    content.append(&note("Works on KDE Plasma 6 and Hyprland."));
 
     content.append(&caps("Saving"));
     let folder = gtk::Label::builder()
@@ -115,6 +132,8 @@ pub(super) fn append(
         enabled,
         sound,
         edit,
+        magnifier,
+        window_snap,
         autostart,
         problem,
     });
@@ -215,6 +234,30 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
         send(
             &sender,
             Box::new(move |config| config.capture.after_selection = after),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.magnifier.connect_toggled(move |check| {
+        let on = check.is_active();
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Box::new(move |config| config.overlay.magnifier = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.window_snap.connect_toggled(move |check| {
+        let on = check.is_active();
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Box::new(move |config| config.overlay.window_snap = on),
         );
     });
 }
@@ -376,6 +419,8 @@ impl General {
         self.sound.set_active(config.notifications.sound);
         self.edit
             .set_active(config.capture.after_selection == AfterSelection::Edit);
+        self.magnifier.set_active(config.overlay.magnifier);
+        self.window_snap.set_active(config.overlay.window_snap);
         self.quiet.set(false);
     }
 
