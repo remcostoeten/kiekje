@@ -1230,6 +1230,11 @@ fn finish_delivery(session: &Session, notice: Notice) {
     {
         gallery.reload();
     }
+    if matches!(notice, Notice::Saved { .. } | Notice::Copied { .. })
+        && let Some(tray) = session.tray.borrow().as_ref()
+    {
+        tray.flash();
+    }
     notify(session, notice);
     session.busy.set(false);
 }

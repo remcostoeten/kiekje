@@ -1,3 +1,9 @@
+use std::hash::{BuildHasher, RandomState};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::Duration;
+
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Category, ToolTip, Tray};
@@ -7,10 +13,25 @@ use crate::capture::CaptureMode;
 
 pub struct SniTray;
 
-pub struct SniGuard(Handle<Item>);
+const FRAME_TIME: Duration = Duration::from_millis(40);
+const BLINK_TIME: Duration = Duration::from_millis(130);
+const BLINK_GAP: Duration = Duration::from_millis(180);
+const BLINK_EVERY_MS: std::ops::Range<u64> = 3_000..9_000;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pose {
+    Shutter(usize),
+    Blink,
+}
+
+pub struct SniGuard {
+    handle: Handle<Item>,
+    generation: Arc<AtomicU64>,
+}
 
 pub struct Item {
     commands: async_channel::Sender<TrayCommand>,
+    pose: Option<Pose>,
 }
 
 impl Item {
@@ -29,24 +50,50 @@ impl TrayHost for SniTray {
     }
 
     fn start(self, commands: async_channel::Sender<TrayCommand>) -> Result<SniGuard, TrayError> {
-        Item { commands }
-            .spawn()
-            .map(SniGuard)
-            .map_err(|error| match error {
-                ksni::Error::Dbus(error) => TrayError::Dbus(error.to_string()),
-                ksni::Error::Watcher(error) => TrayError::Unavailable(error.to_string()),
-                ksni::Error::WontShow => {
-                    TrayError::Unavailable("no StatusNotifierHost is registered".into())
-                }
-                other => TrayError::Unavailable(other.to_string()),
-            })
+        Item {
+            commands,
+            pose: None,
+        }
+        .spawn()
+        .map(|handle| {
+            keep_blinking(handle.clone());
+            SniGuard {
+                handle,
+                generation: Arc::default(),
+            }
+        })
+        .map_err(|error| match error {
+            ksni::Error::Dbus(error) => TrayError::Dbus(error.to_string()),
+            ksni::Error::Watcher(error) => TrayError::Unavailable(error.to_string()),
+            ksni::Error::WontShow => {
+                TrayError::Unavailable("no StatusNotifierHost is registered".into())
+            }
+            other => TrayError::Unavailable(other.to_string()),
+        })
     }
 }
 
 impl TrayGuard for SniGuard {
     fn stop(&self) {
         // The awaiter only reports when the service loop has ended; nothing waits for it.
-        let _ = self.0.shutdown();
+        let _ = self.handle.shutdown();
+    }
+
+    fn flash(&self) {
+        let generation = self.generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let latest = Arc::clone(&self.generation);
+        let handle = self.handle.clone();
+        thread::spawn(move || {
+            let frames = (0..icon::FRAME_COUNT).map(|index| Some(Pose::Shutter(index)));
+            for pose in frames.chain([None]) {
+                if latest.load(Ordering::Relaxed) != generation
+                    || handle.update(|item| item.pose = pose).is_none()
+                {
+                    return;
+                }
+                thread::sleep(FRAME_TIME);
+            }
+        });
     }
 }
 
@@ -64,11 +111,18 @@ impl Tray for Item {
     }
 
     fn icon_name(&self) -> String {
-        icon::NAME.into()
+        match self.pose {
+            Some(_) => String::new(),
+            None => icon::NAME.into(),
+        }
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        icon::pixmaps()
+        match self.pose {
+            Some(Pose::Shutter(index)) => icon::frame(index),
+            Some(Pose::Blink) => icon::blink(),
+            None => icon::pixmaps(),
+        }
     }
 
     fn tool_tip(&self) -> ToolTip {
@@ -111,6 +165,39 @@ impl Tray for Item {
             command_item("Quit", TrayCommand::Quit),
         ]
     }
+}
+
+fn keep_blinking(handle: Handle<Item>) {
+    thread::spawn(move || {
+        while !handle.is_closed() {
+            thread::sleep(Duration::from_millis(random_in(BLINK_EVERY_MS)));
+            let blinks = if random_in(0..4) == 0 { 2 } else { 1 };
+            for _ in 0..blinks {
+                if !set_pose_when(&handle, None, Some(Pose::Blink)) {
+                    break;
+                }
+                thread::sleep(BLINK_TIME);
+                set_pose_when(&handle, Some(Pose::Blink), None);
+                thread::sleep(BLINK_GAP);
+            }
+        }
+    });
+}
+
+fn set_pose_when(handle: &Handle<Item>, current: Option<Pose>, next: Option<Pose>) -> bool {
+    handle
+        .update(|item| {
+            let matches = item.pose == current;
+            if matches {
+                item.pose = next;
+            }
+            matches
+        })
+        .unwrap_or(false)
+}
+
+fn random_in(range: std::ops::Range<u64>) -> u64 {
+    range.start + RandomState::new().hash_one(()) % (range.end - range.start)
 }
 
 fn command_item(label: &str, command: TrayCommand) -> MenuItem<Item> {

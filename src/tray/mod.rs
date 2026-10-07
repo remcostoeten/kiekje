@@ -47,4 +47,6 @@ pub trait TrayHost {
 
 pub trait TrayGuard {
     fn stop(&self);
+
+    fn flash(&self);
 }
