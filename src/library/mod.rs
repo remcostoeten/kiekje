@@ -9,7 +9,10 @@ use crate::capture::CaptureMode;
 pub mod query;
 pub mod thumbs;
 
-const SCHEMA: &[&str] = &["CREATE TABLE captures (
+const COLOUR_LIMIT: i64 = 200;
+
+const SCHEMA: &[&str] = &[
+    "CREATE TABLE captures (
         id INTEGER PRIMARY KEY,
         path TEXT NOT NULL UNIQUE,
         mode TEXT NOT NULL,
@@ -19,7 +22,14 @@ const SCHEMA: &[&str] = &["CREATE TABLE captures (
         created_us INTEGER NOT NULL,
         missing INTEGER NOT NULL DEFAULT 0
     );
-    CREATE INDEX captures_created ON captures (created_us DESC);"];
+    CREATE INDEX captures_created ON captures (created_us DESC);",
+    "CREATE TABLE colours (
+        id INTEGER PRIMARY KEY,
+        rgb INTEGER NOT NULL UNIQUE,
+        picked_us INTEGER NOT NULL
+    );
+    CREATE INDEX colours_picked ON colours (picked_us DESC);",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capture {
@@ -41,6 +51,39 @@ pub struct NewCapture {
     pub height: u32,
     pub bytes: u64,
     pub created_us: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Colour {
+    pub id: i64,
+    pub rgb: [u8; 3],
+    pub picked_us: i64,
+}
+
+impl Colour {
+    /// Formats the colour as uppercase hex with a leading `#`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(colour.hex(), "#FE5101");
+    /// ```
+    pub fn hex(&self) -> String {
+        let [red, green, blue] = self.rgb;
+        format!("#{red:02X}{green:02X}{blue:02X}")
+    }
+
+    /// Formats the colour as a CSS `rgb()` value.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(colour.css_rgb(), "rgb(254, 81, 1)");
+    /// ```
+    pub fn css_rgb(&self) -> String {
+        let [red, green, blue] = self.rgb;
+        format!("rgb({red}, {green}, {blue})")
+    }
 }
 
 #[derive(Debug, Error)]
@@ -317,6 +360,89 @@ impl Library {
         transaction.commit()?;
         Ok(changed)
     }
+
+    /// Records a colour picked from the screen and returns its id.
+    ///
+    /// Picking a colour that is already listed moves it to the top. Only the newest
+    /// colours are kept.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// library.pick_colour([254, 81, 1], glib::real_time())?;
+    /// ```
+    pub fn pick_colour(&self, rgb: [u8; 3], picked_us: i64) -> Result<i64, LibraryError> {
+        let id = self.connection.query_row(
+            "INSERT INTO colours (rgb, picked_us) VALUES (?1, ?2)
+             ON CONFLICT (rgb) DO UPDATE SET picked_us = excluded.picked_us
+             RETURNING id",
+            params![pack(rgb), picked_us],
+            |row| row.get(0),
+        )?;
+        self.connection.execute(
+            "DELETE FROM colours WHERE id NOT IN
+             (SELECT id FROM colours ORDER BY picked_us DESC, id DESC LIMIT ?1)",
+            params![COLOUR_LIMIT],
+        )?;
+        Ok(id)
+    }
+
+    /// Returns every picked colour, newest first.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let latest = library.colours()?.first().map(Colour::hex);
+    /// ```
+    pub fn colours(&self) -> Result<Vec<Colour>, LibraryError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id, rgb, picked_us FROM colours ORDER BY picked_us DESC, id DESC")?;
+        let colours = statement
+            .query_map([], |row| {
+                Ok(Colour {
+                    id: row.get(0)?,
+                    rgb: unpack(row.get(1)?),
+                    picked_us: row.get(2)?,
+                })
+            })?
+            .collect::<Result<_, _>>()?;
+        Ok(colours)
+    }
+
+    /// Removes the colour `id` and reports whether there was one.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// library.remove_colour(colour.id)?;
+    /// ```
+    pub fn remove_colour(&self, id: i64) -> Result<bool, LibraryError> {
+        let removed = self
+            .connection
+            .execute("DELETE FROM colours WHERE id = ?1", params![id])?;
+        Ok(removed > 0)
+    }
+
+    /// Removes every picked colour and returns how many there were.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let forgotten = library.clear_colours()?;
+    /// ```
+    pub fn clear_colours(&self) -> Result<usize, LibraryError> {
+        Ok(self.connection.execute("DELETE FROM colours", [])?)
+    }
+}
+
+fn pack([red, green, blue]: [u8; 3]) -> i64 {
+    i64::from(red) << 16 | i64::from(green) << 8 | i64::from(blue)
+}
+
+fn unpack(rgb: i64) -> [u8; 3] {
+    let [_, _, _, _, _, red, green, blue] = rgb.to_be_bytes();
+    [red, green, blue]
 }
 
 fn text(path: &Path) -> Result<&str, LibraryError> {
@@ -504,6 +630,41 @@ mod tests {
         let all = library.all().unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].path, kept);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn lists_picked_colours_newest_first_and_moves_a_repeat_to_the_top() {
+        let folder = scratch("colours");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let orange = library.pick_colour([254, 81, 1], 1).unwrap();
+        library.pick_colour([0, 0, 0], 2).unwrap();
+        assert_eq!(library.pick_colour([254, 81, 1], 3).unwrap(), orange);
+        let colours = library.colours().unwrap();
+        let hexes: Vec<String> = colours.iter().map(Colour::hex).collect();
+        assert_eq!(hexes, ["#FE5101", "#000000"]);
+        assert_eq!(colours[0].css_rgb(), "rgb(254, 81, 1)");
+        assert!(library.remove_colour(orange).unwrap());
+        assert!(!library.remove_colour(orange).unwrap());
+        assert_eq!(library.clear_colours().unwrap(), 1);
+        assert!(library.colours().unwrap().is_empty());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn keeps_only_the_newest_picked_colours() {
+        let folder = scratch("colour-limit");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let limit = u8::try_from(COLOUR_LIMIT).unwrap();
+        for index in 0..=limit {
+            library
+                .pick_colour([index, 0, 0], i64::from(index))
+                .unwrap();
+        }
+        let colours = library.colours().unwrap();
+        assert_eq!(colours.len(), usize::from(limit));
+        assert_eq!(colours[0].rgb, [limit, 0, 0]);
+        assert!(colours.iter().all(|colour| colour.rgb != [0, 0, 0]));
         std::fs::remove_dir_all(folder).unwrap();
     }
 

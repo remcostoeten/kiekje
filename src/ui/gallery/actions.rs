@@ -430,11 +430,11 @@ impl Gallery {
         self.reload();
     }
 
-    fn clipboard(&self) -> gdk::Clipboard {
+    pub(super) fn clipboard(&self) -> gdk::Clipboard {
         self.status.clipboard()
     }
 
-    fn say(&self, message: &str, problem: bool) {
+    pub(super) fn say(&self, message: &str, problem: bool) {
         self.status.set_label(message);
         self.status.set_visible(!message.is_empty());
         if problem {

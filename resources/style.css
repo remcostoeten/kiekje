@@ -211,19 +211,22 @@ window.settings-window {
 
 .gallery gridview,
 .gallery listview,
+.gallery list.colours,
 .gallery scrolledwindow {
   background-color: transparent;
 }
 
 .gallery gridview > child,
-.gallery listview > row {
+.gallery listview > row,
+.gallery list.colours > row {
   padding: 6px;
   border-radius: var(--radius);
   transition: background-color 150ms ease-out;
 }
 
 .gallery gridview > child:hover,
-.gallery listview > row:hover {
+.gallery listview > row:hover,
+.gallery list.colours > row:hover {
   background-color: var(--wash);
 }
 
@@ -233,7 +236,8 @@ window.settings-window {
 }
 
 .gallery gridview > child:focus-visible,
-.gallery listview > row:focus-visible {
+.gallery listview > row:focus-visible,
+.gallery list.colours > row:focus-visible {
   background-color: var(--focus-wash);
 }
 
@@ -243,6 +247,12 @@ window.settings-window {
 }
 
 .card {
+  color: var(--fg);
+}
+
+.colours .hex {
+  font-family: var(--mono);
+  font-size: 13px;
   color: var(--fg);
 }
 

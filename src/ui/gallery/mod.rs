@@ -1,5 +1,6 @@
 mod actions;
 mod cards;
+mod colours;
 mod toolbar;
 
 use std::cell::{Cell, OnceCell, RefCell};
@@ -34,6 +35,8 @@ struct Gallery {
     loaded: Cell<bool>,
     stack: gtk::Stack,
     views: gtk::Stack,
+    pages: gtk::Stack,
+    palette: colours::Palette,
     count: gtk::Label,
 }
 
@@ -62,7 +65,7 @@ impl Textures {
 
 /// Opens the gallery window with every saved capture that is still on disk, newest first.
 ///
-/// A sidebar switches between all captures and missing ones, tabs filter by kind, and the search
+/// A sidebar switches between all captures, missing ones and the copied colours, tabs filter by kind, and the search
 /// row filters by name and age, sorts, and switches between a grid and a list. Thumbnails load off the main thread as items scroll into view. The library is read again
 /// whenever the window becomes active.
 ///
@@ -151,6 +154,11 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         loaded: Cell::new(false),
         stack,
         views: gtk::Stack::new(),
+        pages: gtk::Stack::builder()
+            .vexpand(true)
+            .vhomogeneous(false)
+            .build(),
+        palette: colours::palette(),
         count,
     });
     let grid = cards::grid(&gallery);
@@ -176,9 +184,18 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     });
     let search = parts.search;
     let _ = gallery.missing.set(parts.missing);
-    content.append(&parts.tabs);
-    content.append(&parts.bar);
-    content.append(&gallery.stack);
+    let captures = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .build();
+    captures.append(&parts.tabs);
+    captures.append(&parts.bar);
+    captures.append(&gallery.stack);
+    gallery.pages.add_named(&captures, Some("captures"));
+    gallery
+        .pages
+        .add_named(&gallery.palette.page, Some("colours"));
+    content.append(&gallery.pages);
     content.append(&gallery.status);
     let shell = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -192,7 +209,7 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     let reload = gallery.clone();
     window.connect_is_active_notify(move |window| {
         if window.is_active() {
-            reload.reload();
+            Handle(Rc::downgrade(&reload)).reload();
         }
     });
     let keys = gtk::EventControllerKey::new();
@@ -227,7 +244,8 @@ fn scrolled(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
 pub struct Handle(Weak<Gallery>);
 
 impl Handle {
-    /// Reads the library again, after a capture was saved while the gallery is open.
+    /// Reads the library again, after a capture was saved or the library was cleared while the
+    /// gallery is open.
     ///
     /// # Examples
     ///
@@ -237,6 +255,9 @@ impl Handle {
     pub fn reload(&self) {
         if let Some(gallery) = self.0.upgrade() {
             gallery.reload();
+            if gallery.showing_colours() {
+                gallery.reload_colours();
+            }
         }
     }
 }
@@ -278,7 +299,7 @@ impl Gallery {
         });
     }
 
-    fn apply(&self, change: Change) {
+    fn apply(self: &Rc<Self>, change: Change) {
         {
             let mut query = self.query.borrow_mut();
             match change {
@@ -289,6 +310,11 @@ impl Gallery {
                 Change::Missing(missing) => query.missing = missing,
                 Change::View(view) => {
                     self.views.set_visible_child_name(view.name());
+                    return;
+                }
+                Change::Colours(on) => {
+                    drop(query);
+                    self.show_colours(on);
                     return;
                 }
             }
@@ -308,7 +334,9 @@ impl Gallery {
         } else {
             all.len() - missing
         };
-        self.count.set_label(&count_text(shown.len(), total));
+        if !self.showing_colours() {
+            self.count.set_label(&count_text(shown.len(), total));
+        }
         self.stack
             .set_visible_child_name(match (all.len(), shown.len()) {
                 (0, _) => "empty",

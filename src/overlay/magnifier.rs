@@ -7,6 +7,7 @@ use super::{ACCENT, LABEL_BACKGROUND, LABEL_TEXT};
 use crate::capture::mapping::logical_point_to_pixel;
 use crate::capture::{Frame, LogicalRect};
 use crate::config;
+use crate::library::{self, Library};
 
 const LEVELS: [(u32, f32); 6] = [
     (7, 22.0),
@@ -124,7 +125,7 @@ impl Magnifier {
     /// Handles the magnifier keys and reports whether the key was used.
     ///
     /// `Z` shows or hides the loupe and saves that choice for later captures. `C` copies the hex colour of the pixel under the pointer
-    /// to the clipboard while the loupe shows.
+    /// to the clipboard while the loupe shows and adds it to the colour history.
     ///
     /// # Examples
     ///
@@ -160,6 +161,7 @@ impl Magnifier {
                     return true;
                 };
                 display.clipboard().set_text(&hex(colour));
+                record([colour[0], colour[1], colour[2]]);
                 self.notice.set(Notice::Copied);
                 true
             }
@@ -381,6 +383,17 @@ pub fn on_monitor(point: (f64, f64), monitor: LogicalRect) -> bool {
         && x < f64::from(monitor.right())
         && y >= f64::from(monitor.y)
         && y < f64::from(monitor.bottom())
+}
+
+fn record(rgb: [u8; 3]) {
+    let picked_us = glib::real_time();
+    gio::spawn_blocking(move || {
+        if let Err(error) =
+            Library::open(&library::path()).and_then(|library| library.pick_colour(rgb, picked_us))
+        {
+            eprintln!("kiekje: the copied colour was not added to the history: {error}");
+        }
+    });
 }
 
 fn remember(enabled: bool) {

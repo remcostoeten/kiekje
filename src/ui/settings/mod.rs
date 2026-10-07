@@ -199,7 +199,9 @@ pub fn show(
                 (editor.on_saved)(&editor.shortcuts.borrow());
             }
         }
-        danger::Danger::ClearGallery | danger::Danger::ClearThumbnails => on_cleared(),
+        danger::Danger::ClearGallery
+        | danger::Danger::ClearColours
+        | danger::Danger::ClearThumbnails => on_cleared(),
     });
     about::append(&content);
     danger::append(&content, &editor.host, on_done);

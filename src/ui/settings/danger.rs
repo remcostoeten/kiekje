@@ -17,13 +17,15 @@ const ARMED_FOR: Duration = Duration::from_secs(4);
 pub(super) enum Danger {
     ResetSettings,
     ClearGallery,
+    ClearColours,
     ClearThumbnails,
 }
 
 impl Danger {
-    const ALL: [Self; 3] = [
+    const ALL: [Self; 4] = [
         Self::ResetSettings,
         Self::ClearGallery,
+        Self::ClearColours,
         Self::ClearThumbnails,
     ];
 
@@ -31,6 +33,7 @@ impl Danger {
         match self {
             Self::ResetSettings => "Reset settings",
             Self::ClearGallery => "Clear gallery",
+            Self::ClearColours => "Clear colours",
             Self::ClearThumbnails => "Clear thumbnails",
         }
     }
@@ -41,6 +44,7 @@ impl Danger {
                 "Puts the folder, file name, notifications and shortcuts back to their defaults."
             }
             Self::ClearGallery => "Forgets every capture in the gallery. The files stay on disk.",
+            Self::ClearColours => "Forgets every colour copied from the magnifier.",
             Self::ClearThumbnails => "Deletes cached thumbnails. They are made again when needed.",
         }
     }
@@ -162,6 +166,12 @@ fn run(danger: Danger, host: &ShortcutHost) -> Result<String, String> {
                 "The gallery forgot {}.",
                 count(forgotten, "capture")
             ))
+        }
+        Danger::ClearColours => {
+            let forgotten = Library::open(&library::path())
+                .and_then(|library| library.clear_colours())
+                .map_err(|error| format!("The colours were not cleared: {error}"))?;
+            Ok(format!("Forgot {}.", count(forgotten, "colour")))
         }
         Danger::ClearThumbnails => {
             let removed = thumbs::prune(&thumbs::dir(), &[])

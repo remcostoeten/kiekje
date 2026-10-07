@@ -33,6 +33,7 @@ pub(super) enum Change {
     Sort(Sort),
     View(View),
     Missing(bool),
+    Colours(bool),
 }
 
 pub(super) struct Parts {
@@ -115,8 +116,17 @@ fn sidebar(on_change: &Rc<dyn Fn(Change)>) -> (gtk::Box, gtk::ToggleButton) {
         .build();
     let missing_change = on_change.clone();
     missing.connect_toggled(move |toggle| missing_change(Change::Missing(toggle.is_active())));
+    let colours = gtk::ToggleButton::builder()
+        .child(&nav_label("Colours"))
+        .group(&all)
+        .css_classes(["nav"])
+        .tooltip_text("Colours copied with C in the magnifier")
+        .build();
+    let colours_change = on_change.clone();
+    colours.connect_toggled(move |toggle| colours_change(Change::Colours(toggle.is_active())));
     sidebar.append(&all);
     sidebar.append(&missing);
+    sidebar.append(&colours);
     sidebar.append(
         &gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
