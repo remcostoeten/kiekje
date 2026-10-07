@@ -312,7 +312,8 @@ window.settings-window {
   border-color: var(--accent);
 }
 
-.gallery dropdown > button {
+.gallery dropdown > button,
+.settings dropdown > button {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 1px;

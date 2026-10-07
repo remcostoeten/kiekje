@@ -1,20 +1,34 @@
 use std::cell::Cell;
 
 use gtk::prelude::*;
-use gtk::{gdk, glib, graphene, gsk, pango};
+use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 use super::{ACCENT, LABEL_BACKGROUND, LABEL_TEXT};
 use crate::capture::mapping::logical_point_to_pixel;
 use crate::capture::{Frame, LogicalRect};
+use crate::config;
 
-const SPAN: u32 = 11;
-const CELL: f32 = 11.0;
+const LEVELS: [(u32, f32); 6] = [
+    (7, 22.0),
+    (9, 17.0),
+    (11, 14.0),
+    (15, 10.0),
+    (21, 7.0),
+    (31, 5.0),
+];
+const DEFAULT_LEVEL: usize = 3;
+const MIN_GRID_CELL: f32 = 7.0;
+const CROSS: f32 = 6.0;
 const GAP: f32 = 20.0;
-const PADDING: f32 = 6.0;
+const PADDING: f32 = 8.0;
 const ROW: f32 = 18.0;
-const SWATCH: f32 = 10.0;
-const GRID: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.35);
+const SWATCH: f32 = 12.0;
+const RADIUS: f32 = 6.0;
+const GRID: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.22);
 const LINE: gdk::RGBA = gdk::RGBA::new(237.0 / 255.0, 237.0 / 255.0, 237.0 / 255.0, 0.16);
+const MUTED: gdk::RGBA = gdk::RGBA::new(138.0 / 255.0, 138.0 / 255.0, 138.0 / 255.0, 1.0);
+const SHADOW: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.5);
+const RING: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.8);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Notice {
@@ -26,14 +40,21 @@ pub struct Magnifier {
     enabled: Cell<bool>,
     pointer: Cell<Option<(f64, f64)>>,
     notice: Cell<Notice>,
+    level: Cell<usize>,
+    saved_level: usize,
+    precise: Cell<bool>,
 }
 
 impl Magnifier {
-    pub fn new(enabled: bool) -> Self {
+    pub fn new(enabled: bool, pixels: u32) -> Self {
+        let level = level_for(pixels);
         Self {
             enabled: Cell::new(enabled),
             pointer: Cell::new(None),
             notice: Cell::new(Notice::Position),
+            level: Cell::new(level),
+            saved_level: level,
+            precise: Cell::new(false),
         }
     }
 
@@ -56,9 +77,53 @@ impl Magnifier {
         previous
     }
 
+    pub fn set_precise(&self, precise: bool) -> bool {
+        self.precise.replace(precise) != precise
+    }
+
+    /// Zooms the loupe in for negative `steps` and out for positive ones, and reports whether
+    /// the zoom changed.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if magnifier.zoom(dy) {
+    ///     redraw_loupe();
+    /// }
+    /// ```
+    pub fn zoom(&self, steps: f64) -> bool {
+        if !self.enabled.get() {
+            return false;
+        }
+        let level = next_level(self.level.get(), steps);
+        self.level.replace(level) != level
+    }
+
+    /// Saves the zoom for later captures when scrolling changed it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// shared.magnifier.remember_zoom();
+    /// ```
+    pub fn remember_zoom(&self) {
+        let level = self.level.get();
+        if level == self.saved_level {
+            return;
+        }
+        let pixels = LEVELS[level].0;
+        gio::spawn_blocking(move || {
+            if let Err(error) = config::update(&config::path(), |config| {
+                config.overlay.magnifier_pixels = pixels;
+            }) {
+                eprintln!("kiekje: could not remember the magnifier zoom: {error}");
+            }
+        });
+    }
+
     /// Handles the magnifier keys and reports whether the key was used.
     ///
-    /// `Z` shows or hides the loupe. `C` copies the hex colour of the pixel under the pointer
+    /// `Z` shows or hides the loupe and saves that choice for later captures. `C` copies the hex colour of the pixel under the pointer
     /// to the clipboard while the loupe shows.
     ///
     /// # Examples
@@ -77,7 +142,9 @@ impl Magnifier {
         }
         match key.to_lower() {
             gdk::Key::z => {
-                self.enabled.set(!self.enabled.get());
+                let enabled = !self.enabled.get();
+                self.enabled.set(enabled);
+                remember(enabled);
                 true
             }
             gdk::Key::c if self.enabled.get() => {
@@ -130,77 +197,174 @@ impl Magnifier {
         ) else {
             return;
         };
-        let grid = SPAN as f32 * CELL;
+        let (span, cell_size) = LEVELS[self.level.get()];
+        let grid = span as f32 * cell_size;
         let (left, top) = place(
             (local.0 as f32, local.1 as f32),
             (grid, grid + panel_height()),
             (widget.width() as f32, widget.height() as f32),
         );
-        let zoom = graphene::Rect::new(left, top, grid, grid);
-        snapshot.append_color(
-            &LABEL_BACKGROUND,
-            &graphene::Rect::new(left, top, grid, grid + panel_height()),
+        let outline = gsk::RoundedRect::from_rect(
+            graphene::Rect::new(left, top, grid, grid + panel_height()),
+            RADIUS,
         );
+        snapshot.append_outset_shadow(&outline, &SHADOW, 0.0, 6.0, 0.0, 18.0);
+        snapshot.push_rounded_clip(&outline);
+        snapshot.append_color(&LABEL_BACKGROUND, outline.bounds());
+
         let texture = gdk::MemoryTexture::new(
-            SPAN as i32,
-            SPAN as i32,
+            span as i32,
+            span as i32,
             gdk::MemoryFormat::R8g8b8a8,
-            &glib::Bytes::from_owned(zoom_pixels(frame, center, SPAN)),
-            SPAN as usize * 4,
+            &glib::Bytes::from_owned(zoom_pixels(frame, center, span)),
+            span as usize * 4,
         );
-        snapshot.append_scaled_texture(&texture, gsk::ScalingFilter::Nearest, &zoom);
-        for line in 1..SPAN {
-            let offset = line as f32 * CELL;
-            snapshot.append_color(&GRID, &graphene::Rect::new(left + offset, top, 1.0, grid));
-            snapshot.append_color(&GRID, &graphene::Rect::new(left, top + offset, grid, 1.0));
+        snapshot.append_scaled_texture(
+            &texture,
+            gsk::ScalingFilter::Nearest,
+            &graphene::Rect::new(left, top, grid, grid),
+        );
+        if cell_size >= MIN_GRID_CELL {
+            for line in 1..span {
+                let offset = line as f32 * cell_size;
+                snapshot.append_color(&GRID, &graphene::Rect::new(left + offset, top, 1.0, grid));
+                snapshot.append_color(&GRID, &graphene::Rect::new(left, top + offset, grid, 1.0));
+            }
         }
-        let middle = (SPAN / 2) as f32 * CELL;
-        snapshot.append_border(
-            &gsk::RoundedRect::from_rect(
-                graphene::Rect::new(left + middle, top + middle, CELL + 1.0, CELL + 1.0),
-                0.0,
-            ),
-            &[1.0; 4],
-            &[ACCENT; 4],
-        );
-        snapshot.append_border(
-            &gsk::RoundedRect::from_rect(
+        let middle = (span / 2) as f32 * cell_size;
+        let cell = |grow: f32| {
+            gsk::RoundedRect::from_rect(
                 graphene::Rect::new(
-                    left - 1.0,
-                    top - 1.0,
-                    grid + 2.0,
-                    grid + panel_height() + 2.0,
+                    left + middle - grow,
+                    top + middle - grow,
+                    cell_size + 1.0 + grow * 2.0,
+                    cell_size + 1.0 + grow * 2.0,
                 ),
                 0.0,
-            ),
-            &[1.0; 4],
-            &[LINE; 4],
-        );
+            )
+        };
+        snapshot.append_border(&cell(1.0), &[1.0; 4], &[RING; 4]);
+        snapshot.append_border(&cell(0.0), &[1.0; 4], &[ACCENT; 4]);
+        snapshot.append_color(&LINE, &graphene::Rect::new(left, top + grid, grid, 1.0));
 
         let colour = pixel(frame, center.0, center.1).unwrap_or([0, 0, 0, 255]);
-        let first = match self.notice.get() {
-            Notice::Position => format!("X {} Y {}", center.0, center.1),
-            Notice::Copied => "COPIED".to_owned(),
-        };
-        let panel_top = top + grid + PADDING;
-        paint_text(widget, snapshot, &first, left + PADDING, panel_top);
-        let second_top = panel_top + ROW;
-        snapshot.append_color(
-            &rgba(colour),
-            &graphene::Rect::new(
-                left + PADDING,
-                second_top + (ROW - SWATCH) / 2.0,
-                SWATCH,
-                SWATCH,
-            ),
+        let first = top + grid + PADDING;
+        let swatch = gsk::RoundedRect::from_rect(
+            graphene::Rect::new(left + PADDING, first + (ROW - SWATCH) / 2.0, SWATCH, SWATCH),
+            2.0,
         );
+        snapshot.push_rounded_clip(&swatch);
+        snapshot.append_color(&rgba(colour), swatch.bounds());
+        snapshot.pop();
+        snapshot.append_border(&swatch, &[1.0; 4], &[LINE; 4]);
+        let text_left = left + PADDING + SWATCH + PADDING;
+        let right = left + grid - PADDING;
         paint_text(
             widget,
             snapshot,
             &hex(colour),
-            left + PADDING + SWATCH + PADDING,
-            second_top,
+            12,
+            LABEL_TEXT,
+            Align::Left(text_left),
+            first,
         );
+        if self.notice.get() == Notice::Copied {
+            paint_text(
+                widget,
+                snapshot,
+                "COPIED",
+                11,
+                ACCENT,
+                Align::Right(right),
+                first,
+            );
+        }
+        let position = format!("X {}  Y {}", center.0, center.1);
+        paint_text(
+            widget,
+            snapshot,
+            &position,
+            11,
+            MUTED,
+            Align::Left(left + PADDING),
+            first + ROW,
+        );
+        paint_text(
+            widget,
+            snapshot,
+            &format!("{cell_size}X"),
+            11,
+            MUTED,
+            Align::Right(right),
+            first + ROW,
+        );
+        paint_text(
+            widget,
+            snapshot,
+            "C COPY",
+            11,
+            MUTED,
+            Align::Left(left + PADDING),
+            first + ROW * 2.0,
+        );
+        paint_text(
+            widget,
+            snapshot,
+            "Z HIDE",
+            11,
+            MUTED,
+            Align::Right(right),
+            first + ROW * 2.0,
+        );
+
+        snapshot.pop();
+        snapshot.append_border(&outline, &[1.0; 4], &[LINE; 4]);
+        if self.precise.get() {
+            paint_cross(snapshot, (local.0 as f32, local.1 as f32));
+        }
+    }
+}
+
+fn paint_cross(snapshot: &gtk::Snapshot, at: (f32, f32)) {
+    let (x, y) = (at.0.floor(), at.1.floor());
+    for colour in [RING, ACCENT] {
+        let grow = if colour == RING { 1.0 } else { 0.0 };
+        snapshot.append_color(
+            &colour,
+            &graphene::Rect::new(
+                x - CROSS - grow,
+                y - grow,
+                CROSS * 2.0 + 1.0 + grow * 2.0,
+                1.0 + grow * 2.0,
+            ),
+        );
+        snapshot.append_color(
+            &colour,
+            &graphene::Rect::new(
+                x - grow,
+                y - CROSS - grow,
+                1.0 + grow * 2.0,
+                CROSS * 2.0 + 1.0 + grow * 2.0,
+            ),
+        );
+    }
+}
+
+fn level_for(pixels: u32) -> usize {
+    LEVELS
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, (span, _))| span.abs_diff(pixels))
+        .map_or(DEFAULT_LEVEL, |(level, _)| level)
+}
+
+fn next_level(level: usize, steps: f64) -> usize {
+    if steps < 0.0 {
+        level.saturating_sub(1)
+    } else if steps > 0.0 {
+        (level + 1).min(LEVELS.len() - 1)
+    } else {
+        level
     }
 }
 
@@ -219,22 +383,50 @@ pub fn on_monitor(point: (f64, f64), monitor: LogicalRect) -> bool {
         && y < f64::from(monitor.bottom())
 }
 
-fn panel_height() -> f32 {
-    PADDING * 2.0 + ROW * 2.0
+fn remember(enabled: bool) {
+    gio::spawn_blocking(move || {
+        if let Err(error) = config::update(&config::path(), |config| {
+            config.overlay.magnifier = enabled;
+        }) {
+            eprintln!("kiekje: could not remember the magnifier setting: {error}");
+        }
+    });
 }
 
-fn paint_text(widget: &gtk::Widget, snapshot: &gtk::Snapshot, text: &str, x: f32, top: f32) {
+fn panel_height() -> f32 {
+    PADDING * 2.0 + ROW * 3.0
+}
+
+#[derive(Clone, Copy)]
+enum Align {
+    Left(f32),
+    Right(f32),
+}
+
+fn paint_text(
+    widget: &gtk::Widget,
+    snapshot: &gtk::Snapshot,
+    text: &str,
+    size: u8,
+    colour: gdk::RGBA,
+    align: Align,
+    top: f32,
+) {
     let layout = widget.create_pango_layout(Some(text));
-    layout.set_font_description(Some(&pango::FontDescription::from_string(
-        "Geist Mono 12px",
-    )));
+    layout.set_font_description(Some(&pango::FontDescription::from_string(&format!(
+        "Geist Mono {size}px"
+    ))));
     let (_, logical) = layout.pixel_extents();
+    let x = match align {
+        Align::Left(x) => x,
+        Align::Right(x) => x - logical.width() as f32,
+    };
     snapshot.save();
     snapshot.translate(&graphene::Point::new(
         x,
         top + (ROW - logical.height() as f32) / 2.0,
     ));
-    snapshot.append_layout(&layout, &LABEL_TEXT);
+    snapshot.append_layout(&layout, &colour);
     snapshot.restore();
 }
 
@@ -413,6 +605,27 @@ mod tests {
             place((100.0, 90.0), (120.0, 160.0), (200.0, 200.0)),
             (0.0, 0.0)
         );
+    }
+
+    #[test]
+    fn zooms_in_on_scroll_up_and_stops_at_the_ends() {
+        assert_eq!(next_level(DEFAULT_LEVEL, -1.0), DEFAULT_LEVEL - 1);
+        assert_eq!(next_level(0, -1.0), 0);
+        assert_eq!(next_level(LEVELS.len() - 1, 1.0), LEVELS.len() - 1);
+        assert_eq!(next_level(DEFAULT_LEVEL, 0.0), DEFAULT_LEVEL);
+    }
+
+    #[test]
+    fn picks_the_nearest_zoom_level_for_a_saved_width() {
+        assert_eq!(LEVELS[level_for(15)].0, 15);
+        assert_eq!(LEVELS[level_for(20)].0, 21);
+        assert_eq!(LEVELS[level_for(1)].0, 7);
+        assert_eq!(LEVELS[level_for(500)].0, 31);
+    }
+
+    #[test]
+    fn keeps_every_zoom_level_odd_so_one_pixel_sits_in_the_middle() {
+        assert!(LEVELS.iter().all(|(span, _)| span % 2 == 1));
     }
 
     #[test]

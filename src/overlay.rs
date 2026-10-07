@@ -8,11 +8,14 @@ use gtk::{gdk, gio, glib, graphene, gsk, pango};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 mod magnifier;
+mod precision;
 
 use magnifier::Magnifier;
+use precision::Precision;
 
 use crate::capture::mapping::{SelectionPlan, plan_selection, rect_from_drag};
 use crate::capture::{CaptureMode, Frame, LogicalRect};
+use crate::config;
 use crate::editor::{Ending, Finish, Inline};
 use crate::output::{self, Image};
 
@@ -29,7 +32,7 @@ const MIN_SELECTION: i32 = 3;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Options {
     pub edit: bool,
-    pub magnifier: bool,
+    pub overlay: config::Overlay,
 }
 
 #[derive(Clone, Copy)]
@@ -51,6 +54,7 @@ pub enum Outcome {
 
 struct Drag {
     frame_index: usize,
+    pointer: (f64, f64),
     start: (f64, f64),
     current: (f64, f64),
 }
@@ -127,13 +131,14 @@ struct Shared {
     watched: RefCell<Vec<(gdk::Monitor, glib::SignalHandlerId)>>,
     on_first_paint: RefCell<Option<PaintCallback>>,
     magnifier: Magnifier,
+    precision: Precision,
 }
 
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
 ///
 /// Surfaces are layer-shell overlays when the compositor supports it and fullscreen windows
 /// otherwise. A drag may cross monitor edges. With `edit`, a selection inside one monitor stays
-/// on screen with the annotation tools until the user accepts or cancels. With `magnifier`, a
+/// on screen with the annotation tools until the user accepts or cancels. With the magnifier on, a
 /// loupe follows the pointer until a selection is made. Escape cancels, and
 /// unplugging a monitor that shows a frame ends the selection. `on_done` runs once with the
 /// outcome. `windows` are the visible window frames at trigger time, topmost first; hovering
@@ -173,7 +178,8 @@ pub fn show(
         on_done: RefCell::new(Some(Box::new(on_done))),
         watched: RefCell::new(Vec::new()),
         on_first_paint: RefCell::new(Some(Box::new(on_first_paint))),
-        magnifier: Magnifier::new(options.magnifier),
+        magnifier: Magnifier::new(options.overlay.magnifier, options.overlay.magnifier_pixels),
+        precision: Precision::new(options.overlay.slow_pointer.factor()),
     });
 
     for (frame_index, frame) in frames.iter().enumerate() {
@@ -295,9 +301,11 @@ fn build_surface(
             gesture.set_state(gtk::EventSequenceState::Denied);
             return;
         }
-        let start = to_desktop(x, y);
+        let pointer = to_desktop(x, y);
+        let start = track(&begin_shared, pointer, gesture.current_event_state());
         begin_shared.drag.replace(Some(Drag {
             frame_index,
+            pointer,
             start,
             current: start,
         }));
@@ -305,20 +313,32 @@ fn build_surface(
         redraw(&begin_shared);
     });
     let update_shared = shared.clone();
-    drag.connect_drag_update(move |_, dx, dy| {
-        let current = update_shared.drag.borrow_mut().as_mut().map(|drag| {
-            drag.current = (drag.start.0 + dx, drag.start.1 + dy);
-            drag.current
+    drag.connect_drag_update(move |gesture, dx, dy| {
+        let pointer = update_shared
+            .drag
+            .borrow()
+            .as_ref()
+            .map(|drag| (drag.pointer.0 + dx, drag.pointer.1 + dy));
+        let current = pointer.map(|pointer| {
+            let current = track(&update_shared, pointer, gesture.current_event_state());
+            if let Some(drag) = update_shared.drag.borrow_mut().as_mut() {
+                drag.current = current;
+            }
+            current
         });
         point_at(&update_shared, current);
         redraw(&update_shared);
     });
     let end_shared = shared.clone();
-    drag.connect_drag_end(move |_, dx, dy| {
+    drag.connect_drag_end(move |gesture, dx, dy| {
         let Some(drag) = end_shared.drag.borrow_mut().take() else {
             return;
         };
-        let end = (drag.start.0 + dx, drag.start.1 + dy);
+        let end = track(
+            &end_shared,
+            (drag.pointer.0 + dx, drag.pointer.1 + dy),
+            gesture.current_event_state(),
+        );
         let rect = if snap::is_click(drag.start, end) {
             end_shared.snap.at(drag.start)
         } else {
@@ -344,16 +364,20 @@ fn build_surface(
 
     let motion = gtk::EventControllerMotion::new();
     let motion_shared = shared.clone();
-    let hover = move |x: f64, y: f64| {
-        let point = to_desktop(x, y);
+    let hover = move |controller: &gtk::EventControllerMotion, x: f64, y: f64| {
+        let point = track(
+            &motion_shared,
+            to_desktop(x, y),
+            controller.current_event_state(),
+        );
         if motion_shared.chosen.get().is_none() && motion_shared.snap.hover(point) {
             redraw(&motion_shared);
         }
         point_at(&motion_shared, Some(point));
     };
     let enter = hover.clone();
-    motion.connect_enter(move |_, x, y| enter(x, y));
-    motion.connect_motion(move |_, x, y| hover(x, y));
+    motion.connect_enter(move |controller, x, y| enter(controller, x, y));
+    motion.connect_motion(move |controller, x, y| hover(controller, x, y));
     let leave_shared = shared.clone();
     motion.connect_leave(move |_| {
         if leave_shared.drag.borrow().is_none() {
@@ -361,6 +385,21 @@ fn build_surface(
         }
     });
     area.add_controller(motion);
+
+    let scroll = gtk::EventControllerScroll::new(
+        gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::DISCRETE,
+    );
+    let scroll_shared = shared.clone();
+    scroll.connect_scroll(move |_, _, dy| {
+        if scroll_shared.chosen.get().is_some() || !scroll_shared.magnifier.zoom(dy) {
+            return glib::Propagation::Proceed;
+        }
+        for area in scroll_shared.areas.borrow().iter() {
+            area.layer.queue_draw();
+        }
+        glib::Propagation::Stop
+    });
+    area.add_controller(scroll);
 
     let keys = gtk::EventControllerKey::new();
     let key_shared = shared.clone();
@@ -631,6 +670,22 @@ fn redraw(shared: &Shared) {
     }
 }
 
+fn track(shared: &Shared, pointer: (f64, f64), state: gdk::ModifierType) -> (f64, f64) {
+    let slow = state.contains(gdk::ModifierType::SHIFT_MASK)
+        && shared.magnifier.enabled()
+        && shared.chosen.get().is_none();
+    let point = shared.precision.track(pointer, slow);
+    let precise = shared.precision.active();
+    if !shared.magnifier.set_precise(precise) {
+        return point;
+    }
+    let cursor = if precise { "none" } else { "crosshair" };
+    for area in shared.areas.borrow().iter() {
+        area.layer.set_cursor_from_name(Some(cursor));
+    }
+    point
+}
+
 fn point_at(shared: &Shared, point: Option<(f64, f64)>) {
     let previous = shared.magnifier.move_to(point);
     if !shared.magnifier.enabled() || shared.chosen.get().is_some() {
@@ -663,6 +718,7 @@ fn finish(shared: &Shared, outcome: Outcome) {
     if shared.finished.replace(true) {
         return;
     }
+    shared.magnifier.remember_zoom();
     for (monitor, handler) in shared.watched.borrow_mut().drain(..) {
         monitor.disconnect(handler);
     }

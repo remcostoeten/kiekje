@@ -47,7 +47,38 @@ pub enum AfterSelection {
 #[serde(default, deny_unknown_fields)]
 pub struct Overlay {
     pub magnifier: bool,
+    pub magnifier_pixels: u32,
+    pub slow_pointer: SlowPointer,
     pub window_snap: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SlowPointer {
+    Quarter,
+    #[default]
+    Eighth,
+    Sixteenth,
+}
+
+impl SlowPointer {
+    pub const ALL: [Self; 3] = [Self::Quarter, Self::Eighth, Self::Sixteenth];
+
+    pub fn factor(self) -> f64 {
+        match self {
+            Self::Quarter => 0.25,
+            Self::Eighth => 0.125,
+            Self::Sixteenth => 0.0625,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Quarter => "1/4 speed",
+            Self::Eighth => "1/8 speed",
+            Self::Sixteenth => "1/16 speed",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -112,6 +143,8 @@ impl Default for Overlay {
     fn default() -> Self {
         Self {
             magnifier: true,
+            magnifier_pixels: 15,
+            slow_pointer: SlowPointer::default(),
             window_snap: true,
         }
     }
@@ -455,6 +488,20 @@ mod tests {
         assert!(Config::default().overlay.magnifier);
         let older = parse("version = 1\n[capture]", Path::new("config.toml")).unwrap();
         assert!(older.overlay.magnifier);
+    }
+
+    #[test]
+    fn reads_the_loupe_zoom_and_slow_pointer_with_defaults() {
+        let config = parse(
+            "[overlay]\nmagnifier_pixels = 21\nslow_pointer = \"sixteenth\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(config.overlay.magnifier_pixels, 21);
+        assert_eq!(config.overlay.slow_pointer, SlowPointer::Sixteenth);
+        let older = parse("[overlay]\nmagnifier = true", Path::new("config.toml")).unwrap();
+        assert_eq!(older.overlay.magnifier_pixels, 15);
+        assert_eq!(older.overlay.slow_pointer, SlowPointer::Eighth);
     }
 
     #[test]

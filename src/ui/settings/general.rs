@@ -7,7 +7,7 @@ use gtk::{gio, glib};
 use super::{caps, note};
 use crate::capture::CaptureMode;
 use crate::config::{
-    self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, Storage,
+    self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, SlowPointer, Storage,
 };
 use crate::storage::{self, Naming, Template, autostart, template::DEFAULT_TEMPLATE};
 
@@ -29,6 +29,7 @@ pub(super) struct General {
     sound: gtk::CheckButton,
     edit: gtk::CheckButton,
     magnifier: gtk::CheckButton,
+    slow_pointer: gtk::DropDown,
     window_snap: gtk::CheckButton,
     autostart: gtk::CheckButton,
     problem: gtk::Label,
@@ -63,11 +64,22 @@ pub(super) fn append(
         "Enter accepts, Esc cancels. Off: a region is copied and saved when you let go.",
     ));
     let magnifier = gtk::CheckButton::builder()
-        .label("Show a magnifier with the pixel colour while selecting")
+        .label("Show a magnifier with the pixel colour while selecting; Z toggles it")
         .active(overlay.magnifier)
         .build();
     content.append(&magnifier);
-    content.append(&note("Z hides it for one capture, C copies the colour."));
+    content.append(&note(
+        "Z hides it for one capture, C copies the colour, scrolling zooms and the zoom is kept.",
+    ));
+    let labels: Vec<&str> = SlowPointer::ALL.iter().map(|speed| speed.label()).collect();
+    let slow_pointer = gtk::DropDown::from_strings(&labels);
+    slow_pointer.set_selected(slow_index(overlay.slow_pointer));
+    slow_pointer.set_sensitive(overlay.magnifier);
+    slow_pointer.update_property(&[gtk::accessible::Property::Label("Shift pointer speed")]);
+    content.append(&row("Shift", &slow_pointer, &[]));
+    content.append(&note(
+        "Holding Shift with the magnifier on moves the selection point slower for single pixels.",
+    ));
     let window_snap = gtk::CheckButton::builder()
         .label("Highlight the window under the pointer; click to select it")
         .active(overlay.window_snap)
@@ -133,6 +145,7 @@ pub(super) fn append(
         sound,
         edit,
         magnifier,
+        slow_pointer,
         window_snap,
         autostart,
         problem,
@@ -240,7 +253,11 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
     let sender = changes.clone();
     general.magnifier.connect_toggled(move |check| {
         let on = check.is_active();
-        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+        let Some(general) = weak.upgrade() else {
+            return;
+        };
+        general.slow_pointer.set_sensitive(on);
+        if general.quiet.get() {
             return;
         }
         send(
@@ -248,6 +265,25 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             Box::new(move |config| config.overlay.magnifier = on),
         );
     });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general
+        .slow_pointer
+        .connect_selected_notify(move |dropdown| {
+            let picked = usize::try_from(dropdown.selected())
+                .ok()
+                .and_then(|index| SlowPointer::ALL.get(index).copied());
+            let Some(speed) = picked else {
+                return;
+            };
+            if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+                return;
+            }
+            send(
+                &sender,
+                Box::new(move |config| config.overlay.slow_pointer = speed),
+            );
+        });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
     general.window_snap.connect_toggled(move |check| {
@@ -420,6 +456,8 @@ impl General {
         self.edit
             .set_active(config.capture.after_selection == AfterSelection::Edit);
         self.magnifier.set_active(config.overlay.magnifier);
+        self.slow_pointer
+            .set_selected(slow_index(config.overlay.slow_pointer));
         self.window_snap.set_active(config.overlay.window_snap);
         self.quiet.set(false);
     }
@@ -453,6 +491,14 @@ fn row(label: &str, value: &impl IsA<gtk::Widget>, buttons: &[&gtk::Button]) -> 
         row.append(*button);
     }
     row
+}
+
+fn slow_index(speed: SlowPointer) -> u32 {
+    SlowPointer::ALL
+        .iter()
+        .position(|candidate| *candidate == speed)
+        .and_then(|index| u32::try_from(index).ok())
+        .unwrap_or(0)
 }
 
 fn ghost(label: &str, visible: bool) -> gtk::Button {

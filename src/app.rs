@@ -775,7 +775,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             .then(|| thread::spawn(snapshot_windows));
         let notifications = config.notifications;
         let inline = config.capture.after_selection == AfterSelection::Edit;
-        let magnifier = config.overlay.magnifier;
+        let overlay = config.overlay;
         let result = match request.mode {
             CaptureMode::Repeat => match known_region.or_else(last_region::load) {
                 Some(region) => backends::capture(request.backend, &infos, false)
@@ -795,7 +795,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             result,
             notifications,
             inline,
-            magnifier,
+            overlay,
             glib::monotonic_time(),
         ));
     });
@@ -803,7 +803,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let Ok((result, notifications, inline, magnifier, captured_us)) = receiver.recv().await
+        let Ok((result, notifications, inline, overlay, captured_us)) = receiver.recv().await
         else {
             session.busy.set(false);
             return;
@@ -815,7 +815,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             Ok((capture, region)) => {
                 let options = overlay::Options {
                     edit: request.edit || inline,
-                    magnifier,
+                    overlay,
                 };
                 handle_capture(&app, request, capture, region, &monitors, options, session)
             }
