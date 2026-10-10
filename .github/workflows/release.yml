@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      republish:
+        description: Rebuild and replace the assets of a release whose tag already exists
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -14,7 +19,7 @@ jobs:
     outputs:
       version: ${{ steps.pick.outputs.version }}
       tag: ${{ steps.pick.outputs.tag }}
-      deb_version: ${{ steps.pick.outputs.deb_version }}
+      file_version: ${{ steps.pick.outputs.file_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -24,13 +29,14 @@ jobs:
           version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             [[ "v$version" == "$GITHUB_REF_NAME" ]] || { echo "tag $GITHUB_REF_NAME does not match version $version" >&2; exit 1; }
-          elif git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+          elif [[ "${{ inputs.republish }}" != "true" ]] && git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
             echo "v$version already exists; bump the version in Cargo.toml first" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "deb_version=$(echo "$version" | sed "s/-/~/")" >> "$GITHUB_OUTPUT"
+          # GitHub turns ~ into . in asset names, so the notes and checksums use the uploaded names.
+          echo "file_version=$(echo "$version" | sed "s/-/./")" >> "$GITHUB_OUTPUT"
 
   portable:
     needs: version
@@ -42,7 +48,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TAG: ${{ needs.version.outputs.tag }}
-      DEB_VERSION: ${{ needs.version.outputs.deb_version }}
+      FILE_VERSION: ${{ needs.version.outputs.file_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +60,8 @@ jobs:
 
       - name: Write the checksums
         run: |
+          shopt -s nullglob
+          for file in dist/*~*; do mv "$file" "${file//\~/.}"; done
           (cd dist && sha256sum kiekje* > SHA256SUMS && cat SHA256SUMS)
           echo "TITLE=kiekje $VERSION" >> "$GITHUB_ENV"
 
@@ -72,9 +80,9 @@ jobs:
             echo "Needs GTK 4.16 or newer. gtk4-layer-shell is built in. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts but the stylesheet does not load."
             echo
             echo '```'
-            echo "Ubuntu, Debian, Mint:  sudo apt install ./kiekje_${DEB_VERSION}-1_amd64.deb"
-            echo "Fedora:                sudo dnf install ./kiekje-${DEB_VERSION}-1.x86_64.rpm"
-            echo "openSUSE:              sudo zypper install --allow-unsigned-rpm ./kiekje-${DEB_VERSION}-1.x86_64.rpm"
+            echo "Ubuntu, Debian, Mint:  sudo apt install ./kiekje_${FILE_VERSION}-1_amd64.deb"
+            echo "Fedora:                sudo dnf install ./kiekje-${FILE_VERSION}-1.x86_64.rpm"
+            echo "openSUSE:              sudo zypper install --allow-unsigned-rpm ./kiekje-${FILE_VERSION}-1.x86_64.rpm"
             echo "Arch:                  the kiekje-bin PKGBUILD attached below"
             echo "Other:                 tar -xzf kiekje-$VERSION-x86_64-linux.tar.gz && sudo kiekje-$VERSION-x86_64-linux/packaging/install.sh kiekje-$VERSION-x86_64-linux/kiekje"
             echo '```'
@@ -97,7 +105,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL -o /tmp/source.tar.gz "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz"
+          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/source.tar.gz "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz"
           packaging/aur/bump.sh "$VERSION" /tmp/aur /tmp/source.tar.gz \
             "dist/kiekje-$VERSION-x86_64-linux.tar.gz" "dist/kiekje-$VERSION-aarch64-linux.tar.gz"
           cp /tmp/aur/kiekje/PKGBUILD dist/PKGBUILD-kiekje
