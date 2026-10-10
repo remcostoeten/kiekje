@@ -139,6 +139,13 @@ fn map_dbus_error(error: zbus::Error) -> CaptureError {
         zbus::Error::MethodError(name, _, _) if name.as_str().ends_with("ServiceUnknown") => {
             CaptureError::Unavailable("KWin is not running".into())
         }
+        zbus::Error::MethodError(name, _, _)
+            if ["UnknownMethod", "UnknownInterface", "UnknownObject"]
+                .iter()
+                .any(|missing| name.as_str().ends_with(missing)) =>
+        {
+            CaptureError::Unavailable("this KWin has no ScreenShot2".into())
+        }
         zbus::Error::MethodError(name, _, _) if name.as_str().ends_with("InvalidScreen") => {
             CaptureError::Unavailable("KWin does not know this monitor".into())
         }
