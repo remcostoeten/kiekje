@@ -14,7 +14,7 @@ optdepends=(
 )
 options=('!lto')
 source=("$pkgname-$_tag.tar.gz::$url/archive/refs/tags/v$_tag.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('b65d45fbf441d85822866d1db7406b1122fabef7c3fa3c8a729e2e0a3f892a93')
 
 prepare() {
     cd "$pkgname-$_tag"
