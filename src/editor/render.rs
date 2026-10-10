@@ -56,6 +56,23 @@ pub fn draw<'a>(
 ) -> Result<(), cairo::Error> {
     cr.set_source_surface(&layers.base, 0.0, 0.0)?;
     cr.paint()?;
+    draw_shapes(cr, layers, shapes)
+}
+
+/// Draws the shapes without the picture under them, for a canvas that already shows it.
+///
+/// Markers multiply with what is under them, so a canvas with markers paints the picture first.
+///
+/// # Examples
+///
+/// ```ignore
+/// render::draw_shapes(&cr, &layers, document.shapes().iter())?;
+/// ```
+pub fn draw_shapes<'a>(
+    cr: &cairo::Context,
+    layers: &Layers,
+    shapes: impl IntoIterator<Item = &'a Shape>,
+) -> Result<(), cairo::Error> {
     for shape in shapes {
         cr.save()?;
         let drawn = draw_shape(cr, layers, shape);

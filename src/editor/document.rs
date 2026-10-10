@@ -346,6 +346,17 @@ impl Document {
         self.crop
     }
 
+    /// Sets the crop the document opens with, outside the undo history.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// document.start_crop(Area { x: 10.0, y: 10.0, width: 640.0, height: 360.0 });
+    /// ```
+    pub fn start_crop(&mut self, area: Area) {
+        self.crop = Some(area);
+    }
+
     /// Applies `edit` and makes it the newest step to undo, dropping anything left to redo.
     ///
     /// # Examples

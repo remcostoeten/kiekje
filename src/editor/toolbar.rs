@@ -7,19 +7,21 @@ use super::document::{Color, Tool, Weight};
 
 const SWATCH: i32 = 14;
 
-pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
+pub(super) fn build(editor: &Rc<Editor>) -> gtk::Box {
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(8)
+        .css_classes(["toolbar"])
         .build();
 
-    let top = tools(editor);
-    top.append(&spacer());
-    history(editor, &top);
+    let top = row();
+    top.append(&tools(editor));
     bar.append(&top);
 
     let bottom = styles(editor);
     bottom.append(&spacer());
+    history(editor, &bottom);
+    bottom.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     for (label, tooltip, primary, run) in [
         (
             "Copy",
@@ -29,7 +31,10 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         ),
         ("Save", "Save as a new file (Ctrl+S)", true, Editor::save),
     ] {
-        let button = action(label, tooltip);
+        let button = gtk::Button::builder()
+            .label(label)
+            .tooltip_text(tooltip)
+            .build();
         if primary {
             button.add_css_class("primary");
         }
@@ -37,24 +42,34 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         on_click(editor, &button, run);
     }
     bar.append(&bottom);
-    gtk::ScrolledWindow::builder()
-        .child(&bar)
-        .vscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .build()
+    bar
+}
+
+pub(super) fn footer(editor: &Editor, width: u32, height: u32) -> gtk::Box {
+    let footer = row();
+    footer.add_css_class("footer");
+    editor.status.set_hexpand(true);
+    footer.append(&editor.status);
+    footer.append(
+        &gtk::Label::builder()
+            .label(format!("{width} × {height}"))
+            .css_classes(["note", "value"])
+            .build(),
+    );
+    footer
 }
 
 pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
-    let top = row();
+    let top = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
     let mut tools = Vec::new();
     for tool in Tool::ALL {
-        let button = chip(tool.label(), &mut group);
-        button.set_tooltip_text(Some(&format!(
-            "{} ({})",
-            tool.label(),
-            tool.key().to_uppercase()
-        )));
+        let (label, key) = match tool {
+            Tool::Crop if editor.is_inline() => ("Region", "s"),
+            _ => (tool.label(), tool.key()),
+        };
+        let button = chip(label, &mut group);
+        button.set_tooltip_text(Some(&format!("{label} ({})", key.to_uppercase())));
         button.set_active(tool == editor.tool.get());
         let target = Rc::downgrade(editor);
         button.connect_toggled(move |button| {
@@ -87,6 +102,7 @@ pub(super) fn history(editor: &Rc<Editor>, row: &gtk::Box) {
 
 pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
+    let colors = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
     for color in Color::ALL {
         let button = swatch(color, &mut group);
@@ -98,9 +114,10 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
                 editor.restyle();
             }
         });
-        bottom.append(&button);
+        colors.append(&button);
     }
-    bottom.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    bottom.append(&colors);
+    let weights = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
     for weight in Weight::ALL {
         let button = chip(weight.label(), &mut group);
@@ -112,8 +129,9 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
                 editor.restyle();
             }
         });
-        bottom.append(&button);
+        weights.append(&button);
     }
+    bottom.append(&weights);
     bottom
 }
 
@@ -138,6 +156,14 @@ pub(super) fn row() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
+        .build()
+}
+
+fn segmented() -> gtk::Box {
+    gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(2)
+        .css_classes(["segmented"])
         .build()
 }
 

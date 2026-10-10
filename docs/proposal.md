@@ -263,7 +263,7 @@ Source: the design system in `marktplaats-tweakers-jev-scraper/DESIGN.md`, which
 The look:
 - Near-black ground (`#0a0a0a`), monochrome, one orange accent.
 - Geist for content, uppercase Geist Mono for labels and buttons.
-- Structure drawn with 1px dashed lines and small square corner marks.
+- Depth from layered greys mixed from `--fg` into `--bg` (`--surface`, `--raised`, `--raised-hi`), solid 1px strokes and a faint inset top highlight, following Remcorder's control center. Settings sections sit in raised groups, filters in segmented controls, and the primary button is a solid accent fill. Dashed lines stay for empty states only.
 - A dot grid behind headers, short ease-out motion.
 
 Kiekje is dark only, which follows your "dark, neutral UI" requirement. It uses the dark token column only.

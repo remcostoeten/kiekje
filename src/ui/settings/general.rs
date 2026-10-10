@@ -4,18 +4,27 @@ use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
-use super::{caps, note};
+use super::Pages;
 use crate::capture::CaptureMode;
 use crate::config::{
     self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, SlowPointer, Storage,
 };
 use crate::storage::{self, Naming, Template, autostart, template::DEFAULT_TEMPLATE};
+use crate::ui::widgets::{group, note, problem, row, switch};
 
 type Change = Box<dyn FnOnce(&mut Config) + Send>;
-type Changes = async_channel::Sender<Change>;
+type Changes = async_channel::Sender<(Page, Change)>;
 
 const PREVIEW_WIDTH: u32 = 1920;
 const PREVIEW_HEIGHT: u32 = 1080;
+const ENTRY_WIDTH: i32 = 280;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Page {
+    Capture,
+    Saving,
+    General,
+}
 
 pub(super) struct General {
     quiet: Cell<bool>,
@@ -25,113 +34,127 @@ pub(super) struct General {
     default_filename: gtk::Button,
     preview: gtk::Label,
     saved_filename: RefCell<String>,
-    enabled: gtk::CheckButton,
-    sound: gtk::CheckButton,
-    edit: gtk::CheckButton,
-    magnifier: gtk::CheckButton,
+    enabled: gtk::Switch,
+    sound: gtk::Switch,
+    sound_row: gtk::ListBoxRow,
+    edit: gtk::Switch,
+    magnifier: gtk::Switch,
     slow_pointer: gtk::DropDown,
-    window_snap: gtk::CheckButton,
-    autostart: gtk::CheckButton,
-    problem: gtk::Label,
+    slow_pointer_row: gtk::ListBoxRow,
+    window_snap: gtk::Switch,
+    hints: gtk::Switch,
+    autostart: gtk::Switch,
+    capture_problem: gtk::Label,
+    saving_problem: gtk::Label,
+    general_problem: gtk::Label,
 }
 
 pub(super) fn append(
-    content: &gtk::Box,
+    pages: &Pages,
     storage: &Storage,
     notifications: Notifications,
     capture: Capture,
     overlay: Overlay,
 ) -> Weak<General> {
-    let (changes, receiver) = async_channel::unbounded::<Change>();
+    let (changes, receiver) = async_channel::unbounded::<(Page, Change)>();
 
-    content.append(&caps("Startup"));
-    let autostart = gtk::CheckButton::builder()
-        .label("Start Kiekje at login")
-        .sensitive(false)
-        .build();
-    content.append(&autostart);
-    content.append(&note(
-        "Keeps the tray and shortcuts ready after you sign in.",
+    let selection = group(&pages.capture, "Selection");
+    let edit = switch(capture.after_selection == AfterSelection::Edit);
+    selection.add(row(
+        "Edit a region before it is copied and saved",
+        Some("Enter accepts, Esc cancels. Off: the region is copied and saved when you let go."),
+        Some(&edit),
+    ));
+    let window_snap = switch(overlay.window_snap);
+    selection.add(row(
+        "Snap to the window under the pointer",
+        Some("Highlights the window; one click selects it. KDE Plasma 6 and Hyprland."),
+        Some(&window_snap),
+    ));
+    let hints = switch(overlay.hints);
+    selection.add(row(
+        "Show the keyboard hints",
+        Some("A bar at the bottom lists the keys: F screen, W window, D draw. ? hides it once."),
+        Some(&hints),
     ));
 
-    content.append(&caps("Capture"));
-    let edit = gtk::CheckButton::builder()
-        .label("Edit a region on screen before copying and saving it")
-        .active(capture.after_selection == AfterSelection::Edit)
-        .build();
-    content.append(&edit);
-    content.append(&note(
-        "Enter accepts, Esc cancels. Off: a region is copied and saved when you let go.",
-    ));
-    let magnifier = gtk::CheckButton::builder()
-        .label("Show a magnifier with the pixel colour while selecting; Z toggles it")
-        .active(overlay.magnifier)
-        .build();
-    content.append(&magnifier);
-    content.append(&note(
-        "Z hides it for one capture, C copies the colour, scrolling zooms and the zoom is kept.",
+    let loupe = group(&pages.capture, "Magnifier");
+    let magnifier = switch(overlay.magnifier);
+    loupe.add(row(
+        "Show a magnifier with the pixel colour",
+        Some("Z hides it for one capture, C copies the colour, scrolling zooms."),
+        Some(&magnifier),
     ));
     let labels: Vec<&str> = SlowPointer::ALL.iter().map(|speed| speed.label()).collect();
     let slow_pointer = gtk::DropDown::from_strings(&labels);
     slow_pointer.set_selected(slow_index(overlay.slow_pointer));
-    slow_pointer.set_sensitive(overlay.magnifier);
     slow_pointer.update_property(&[gtk::accessible::Property::Label("Shift pointer speed")]);
-    content.append(&row("Shift", &slow_pointer, &[]));
-    content.append(&note(
-        "Holding Shift with the magnifier on moves the selection point slower for single pixels.",
+    let slow_pointer_row = loupe.add(row(
+        "Pointer speed while holding Shift",
+        Some("Slower movement makes single pixels easy to hit."),
+        Some(&slow_pointer),
     ));
-    let window_snap = gtk::CheckButton::builder()
-        .label("Highlight the window under the pointer; click to select it")
-        .active(overlay.window_snap)
-        .build();
-    content.append(&window_snap);
-    content.append(&note("Works on KDE Plasma 6 and Hyprland."));
+    slow_pointer_row.set_sensitive(overlay.magnifier);
+    let capture_problem = problem();
+    loupe.footer(&capture_problem);
 
-    content.append(&caps("Saving"));
+    let saving = group(&pages.saving, "Location");
     let folder = gtk::Label::builder()
         .label(storage::tilde(&storage.captures_dir()))
         .xalign(0.0)
-        .hexpand(true)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
         .css_classes(["value"])
         .build();
     let choose = gtk::Button::with_label("Choose");
     let default_folder = ghost("Default", storage.folder.is_some());
-    content.append(&row("Folder", &folder, &[&choose, &default_folder]));
+    let folder_controls = controls(&[
+        folder.upcast_ref(),
+        choose.upcast_ref(),
+        default_folder.upcast_ref(),
+    ]);
+    saving.add(row(
+        "Folder",
+        Some("Captures are saved here and listed in the gallery."),
+        Some(&folder_controls),
+    ));
 
     let filename = gtk::Entry::builder()
         .text(storage.filename.to_string())
-        .hexpand(true)
+        .width_request(ENTRY_WIDTH)
         .build();
     filename.update_property(&[gtk::accessible::Property::Label("File name template")]);
     let default_filename = ghost("Default", storage.filename.to_string() != DEFAULT_TEMPLATE);
-    content.append(&row("File name", &filename, &[&default_filename]));
+    let filename_controls = controls(&[filename.upcast_ref(), default_filename.upcast_ref()]);
+    saving.add(row("File name", None, Some(&filename_controls)));
     let preview = note("");
-    content.append(&preview);
-    content.append(&note(
+    saving.footer(&preview);
+    saving.footer(&note(
         "Tokens: {mode} {date} {time} {year} {month} {day} {hour} {minute} {second} {width} {height}",
     ));
+    let saving_problem = problem();
+    saving.footer(&saving_problem);
 
-    content.append(&caps("Notifications"));
-    let enabled = gtk::CheckButton::builder()
-        .label("Show a notification after each capture")
-        .active(notifications.enabled)
-        .build();
-    let sound = gtk::CheckButton::builder()
-        .label("Play a sound with it")
-        .active(notifications.sound)
-        .sensitive(notifications.enabled)
-        .build();
-    content.append(&enabled);
-    content.append(&sound);
+    let alerts = group(&pages.general, "Notifications");
+    let enabled = switch(notifications.enabled);
+    alerts.add(row(
+        "Notify after each capture",
+        Some("Shows the result with actions to open or copy it."),
+        Some(&enabled),
+    ));
+    let sound = switch(notifications.sound);
+    let sound_row = alerts.add(row("Play a sound with it", None, Some(&sound)));
+    sound_row.set_sensitive(notifications.enabled);
 
-    let problem = gtk::Label::builder()
-        .xalign(0.0)
-        .wrap(true)
-        .visible(false)
-        .css_classes(["problem"])
-        .build();
-    content.append(&problem);
+    let startup = group(&pages.general, "Startup");
+    let autostart = switch(false);
+    autostart.set_sensitive(false);
+    startup.add(row(
+        "Start Kiekje at login",
+        Some("Keeps the tray and shortcuts ready after you sign in."),
+        Some(&autostart),
+    ));
+    let general_problem = problem();
+    startup.footer(&general_problem);
 
     let general = Rc::new(General {
         quiet: Cell::new(false),
@@ -143,12 +166,17 @@ pub(super) fn append(
         saved_filename: RefCell::new(storage.filename.to_string()),
         enabled,
         sound,
+        sound_row,
         edit,
         magnifier,
         slow_pointer,
+        slow_pointer_row,
         window_snap,
+        hints,
         autostart,
-        problem,
+        capture_problem,
+        saving_problem,
+        general_problem,
     });
     general.show_preview();
     connect(&general, &choose, &changes);
@@ -156,12 +184,12 @@ pub(super) fn append(
     let handle = Rc::downgrade(&general);
 
     glib::spawn_future_local(async move {
-        while let Ok(change) = receiver.recv().await {
+        while let Ok((page, change)) = receiver.recv().await {
             let saved = gio::spawn_blocking(move || config::update(&config::path(), change)).await;
             match saved {
                 Ok(Ok(config)) => general.saved(&config),
-                Ok(Err(error)) => general.complain(&format!("Not saved: {error}")),
-                Err(_) => general.complain("The settings worker stopped; nothing was saved."),
+                Ok(Err(error)) => general.complain(page, &format!("Not saved: {error}")),
+                Err(_) => general.complain(page, "The settings worker stopped; nothing was saved."),
             }
         }
     });
@@ -175,7 +203,11 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
 
     let sender = changes.clone();
     general.default_folder.connect_clicked(move |_| {
-        send(&sender, Box::new(|config| config.storage.folder = None));
+        send(
+            &sender,
+            Page::Saving,
+            Box::new(|config| config.storage.folder = None),
+        );
     });
 
     let weak = Rc::downgrade(general);
@@ -211,57 +243,61 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
 
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    general.enabled.connect_toggled(move |check| {
+    general.enabled.connect_active_notify(move |check| {
         let on = check.is_active();
         let Some(general) = weak.upgrade() else {
             return;
         };
-        general.sound.set_sensitive(on);
+        general.sound_row.set_sensitive(on);
         if general.quiet.get() {
             return;
         }
         send(
             &sender,
+            Page::General,
             Box::new(move |config| config.notifications.enabled = on),
         );
     });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    general.sound.connect_toggled(move |check| {
+    general.sound.connect_active_notify(move |check| {
         let on = check.is_active();
         if weak.upgrade().is_none_or(|general| general.quiet.get()) {
             return;
         }
         send(
             &sender,
+            Page::General,
             Box::new(move |config| config.notifications.sound = on),
         );
     });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    general.edit.connect_toggled(move |check| {
+    general.edit.connect_active_notify(move |check| {
         let after = after_selection(check.is_active());
         if weak.upgrade().is_none_or(|general| general.quiet.get()) {
             return;
         }
         send(
             &sender,
+            Page::Capture,
             Box::new(move |config| config.capture.after_selection = after),
         );
     });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    general.magnifier.connect_toggled(move |check| {
+    general.magnifier.connect_active_notify(move |check| {
         let on = check.is_active();
         let Some(general) = weak.upgrade() else {
             return;
         };
-        general.slow_pointer.set_sensitive(on);
+        general.slow_pointer_row.set_sensitive(on);
         if general.quiet.get() {
             return;
         }
         send(
             &sender,
+            Page::Capture,
             Box::new(move |config| config.overlay.magnifier = on),
         );
     });
@@ -281,19 +317,34 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             }
             send(
                 &sender,
+                Page::Capture,
                 Box::new(move |config| config.overlay.slow_pointer = speed),
             );
         });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    general.window_snap.connect_toggled(move |check| {
+    general.window_snap.connect_active_notify(move |check| {
         let on = check.is_active();
         if weak.upgrade().is_none_or(|general| general.quiet.get()) {
             return;
         }
         send(
             &sender,
+            Page::Capture,
             Box::new(move |config| config.overlay.window_snap = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.hints.connect_active_notify(move |check| {
+        let on = check.is_active();
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::Capture,
+            Box::new(move |config| config.overlay.hints = on),
         );
     });
 }
@@ -301,7 +352,7 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
 fn connect_autostart(general: &Rc<General>) {
     let (requests, receiver) = async_channel::unbounded::<bool>();
     let weak = Rc::downgrade(general);
-    general.autostart.connect_toggled(move |check| {
+    general.autostart.connect_active_notify(move |check| {
         if weak.upgrade().is_none_or(|general| general.quiet.get()) {
             return;
         }
@@ -318,8 +369,13 @@ fn connect_autostart(general: &Rc<General>) {
         };
         match found {
             Ok(Ok(enabled)) => general.show_autostart(enabled),
-            Ok(Err(error)) => general.complain(&format!("Start at login: {error}")),
-            Err(_) => general.complain("The settings worker stopped; start at login is unknown."),
+            Ok(Err(error)) => {
+                general.complain(Page::General, &format!("Start at login: {error}"));
+            }
+            Err(_) => general.complain(
+                Page::General,
+                "The settings worker stopped; start at login is unknown.",
+            ),
         }
         general.autostart.set_sensitive(true);
         drop(general);
@@ -330,14 +386,19 @@ fn connect_autostart(general: &Rc<General>) {
                 return;
             };
             match applied {
-                Ok(Ok(())) => general.complain(""),
+                Ok(Ok(())) => general.complain(Page::General, ""),
                 Ok(Err(error)) => {
-                    general.complain(&format!("Start at login not changed: {error}"));
+                    general.complain(
+                        Page::General,
+                        &format!("Start at login not changed: {error}"),
+                    );
                     general.show_autostart(!enabled);
                 }
                 Err(_) => {
-                    general
-                        .complain("The settings worker stopped; start at login was not changed.");
+                    general.complain(
+                        Page::General,
+                        "The settings worker stopped; start at login was not changed.",
+                    );
                     general.show_autostart(!enabled);
                 }
             }
@@ -365,34 +426,37 @@ fn pick_folder(button: &gtk::Button, general: Weak<General>, changes: Changes) {
             Err(error) if error.matches(gtk::DialogError::Dismissed) => return,
             Err(error) => {
                 if let Some(general) = general.upgrade() {
-                    general.complain(&format!("The folder picker failed: {error}"));
+                    general.complain(Page::Saving, &format!("The folder picker failed: {error}"));
                 }
                 return;
             }
         };
         let Some(path) = path else {
             if let Some(general) = general.upgrade() {
-                general
-                    .complain("That folder is not on this computer, so captures can't go there.");
+                general.complain(
+                    Page::Saving,
+                    "That folder is not on this computer, so captures can't go there.",
+                );
             }
             return;
         };
         match Folder::from_path(path) {
             Ok(folder) => send(
                 &changes,
+                Page::Saving,
                 Box::new(move |config| config.storage.folder = Some(folder)),
             ),
             Err(error) => {
                 if let Some(general) = general.upgrade() {
-                    general.complain(&error.to_string());
+                    general.complain(Page::Saving, &error.to_string());
                 }
             }
         }
     });
 }
 
-fn send(changes: &Changes, change: Change) {
-    if changes.try_send(change).is_err() {
+fn send(changes: &Changes, page: Page, change: Change) {
+    if changes.try_send((page, change)).is_err() {
         eprintln!("kiekje: the settings worker stopped, a change was not saved");
     }
 }
@@ -431,19 +495,20 @@ impl General {
         self.saved_filename.replace(text);
         send(
             changes,
+            Page::Saving,
             Box::new(move |config| config.storage.filename = template),
         );
     }
 
     fn saved(&self, config: &Config) {
-        self.complain("");
+        for page in [Page::Capture, Page::Saving, Page::General] {
+            self.complain(page, "");
+        }
         self.folder
             .set_label(&storage::tilde(&config.storage.captures_dir()));
-        self.default_folder
-            .set_visible(config.storage.folder.is_some());
+        show_ghost(&self.default_folder, config.storage.folder.is_some());
         let filename = config.storage.filename.to_string();
-        self.default_filename
-            .set_visible(filename != DEFAULT_TEMPLATE);
+        show_ghost(&self.default_filename, filename != DEFAULT_TEMPLATE);
         self.saved_filename.replace(filename);
     }
 
@@ -459,6 +524,7 @@ impl General {
         self.slow_pointer
             .set_selected(slow_index(config.overlay.slow_pointer));
         self.window_snap.set_active(config.overlay.window_snap);
+        self.hints.set_active(config.overlay.hints);
         self.quiet.set(false);
     }
 
@@ -468,29 +534,26 @@ impl General {
         self.quiet.set(false);
     }
 
-    fn complain(&self, message: &str) {
-        self.problem.set_label(message);
-        self.problem.set_visible(!message.is_empty());
+    fn complain(&self, page: Page, message: &str) {
+        let label = match page {
+            Page::Capture => &self.capture_problem,
+            Page::Saving => &self.saving_problem,
+            Page::General => &self.general_problem,
+        };
+        label.set_label(message);
+        label.set_visible(!message.is_empty());
     }
 }
 
-fn row(label: &str, value: &impl IsA<gtk::Widget>, buttons: &[&gtk::Button]) -> gtk::Box {
-    let row = gtk::Box::builder()
+fn controls(widgets: &[&gtk::Widget]) -> gtk::Box {
+    let controls = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
+        .spacing(8)
         .build();
-    row.append(
-        &gtk::Label::builder()
-            .label(label)
-            .xalign(0.0)
-            .width_chars(10)
-            .build(),
-    );
-    row.append(value);
-    for button in buttons {
-        row.append(*button);
+    for widget in widgets {
+        controls.append(*widget);
     }
-    row
+    controls
 }
 
 fn slow_index(speed: SlowPointer) -> u32 {
@@ -501,10 +564,16 @@ fn slow_index(speed: SlowPointer) -> u32 {
         .unwrap_or(0)
 }
 
-fn ghost(label: &str, visible: bool) -> gtk::Button {
-    gtk::Button::builder()
+fn ghost(label: &str, shown: bool) -> gtk::Button {
+    let button = gtk::Button::builder()
         .label(label)
-        .visible(visible)
-        .css_classes(["ghost"])
-        .build()
+        .css_classes(["ghost", "optional"])
+        .build();
+    show_ghost(&button, shown);
+    button
+}
+
+fn show_ghost(button: &gtk::Button, shown: bool) {
+    button.set_sensitive(shown);
+    button.set_can_target(shown);
 }

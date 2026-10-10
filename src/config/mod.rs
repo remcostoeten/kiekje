@@ -50,6 +50,7 @@ pub struct Overlay {
     pub magnifier_pixels: u32,
     pub slow_pointer: SlowPointer,
     pub window_snap: bool,
+    pub hints: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -146,6 +147,7 @@ impl Default for Overlay {
             magnifier_pixels: 15,
             slow_pointer: SlowPointer::default(),
             window_snap: true,
+            hints: true,
         }
     }
 }
@@ -510,6 +512,13 @@ mod tests {
         assert!(!config.overlay.window_snap);
         assert!(config.overlay.magnifier);
         assert!(Config::default().overlay.window_snap);
+    }
+
+    #[test]
+    fn reads_the_hints_switch_and_defaults_it_on() {
+        let config = parse("[overlay]\nhints = false", Path::new("config.toml")).unwrap();
+        assert!(!config.overlay.hints);
+        assert!(Config::default().overlay.hints);
     }
 
     #[test]

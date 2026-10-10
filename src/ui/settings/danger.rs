@@ -4,12 +4,12 @@ use std::time::Duration;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
-use super::{caps, note};
 use crate::app::APP_ID;
 use crate::config::{self, Config};
 use crate::library::{self, Library, thumbs};
 use crate::shortcuts::{ShortcutHost, Shortcuts, hyprland, kde};
 use crate::storage;
+use crate::ui::widgets::{group, problem, row};
 
 const ARMED_FOR: Duration = Duration::from_secs(4);
 
@@ -38,6 +38,13 @@ impl Danger {
         }
     }
 
+    fn verb(self) -> &'static str {
+        match self {
+            Self::ResetSettings => "Reset",
+            Self::ClearGallery | Self::ClearColours | Self::ClearThumbnails => "Clear",
+        }
+    }
+
     fn detail(self) -> &'static str {
         match self {
             Self::ResetSettings => {
@@ -52,20 +59,12 @@ impl Danger {
 
 pub(super) type DoneCallback = Rc<dyn Fn(Danger)>;
 
-pub(super) fn append(content: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback) {
-    content.append(&caps("Danger zone"));
-    let result = note("");
-    result.set_visible(false);
+pub(super) fn append(page: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback) {
+    let zone = group(page, "Danger zone");
+    let result = problem();
     for danger in Danger::ALL {
-        let row = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(12)
-            .build();
-        let detail = note(danger.detail());
-        detail.set_hexpand(true);
-        row.append(&detail);
         let button = gtk::Button::builder()
-            .label(danger.label())
+            .label(danger.verb())
             .css_classes(["danger"])
             .build();
         let result = result.clone();
@@ -97,15 +96,14 @@ pub(super) fn append(content: &gtk::Box, host: &ShortcutHost, on_done: DoneCallb
                 result.set_visible(true);
             });
         });
-        row.append(&button);
-        content.append(&row);
+        zone.add(row(danger.label(), Some(danger.detail()), Some(&button)));
     }
-    content.append(&result);
+    zone.footer(&result);
 }
 
 fn arm(button: &gtk::Button, danger: Danger) {
     button.add_css_class("armed");
-    button.set_label("Click again");
+    button.set_label("Confirm");
     button.set_tooltip_text(Some(&format!(
         "Click again to {}",
         danger.label().to_lowercase()
@@ -120,7 +118,7 @@ fn arm(button: &gtk::Button, danger: Danger) {
 
 fn disarm(button: &gtk::Button, danger: Danger) {
     button.remove_css_class("armed");
-    button.set_label(danger.label());
+    button.set_label(danger.verb());
     button.set_tooltip_text(None);
 }
 

@@ -24,7 +24,7 @@ impl View {
         top: 0.0,
     };
 
-    fn fit(area: (f64, f64), image: (f64, f64), max_zoom: f64) -> Self {
+    pub(super) fn fit(area: (f64, f64), image: (f64, f64), max_zoom: f64) -> Self {
         let zoom = (area.0 / image.0).min(area.1 / image.1).min(max_zoom);
         let zoom = if zoom.is_finite() && zoom > 0.0 {
             zoom
@@ -87,7 +87,11 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         if let Some(editor) = started.upgrade() {
             editor.canvas.grab_focus();
             let point = editor.view.get().to_image(x, y, editor.size());
+            if editor.grab_region(point) {
+                return;
+            }
             match editor.tool.get() {
+                Tool::Crop => editor.hide_bars(),
                 Tool::Select => {
                     editor.grab(point);
                     return;
@@ -112,6 +116,9 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     drag.connect_drag_end(move |gesture, dx, dy| {
         if let Some(editor) = ended.upgrade() {
             extend(&editor, gesture, dx, dy);
+            if editor.release_region() {
+                return;
+            }
             match editor.tool.get() {
                 Tool::Select => editor.release(),
                 Tool::Text => {}
@@ -150,6 +157,16 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         }
     });
     editor.canvas.add_controller(clicks);
+
+    let motion = gtk::EventControllerMotion::new();
+    let hovered = Rc::downgrade(editor);
+    motion.connect_motion(move |_, x, y| {
+        if let Some(editor) = hovered.upgrade() {
+            let point = editor.view.get().to_image(x, y, editor.size());
+            editor.hover_region(point);
+        }
+    });
+    editor.canvas.add_controller(motion);
     editor.canvas.set_cursor_from_name(Some("crosshair"));
 }
 
@@ -158,6 +175,9 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
         return;
     };
     let point = editor.view.get().to_image(x + dx, y + dy, editor.size());
+    if editor.reshape_to(point) {
+        return;
+    }
     match editor.tool.get() {
         Tool::Select => {
             editor.drag_to(point);
@@ -207,7 +227,15 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
                 Some(moving) if moving.index == index => &moving.preview,
                 _ => shape,
             });
-        render::draw(cr, &editor.layers, shapes.chain(&draft).chain(&typed))
+        let shapes: Vec<&Shape> = shapes.chain(&draft).chain(&typed).collect();
+        let marked = shapes
+            .iter()
+            .any(|shape| matches!(shape, Shape::Highlight { .. }));
+        if editor.is_inline() && !marked {
+            render::draw_shapes(cr, &editor.layers, shapes)
+        } else {
+            render::draw(cr, &editor.layers, shapes)
+        }
     };
     cr.restore()?;
     drawn?;

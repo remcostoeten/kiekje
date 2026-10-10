@@ -91,6 +91,8 @@ struct Editor {
     writer: gtk::Popover,
     entry: gtk::Entry,
     layer: RefCell<Option<(gtk::Fixed, Point)>>,
+    bars: RefCell<Option<inline::Bars>>,
+    reshaping: RefCell<Option<crop::Reshaping>>,
     typing: RefCell<Option<text::Typing>>,
     busy: Cell<bool>,
     discard: Cell<bool>,
@@ -174,7 +176,7 @@ fn panel(child: &impl IsA<gtk::Widget>) -> gtk::Box {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
-        .css_classes(["panel", "settings", "editor"])
+        .css_classes(["panel", "editor"])
         .build();
     content.append(child);
     content
@@ -203,7 +205,11 @@ impl Editor {
         );
         let content = panel(&toolbar::build(&editor));
         content.append(&editor.canvas);
-        content.append(&editor.status);
+        content.append(&toolbar::footer(
+            &editor,
+            editor.picture.width,
+            editor.picture.height,
+        ));
         window.set_child(Some(&content));
         editor.sync();
         editor.canvas.grab_focus();
@@ -270,6 +276,8 @@ impl Editor {
                 .width_chars(24)
                 .build(),
             layer: RefCell::new(None),
+            bars: RefCell::new(None),
+            reshaping: RefCell::new(None),
             typing: RefCell::new(None),
             busy: Cell::new(false),
             discard: Cell::new(false),
@@ -348,6 +356,7 @@ impl Editor {
     fn edited(&self) {
         self.discard.set(false);
         self.sync();
+        self.place_bars();
         self.canvas.queue_draw();
     }
 
@@ -372,10 +381,14 @@ impl Editor {
         let step = if shift { 10.0 } else { 1.0 };
         let handled = match (control, letter.as_str()) {
             (false, "Delete" | "BackSpace") => self.delete_selected(),
-            (false, "Left") => self.nudge(-step, 0.0),
-            (false, "Right") => self.nudge(step, 0.0),
-            (false, "Up") => self.nudge(0.0, -step),
-            (false, "Down") => self.nudge(0.0, step),
+            (false, "Left") => self.nudge(-step, 0.0) || self.step_region(-step, 0.0, false),
+            (false, "Right") => self.nudge(step, 0.0) || self.step_region(step, 0.0, false),
+            (false, "Up") => self.nudge(0.0, -step) || self.step_region(0.0, -step, false),
+            (false, "Down") => self.nudge(0.0, step) || self.step_region(0.0, step, false),
+            (true, "Left") => self.step_region(-step, 0.0, true),
+            (true, "Right") => self.step_region(step, 0.0, true),
+            (true, "Up") => self.step_region(0.0, -step, true),
+            (true, "Down") => self.step_region(0.0, step, true),
             _ => false,
         };
         if handled {
@@ -391,10 +404,15 @@ impl Editor {
             (true, "p") if self.is_inline() => self.conclude(Finish::Pin),
             (false, "Return" | "KP_Enter") if self.is_inline() => self.conclude(Finish::Accept),
             (false, "Escape") => {
-                if !(self.cancel_grab() || self.cancel_draft() || self.deselect()) {
+                if !(self.cancel_reshape()
+                    || self.cancel_grab()
+                    || self.cancel_draft()
+                    || self.deselect())
+                {
                     self.dismiss();
                 }
             }
+            (false, "s") if self.is_inline() => self.pick(Tool::Crop),
             (false, _) if !alt && !shift => {
                 let Some(tool) = Tool::ALL.into_iter().find(|tool| tool.key() == letter) else {
                     return glib::Propagation::Proceed;

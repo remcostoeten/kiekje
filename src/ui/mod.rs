@@ -2,6 +2,7 @@ pub mod files;
 pub mod fonts;
 pub mod gallery;
 pub mod settings;
+pub mod widgets;
 
 use std::cell::Cell;
 

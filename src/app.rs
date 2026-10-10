@@ -776,6 +776,9 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         let notifications = config.notifications;
         let inline = config.capture.after_selection == AfterSelection::Edit;
         let overlay = config.overlay;
+        let previous_region = (request.mode == CaptureMode::Region)
+            .then(|| known_region.or_else(last_region::load))
+            .flatten();
         let result = match request.mode {
             CaptureMode::Repeat => match known_region.or_else(last_region::load) {
                 Some(region) => backends::capture(request.backend, &infos, false)
@@ -796,6 +799,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             notifications,
             inline,
             overlay,
+            previous_region,
             glib::monotonic_time(),
         ));
     });
@@ -803,7 +807,8 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let Ok((result, notifications, inline, overlay, captured_us)) = receiver.recv().await
+        let Ok((result, notifications, inline, overlay, previous_region, captured_us)) =
+            receiver.recv().await
         else {
             session.busy.set(false);
             return;
@@ -816,6 +821,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
                 let options = overlay::Options {
                     edit: request.edit || inline,
                     overlay,
+                    last_region: previous_region,
                 };
                 handle_capture(&app, request, capture, region, &monitors, options, session)
             }
