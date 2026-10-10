@@ -286,6 +286,7 @@ function help_clean() {
     printf '  %sUSAGE%s  %s clean [--older-than DAYS] [--dry-run] [--thumbs]\n\n' "$DIM" "$RESET" "$SCRIPT"
     section "OPTIONS"
     row "--older-than DAYS" "Only delete captures older than DAYS"
+    row ""                  "Only files Kiekje recorded in its library are deleted"
     row "--dry-run"         "List what would be deleted"
     row "--thumbs"          "Also clear the thumbnail cache"
     row "-y, --yes"         "Do not ask for confirmation"
@@ -812,10 +813,18 @@ function cmd_clean() {
     local dir
     dir="$(captures_dir)"
     [[ -d "$dir" ]] || die "No captures folder at $dir."
-    local -a find_args=("$dir" -maxdepth 1 -type f -iregex '.*\.\(png\|jpe?g\|webp\|avif\)')
-    [[ -n "$days" ]] && find_args+=(-mmin "+$((days * 1440))")
+    local library="$DATA_DIR/library.db"
+    [[ -f "$library" ]] || die "No library at $library, so there is no record of which files Kiekje made."
+    command -v sqlite3 >/dev/null || die "clean needs sqlite3 to read which files Kiekje made."
+    local cutoff=""
+    [[ -n "$days" ]] && cutoff=$(( $(date +%s) - days * 86400 ))
     local -a files=()
-    mapfile -d '' files < <(find "${find_args[@]}" -print0 | sort -z)
+    local path
+    while IFS= read -r path; do
+        [[ "$path" == "$dir/"* && "${path#"$dir/"}" != */* && -f "$path" ]] || continue
+        [[ -z "$cutoff" ]] || (( $(stat -c %Y -- "$path") < cutoff )) || continue
+        files+=("$path")
+    done < <(sqlite3 -readonly "$library" "SELECT path FROM captures WHERE missing = 0 ORDER BY path")
     detail "folder" "$dir"
     if [[ -n "$days" ]]; then detail "filter" "older than $days days"; else detail "filter" "all captures"; fi
     if (( ${#files[@]} == 0 )); then
