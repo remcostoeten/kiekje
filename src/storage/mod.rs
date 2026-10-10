@@ -92,6 +92,32 @@ pub fn save_png(png: &[u8], directory: &Path, base: &str) -> io::Result<PathBuf>
     Ok(path)
 }
 
+/// Writes encoded PNG bytes to the path a save dialog returned.
+///
+/// The dialog already confirmed overwriting, so a `.png` path is replaced in place. Any other
+/// name gets a new `.png` file next to it instead, since the bytes are PNG.
+///
+/// # Examples
+///
+/// ```ignore
+/// let path = save_png_as(&png, &chosen)?;
+/// ```
+pub fn save_png_as(png: &[u8], path: &Path) -> io::Result<PathBuf> {
+    let is_png = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
+    if is_png {
+        write_atomic(path, png)?;
+        return Ok(path.to_path_buf());
+    }
+    let folder = path.parent().unwrap_or(Path::new("."));
+    let base = path.file_stem().map_or_else(
+        || "kiekje".to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    save_png(png, folder, &base)
+}
+
 /// Replaces the file at `path` with `bytes` through a temporary file and a rename.
 ///
 /// Readers see the old file or the new one, never half of either. Missing parent folders are
@@ -156,6 +182,21 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("kiekje-storage-{name}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn saves_as_the_chosen_png_and_beside_any_other_name() {
+        let folder = std::env::temp_dir().join(format!("kiekje-save-as-{}", std::process::id()));
+        // A leftover folder from an earlier run may or may not exist.
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder).unwrap();
+        let chosen = folder.join("shot.png");
+        fs::write(&chosen, b"old").unwrap();
+        assert_eq!(save_png_as(b"new", &chosen).unwrap(), chosen);
+        assert_eq!(fs::read(&chosen).unwrap(), b"new");
+        let other = save_png_as(b"jpg", &folder.join("photo.jpg")).unwrap();
+        assert_eq!(other, folder.join("photo.png"));
+        fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]
