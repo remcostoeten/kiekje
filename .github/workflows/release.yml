@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  LAYER_SHELL_VERSION: v1.1.1
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libdbus-1-dev libwayland-dev wayland-protocols \
+            meson ninja-build pkg-config
+
+      # Ubuntu 24.04 does not package gtk4-layer-shell.
+      - name: Build gtk4-layer-shell
+        run: |
+          git clone --depth 1 --branch "$LAYER_SHELL_VERSION" https://github.com/wmww/gtk4-layer-shell.git /tmp/gls
+          meson setup /tmp/gls/build /tmp/gls --prefix="$HOME/layer-shell" --libdir=lib \
+            -Dexamples=false -Ddocs=false -Dtests=false -Dintrospection=false -Dvapi=false
+          ninja -C /tmp/gls/build install
+          echo "PKG_CONFIG_PATH=$HOME/layer-shell/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/layer-shell/lib" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          [[ "v$version" == "$GITHUB_REF_NAME" ]] || { echo "tag $GITHUB_REF_NAME does not match version $version" >&2; exit 1; }
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Package
+        run: |
+          name="kiekje-${GITHUB_REF_NAME#v}-x86_64-linux"
+          mkdir -p "dist/$name/packaging" "dist/$name/resources/fonts"
+          install -Dm755 target/release/kiekje "dist/$name/kiekje"
+          cp packaging/install.sh packaging/dev.remcostoeten.Kiekje.desktop "dist/$name/packaging/"
+          cp -r resources/icons "dist/$name/resources/"
+          cp resources/fonts/OFL.txt "dist/$name/resources/fonts/"
+          cp LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+          echo "TITLE=kiekje ${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Write the notes
+        run: |
+          git fetch --force origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          {
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME"
+            echo
+            echo "## Install"
+            echo
+            echo "Needs GTK 4 and gtk4-layer-shell 1.1 or newer (Arch: \`pacman -S gtk4 gtk4-layer-shell\`)."
+            echo
+            echo '```'
+            echo "tar -xzf $ARCHIVE.tar.gz"
+            echo "cd $ARCHIVE"
+            echo "sudo packaging/install.sh ./kiekje"
+            echo '```'
+          } > dist/notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.TITLE }}
+          body_path: dist/notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/${{ env.ARCHIVE }}.tar.gz
+            dist/${{ env.ARCHIVE }}.tar.gz.sha256
