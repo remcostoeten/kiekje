@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::Table;
 
+use crate::editor::Color;
 use crate::shortcuts::{Conflict, ShortcutAction, Shortcuts, Slot};
 use crate::storage::{self, Template};
 pub use migrate::{MigrateError, VERSION};
@@ -26,7 +27,17 @@ pub struct Config {
     #[serde(default)]
     pub notifications: Notifications,
     #[serde(default)]
+    pub drawing: Drawing,
+    #[serde(default)]
     pub shortcuts: Shortcuts,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Drawing {
+    pub color: Color,
+    pub size: u32,
+    pub opacity: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -135,6 +146,7 @@ impl Default for Config {
             capture: Capture::default(),
             overlay: Overlay::default(),
             notifications: Notifications::default(),
+            drawing: Drawing::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -148,6 +160,16 @@ impl Default for Overlay {
             slow_pointer: SlowPointer::default(),
             window_snap: true,
             hints: true,
+        }
+    }
+}
+
+impl Default for Drawing {
+    fn default() -> Self {
+        Self {
+            color: Color::default(),
+            size: 3,
+            opacity: 100,
         }
     }
 }
@@ -481,6 +503,31 @@ mod tests {
             Config::default().capture.after_selection,
             AfterSelection::Finish
         );
+    }
+
+    #[test]
+    fn reads_the_drawing_style_and_defaults_the_rest() {
+        let config = parse(
+            "[drawing]\ncolor = \"blue\"\nsize = 6",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.drawing,
+            Drawing {
+                color: Color::Blue,
+                size: 6,
+                opacity: 100
+            }
+        );
+        let orange = parse("[drawing]\ncolor = \"orange\"", Path::new("config.toml")).unwrap();
+        assert_eq!(orange.drawing.color, Color::Accent);
+        assert_eq!(Config::default().drawing.size, 3);
+    }
+
+    #[test]
+    fn rejects_an_unknown_drawing_colour() {
+        assert!(parse("[drawing]\ncolor = \"purple\"", Path::new("config.toml")).is_err());
     }
 
     #[test]

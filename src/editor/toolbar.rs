@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gtk::prelude::*;
 
 use super::Editor;
-use super::document::{Color, Tool, Weight};
+use super::document::{Color, Tool};
 
 const SWATCH: i32 = 14;
 
@@ -104,6 +104,7 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
     let colors = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
+    let mut swatches = Vec::new();
     for color in Color::ALL {
         let button = swatch(color, &mut group);
         button.set_active(color == editor.color.get());
@@ -112,27 +113,67 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
             if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
                 editor.color.set(color);
                 editor.restyle();
+                editor.remember();
             }
         });
         colors.append(&button);
+        swatches.push((color, button));
     }
+    editor.swatches.replace(swatches);
     bottom.append(&colors);
-    let weights = segmented();
-    let mut group: Option<gtk::ToggleButton> = None;
-    for weight in Weight::ALL {
-        let button = chip(weight.label(), &mut group);
-        button.set_active(weight == editor.weight.get());
-        let target = Rc::downgrade(editor);
-        button.connect_toggled(move |button| {
-            if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
-                editor.weight.set(weight);
-                editor.restyle();
-            }
-        });
-        weights.append(&button);
-    }
-    bottom.append(&weights);
+    bottom.append(&slider(
+        "Size",
+        "Line and text size ([ and ])",
+        &editor.size,
+        |value| format!("{value} px"),
+    ));
+    bottom.append(&slider(
+        "Opacity",
+        "Opacity of lines, shapes and text",
+        &editor.opacity,
+        |value| format!("{value}%"),
+    ));
     bottom
+}
+
+fn slider(
+    name: &str,
+    tooltip: &str,
+    adjustment: &gtk::Adjustment,
+    shown: fn(u32) -> String,
+) -> gtk::Box {
+    let group = row();
+    group.add_css_class("stroke-option");
+    group.set_tooltip_text(Some(tooltip));
+    group.append(
+        &gtk::Label::builder()
+            .label(name)
+            .css_classes(["caps"])
+            .build(),
+    );
+    let scale = gtk::Scale::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .adjustment(adjustment)
+        .draw_value(false)
+        .round_digits(0)
+        .width_request(96)
+        .focusable(true)
+        .build();
+    scale.update_property(&[gtk::accessible::Property::Label(name)]);
+    group.append(&scale);
+    let value = gtk::Label::builder()
+        .width_chars(5)
+        .xalign(1.0)
+        .css_classes(["note", "value"])
+        .build();
+    let label = value.clone();
+    let show = move |adjustment: &gtk::Adjustment| {
+        label.set_label(&shown(adjustment.value().round() as u32));
+    };
+    show(adjustment);
+    adjustment.connect_value_changed(show.clone());
+    group.append(&value);
+    group
 }
 
 pub(super) fn on_click(editor: &Rc<Editor>, button: &gtk::Button, run: fn(&Rc<Editor>)) {

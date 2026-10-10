@@ -3,7 +3,7 @@ use gtk::prelude::*;
 
 use super::Editor;
 use super::canvas::View;
-use super::document::{Color, Edit, Point, Shape, Stroke, Tool};
+use super::document::{Color, Edit, Point, Shape, Tool};
 use super::shapes::Handle;
 
 const REACH: f64 = 8.0;
@@ -141,9 +141,17 @@ impl Editor {
     }
 
     pub(super) fn restyle(&self) {
-        let color: Color = self.color.get();
-        let stroke: Stroke = self.stroke();
-        self.replace_selected(|shape| shape.restyled(color, Some(stroke.width)));
+        let Some(index) = self.selected.get() else {
+            return;
+        };
+        let Some(before) = self.document.borrow().shapes().get(index).cloned() else {
+            return;
+        };
+        let after = before.restyled(self.stroke());
+        if after != before {
+            self.document.borrow_mut().restyle(index, after);
+            self.edited();
+        }
     }
 
     pub(super) fn delete_selected(&self) -> bool {

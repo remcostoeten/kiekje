@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 const MIN_SIZE: f64 = 3.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -35,9 +37,11 @@ impl Area {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Color {
     #[default]
+    #[serde(rename = "orange")]
     Accent,
     Red,
     Yellow,
@@ -92,54 +96,37 @@ impl Color {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Weight {
-    Thin,
-    #[default]
-    Regular,
-    Bold,
-}
-
-impl Weight {
-    pub const ALL: [Self; 3] = [Self::Thin, Self::Regular, Self::Bold];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Thin => "Thin",
-            Self::Regular => "Regular",
-            Self::Bold => "Bold",
-        }
-    }
-
-    fn factor(self) -> f64 {
-        match self {
-            Self::Thin => 1.0,
-            Self::Regular => 2.0,
-            Self::Bold => 4.0,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stroke {
     pub color: Color,
     pub width: f64,
+    pub opacity: f64,
 }
 
+pub const MIN_SIZE_PX: u32 = 1;
+pub const MAX_SIZE_PX: u32 = 24;
+pub const MIN_OPACITY: u32 = 10;
+
 impl Stroke {
-    /// Picks a line width in image pixels that looks the same on small and large images.
+    /// Turns a size in screen pixels into a line width in image pixels.
+    ///
+    /// Captures above 1080 pixels on their short side are usually taken on scaled displays, so
+    /// the width grows with them, up to twice the size at 2160 pixels.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let stroke = Stroke::scaled(Color::Red, Weight::Bold, (3840, 2160));
+    /// let stroke = Stroke::scaled(Color::Red, 3, 100, (3840, 2160));
+    /// assert_eq!(stroke.width, 6.0);
     /// ```
-    pub fn scaled(color: Color, weight: Weight, size: (u32, u32)) -> Self {
-        let short = f64::from(size.0.min(size.1));
-        let unit = (short / 540.0).clamp(1.0, 4.0);
+    pub fn scaled(color: Color, size: u32, opacity: u32, image: (u32, u32)) -> Self {
+        let short = f64::from(image.0.min(image.1));
+        let unit = (short / 1080.0).clamp(1.0, 2.0);
+        let size = size.clamp(MIN_SIZE_PX, MAX_SIZE_PX);
         Self {
             color,
-            width: (weight.factor() * unit * 1.5).round().max(1.0),
+            width: (f64::from(size) * unit).round().max(1.0),
+            opacity: f64::from(opacity.clamp(MIN_OPACITY, 100)) / 100.0,
         }
     }
 }
@@ -321,6 +308,7 @@ pub struct Document {
     done: Vec<Edit>,
     undone: Vec<Edit>,
     saved: usize,
+    restyling: Option<usize>,
 }
 
 impl Document {
@@ -368,9 +356,48 @@ impl Document {
         if self.saved > self.done.len() {
             self.saved = usize::MAX;
         }
+        self.restyling = None;
         self.perform(&edit);
         self.done.push(edit);
         self.undone.clear();
+    }
+
+    /// Replaces the shape at `index` with a restyled copy, folding a run of restyles into one undo step.
+    ///
+    /// Dragging the size or opacity slider restyles many times; undo goes back to before the drag.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// document.restyle(index, shape.restyled(style));
+    /// ```
+    pub fn restyle(&mut self, index: usize, after: Shape) {
+        let unsaved = self.saved != self.done.len();
+        if let (
+            Some(last),
+            true,
+            Some(Edit::Replace {
+                index: at,
+                after: newest,
+                ..
+            }),
+        ) = (self.restyling, unsaved, self.done.last_mut())
+            && last == index
+            && *at == index
+        {
+            *newest = after.clone();
+            self.put(index, &after);
+            return;
+        }
+        let Some(before) = self.shapes.get(index).cloned() else {
+            return;
+        };
+        self.apply(Edit::Replace {
+            index,
+            before,
+            after,
+        });
+        self.restyling = Some(index);
     }
 
     /// Reverts the newest edit and returns whether there was one.
@@ -381,6 +408,7 @@ impl Document {
     /// if !document.undo() { status("Nothing to undo") }
     /// ```
     pub fn undo(&mut self) -> bool {
+        self.restyling = None;
         let Some(edit) = self.done.pop() else {
             return false;
         };
@@ -397,6 +425,7 @@ impl Document {
     /// document.redo();
     /// ```
     pub fn redo(&mut self) -> bool {
+        self.restyling = None;
         let Some(edit) = self.undone.pop() else {
             return false;
         };
@@ -489,6 +518,7 @@ mod tests {
     const STROKE: Stroke = Stroke {
         color: Color::Accent,
         width: 3.0,
+        opacity: 1.0,
     };
 
     fn point(x: f64, y: f64) -> Point {
@@ -673,6 +703,46 @@ mod tests {
     }
 
     #[test]
+    fn folds_a_run_of_restyles_into_one_undo_step() {
+        let mut document = Document::default();
+        document.apply(Edit::Add(step(1)));
+        let styled = |width| Shape::Step {
+            at: point(1.0, 1.0),
+            number: 1,
+            stroke: Stroke { width, ..STROKE },
+        };
+        document.restyle(0, styled(4.0));
+        document.restyle(0, styled(5.0));
+        document.restyle(0, styled(6.0));
+        assert_eq!(document.shapes(), &[styled(6.0)]);
+        assert!(document.undo());
+        assert_eq!(document.shapes(), &[step(1)]);
+        assert!(document.redo());
+        assert_eq!(document.shapes(), &[styled(6.0)]);
+        document.restyle(0, styled(7.0));
+        assert!(document.undo());
+        assert_eq!(document.shapes(), &[styled(6.0)]);
+    }
+
+    #[test]
+    fn keeps_a_restyle_after_saving_as_its_own_step() {
+        let mut document = Document::default();
+        document.apply(Edit::Add(step(1)));
+        let styled = |width| Shape::Step {
+            at: point(1.0, 1.0),
+            number: 1,
+            stroke: Stroke { width, ..STROKE },
+        };
+        document.restyle(0, styled(4.0));
+        document.mark_saved();
+        document.restyle(0, styled(5.0));
+        assert!(document.is_modified());
+        assert!(document.undo());
+        assert_eq!(document.shapes(), &[styled(4.0)]);
+        assert!(!document.is_modified());
+    }
+
+    #[test]
     fn counts_a_fresh_capture_as_unsaved() {
         let mut document = Document::unsaved();
         assert!(document.is_modified());
@@ -682,10 +752,20 @@ mod tests {
 
     #[test]
     fn scales_stroke_width_with_the_image() {
-        let small = Stroke::scaled(Color::Red, Weight::Regular, (800, 500));
-        let large = Stroke::scaled(Color::Red, Weight::Regular, (3840, 2160));
-        assert_eq!(small.width, 3.0);
-        assert_eq!(large.width, 12.0);
-        assert!(Stroke::scaled(Color::Red, Weight::Thin, (10, 10)).width >= 1.0);
+        assert_eq!(Stroke::scaled(Color::Red, 3, 100, (800, 500)).width, 3.0);
+        assert_eq!(Stroke::scaled(Color::Red, 3, 100, (1920, 1080)).width, 3.0);
+        assert_eq!(Stroke::scaled(Color::Red, 3, 100, (2560, 1620)).width, 5.0);
+        assert_eq!(Stroke::scaled(Color::Red, 3, 100, (3840, 2160)).width, 6.0);
+        assert_eq!(Stroke::scaled(Color::Red, 3, 100, (7680, 4320)).width, 6.0);
+    }
+
+    #[test]
+    fn clamps_stroke_size_and_opacity() {
+        let thin = Stroke::scaled(Color::Red, 0, 0, (10, 10));
+        assert_eq!(thin.width, 1.0);
+        assert_eq!(thin.opacity, 0.1);
+        let heavy = Stroke::scaled(Color::Red, 99, 400, (1920, 1080));
+        assert_eq!(heavy.width, f64::from(MAX_SIZE_PX));
+        assert_eq!(heavy.opacity, 1.0);
     }
 }

@@ -14,6 +14,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
@@ -25,10 +26,13 @@ use crate::output::{self, Image};
 use crate::storage::Naming;
 use crate::{storage, ui};
 use canvas::View;
-use document::{Area, Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
+use document::{
+    Area, Document, Edit, MAX_SIZE_PX, MIN_OPACITY, MIN_SIZE_PX, Point, Shape, Stroke, Tool,
+};
 use pixels::{LoadError, Picture};
 use render::Layers;
 
+pub use document::Color;
 pub use inline::{Ending, Finish, Inline};
 
 /// What an editor window works on: a saved capture, or a fresh one that is not on disk yet.
@@ -77,7 +81,11 @@ struct Editor {
     document: RefCell<Document>,
     tool: Cell<Tool>,
     color: Cell<Color>,
-    weight: Cell<Weight>,
+    size: gtk::Adjustment,
+    opacity: gtk::Adjustment,
+    swatches: RefCell<Vec<(Color, gtk::ToggleButton)>>,
+    remembered: Cell<config::Drawing>,
+    remembering: RefCell<Option<glib::SourceId>>,
     draft: RefCell<Vec<Point>>,
     view: Cell<View>,
     canvas: gtk::DrawingArea,
@@ -237,6 +245,7 @@ impl Editor {
         } else {
             Document::unsaved()
         };
+        let drawing = config::Drawing::default();
         let canvas = gtk::DrawingArea::builder()
             .hexpand(true)
             .vexpand(true)
@@ -258,8 +267,26 @@ impl Editor {
             layers,
             document: RefCell::new(document),
             tool: Cell::new(Tool::default()),
-            color: Cell::new(Color::default()),
-            weight: Cell::new(Weight::default()),
+            color: Cell::new(drawing.color),
+            size: gtk::Adjustment::new(
+                f64::from(drawing.size),
+                f64::from(MIN_SIZE_PX),
+                f64::from(MAX_SIZE_PX),
+                1.0,
+                4.0,
+                0.0,
+            ),
+            opacity: gtk::Adjustment::new(
+                f64::from(drawing.opacity),
+                f64::from(MIN_OPACITY),
+                100.0,
+                5.0,
+                10.0,
+                0.0,
+            ),
+            swatches: RefCell::new(Vec::new()),
+            remembered: Cell::new(drawing),
+            remembering: RefCell::new(None),
             draft: RefCell::new(Vec::new()),
             view: Cell::new(View::IDENTITY),
             canvas,
@@ -284,7 +311,85 @@ impl Editor {
         });
         canvas::attach(&editor);
         text::attach(&editor);
+        for adjustment in [&editor.size, &editor.opacity] {
+            let target = Rc::downgrade(&editor);
+            adjustment.connect_value_changed(move |_| {
+                if let Some(editor) = target.upgrade() {
+                    editor.restyle();
+                    editor.remember();
+                }
+            });
+        }
+        editor.recall();
         editor
+    }
+
+    fn drawing(&self) -> config::Drawing {
+        config::Drawing {
+            color: self.color.get(),
+            size: self.size.value().round() as u32,
+            opacity: self.opacity.value().round() as u32,
+        }
+    }
+
+    fn recall(self: &Rc<Self>) {
+        let target = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let Ok(drawing) = gio::spawn_blocking(|| config::load().drawing).await else {
+                eprintln!("kiekje: the drawing style worker stopped, using the defaults");
+                return;
+            };
+            if let Some(editor) = target.upgrade() {
+                editor.adopt(drawing);
+            }
+        });
+    }
+
+    fn adopt(&self, drawing: config::Drawing) {
+        self.color.set(drawing.color);
+        if let Some((_, button)) = self
+            .swatches
+            .borrow()
+            .iter()
+            .find(|(color, _)| *color == drawing.color)
+        {
+            button.set_active(true);
+        }
+        self.size.set_value(f64::from(drawing.size));
+        self.opacity.set_value(f64::from(drawing.opacity));
+        self.remembered.set(drawing);
+        if let Some(pending) = self.remembering.take() {
+            pending.remove();
+        }
+    }
+
+    fn remember(self: &Rc<Self>) {
+        let drawing = self.drawing();
+        if drawing == self.remembered.replace(drawing) {
+            return;
+        }
+        if let Some(pending) = self.remembering.take() {
+            pending.remove();
+        }
+        let target = Rc::downgrade(self);
+        let source = glib::timeout_add_local_once(Duration::from_millis(400), move || {
+            if let Some(editor) = target.upgrade() {
+                editor.remembering.take();
+            }
+            gio::spawn_blocking(move || {
+                if let Err(error) =
+                    config::update(&config::path(), |config| config.drawing = drawing)
+                {
+                    eprintln!("kiekje: could not remember the drawing style: {error}");
+                }
+            });
+        });
+        self.remembering.replace(Some(source));
+    }
+
+    fn resize_stroke(&self, by: f64) -> bool {
+        self.size.set_value(self.size.value() + by);
+        true
     }
 
     fn size(&self) -> (f64, f64) {
@@ -295,9 +400,11 @@ impl Editor {
     }
 
     fn stroke(&self) -> Stroke {
+        let drawing = self.drawing();
         Stroke::scaled(
-            self.color.get(),
-            self.weight.get(),
+            drawing.color,
+            drawing.size,
+            drawing.opacity,
             (self.picture.width, self.picture.height),
         )
     }
@@ -389,6 +496,8 @@ impl Editor {
             (true, "Right") => self.step_region(step, 0.0, true),
             (true, "Up") => self.step_region(0.0, -step, true),
             (true, "Down") => self.step_region(0.0, step, true),
+            (false, "bracketleft") => self.resize_stroke(-1.0),
+            (false, "bracketright") => self.resize_stroke(1.0),
             _ => false,
         };
         if handled {

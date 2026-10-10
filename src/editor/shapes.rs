@@ -1,4 +1,4 @@
-use super::document::{Area, Color, Point, Shape, Stroke};
+use super::document::{Area, Point, Shape, Stroke};
 use super::render;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,16 +281,38 @@ impl Shape {
         shape
     }
 
-    /// Returns a copy drawn in `color`, and with `width` when the shape has a line.
+    /// Returns the line style of a shape that has one.
     ///
-    /// Pixelated areas have neither and come back unchanged.
+    /// Markers and pixelated areas have none.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let red = shape.restyled(Color::Red, None);
+    /// let opacity = shape.stroke().map_or(1.0, |stroke| stroke.opacity);
     /// ```
-    pub fn restyled(&self, color: Color, width: Option<f64>) -> Self {
+    pub fn stroke(&self) -> Option<Stroke> {
+        match self {
+            Self::Rectangle { stroke, .. }
+            | Self::Ellipse { stroke, .. }
+            | Self::Line { stroke, .. }
+            | Self::Arrow { stroke, .. }
+            | Self::Pen { stroke, .. }
+            | Self::Step { stroke, .. }
+            | Self::Text { stroke, .. } => Some(*stroke),
+            Self::Highlight { .. } | Self::Pixelate { .. } => None,
+        }
+    }
+
+    /// Returns a copy drawn with `style`: its colour, width and opacity on a shape with a line.
+    ///
+    /// Markers only take the colour. Pixelated areas come back unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let restyled = shape.restyled(editor.stroke());
+    /// ```
+    pub fn restyled(&self, style: Stroke) -> Self {
         let mut shape = self.clone();
         match &mut shape {
             Self::Rectangle { stroke, .. }
@@ -299,13 +321,8 @@ impl Shape {
             | Self::Arrow { stroke, .. }
             | Self::Pen { stroke, .. }
             | Self::Step { stroke, .. }
-            | Self::Text { stroke, .. } => {
-                stroke.color = color;
-                if let Some(width) = width {
-                    stroke.width = width;
-                }
-            }
-            Self::Highlight { color: fill, .. } => *fill = color,
+            | Self::Text { stroke, .. } => *stroke = style,
+            Self::Highlight { color, .. } => *color = style.color,
             Self::Pixelate { .. } => {}
         }
         shape
@@ -328,10 +345,12 @@ fn segment_distance(point: Point, start: Point, end: Point) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::document::Color;
 
     const STROKE: Stroke = Stroke {
         color: Color::Accent,
         width: 2.0,
+        opacity: 1.0,
     };
 
     fn point(x: f64, y: f64) -> Point {
@@ -475,15 +494,16 @@ mod tests {
 
     #[test]
     fn restyles_lines_and_fills() {
-        let red = rectangle().restyled(Color::Red, Some(9.0));
+        let style = Stroke {
+            color: Color::Red,
+            width: 9.0,
+            opacity: 0.5,
+        };
         assert_eq!(
-            red,
+            rectangle().restyled(style),
             Shape::Rectangle {
                 area: area(10.0, 10.0, 100.0, 50.0),
-                stroke: Stroke {
-                    color: Color::Red,
-                    width: 9.0
-                }
+                stroke: style
             }
         );
         let marker = Shape::Highlight {
@@ -491,7 +511,10 @@ mod tests {
             color: Color::Yellow,
         };
         assert_eq!(
-            marker.restyled(Color::Green, Some(4.0)),
+            marker.restyled(Stroke {
+                color: Color::Green,
+                ..style
+            }),
             Shape::Highlight {
                 area: area(0.0, 0.0, 1.0, 1.0),
                 color: Color::Green
