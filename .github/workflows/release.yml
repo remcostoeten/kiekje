@@ -8,54 +8,45 @@ on:
 permissions:
   contents: write
 
-env:
-  CARGO_TERM_COLOR: always
-  LAYER_SHELL_VERSION: v1.1.1
-
 jobs:
-  release:
+  version:
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      tag: ${{ steps.pick.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-4-dev libdbus-1-dev libwayland-dev wayland-protocols \
-            meson ninja-build pkg-config
-
-      # Ubuntu 24.04 does not package gtk4-layer-shell.
-      - name: Build gtk4-layer-shell
-        run: |
-          git clone --depth 1 --branch "$LAYER_SHELL_VERSION" https://github.com/wmww/gtk4-layer-shell.git /tmp/gls
-          meson setup /tmp/gls/build /tmp/gls --prefix="$HOME/layer-shell" --libdir=lib \
-            -Dexamples=false -Ddocs=false -Dtests=false -Dintrospection=false -Dvapi=false
-          ninja -C /tmp/gls/build install
-          echo "PKG_CONFIG_PATH=$HOME/layer-shell/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$HOME/layer-shell/lib" >> "$GITHUB_ENV"
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
       - name: Pick the tag
+        id: pick
         run: |
-          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
           if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
             [[ "v$version" == "$GITHUB_REF_NAME" ]] || { echo "tag $GITHUB_REF_NAME does not match version $version" >&2; exit 1; }
           elif git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
             echo "v$version already exists; bump the version in Cargo.toml first" >&2
             exit 1
           fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          echo "TAG=v$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Test
-        run: cargo test --locked
+  portable:
+    needs: version
+    uses: ./.github/workflows/portable.yml
 
-      - name: Build
-        run: cargo build --release --locked
+  release:
+    needs: [version, portable]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kiekje-x86_64-linux
+          path: target/release
 
       - name: Package
         run: |
@@ -83,7 +74,7 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "Needs GTK 4 and gtk4-layer-shell 1.1 or newer (Arch: \`pacman -S gtk4 gtk4-layer-shell\`)."
+            echo "Needs GTK 4.16 or newer. gtk4-layer-shell is built in. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts but the stylesheet does not load."
             echo
             echo '```'
             echo "tar -xzf $ARCHIVE.tar.gz"
