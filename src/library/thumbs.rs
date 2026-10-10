@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -89,7 +90,7 @@ pub fn texture(cache: &Path, source: &Path) -> Result<gdk::Texture, ThumbError> 
 /// let removed = thumbs::prune(&thumbs::dir(), &paths)?;
 /// ```
 pub fn prune(cache: &Path, sources: &[PathBuf]) -> io::Result<usize> {
-    let keep: Vec<String> = sources
+    let keep: HashSet<String> = sources
         .iter()
         .filter_map(|source| key(source).ok())
         .map(|key| format!("{key:016x}.png"))
@@ -100,12 +101,15 @@ pub fn prune(cache: &Path, sources: &[PathBuf]) -> io::Result<usize> {
         Err(error) => return Err(error),
     };
     let mut removed = 0;
-    for entry in entries {
-        let entry = entry?;
+    for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !keep.contains(&name) {
-            fs::remove_file(entry.path())?;
-            removed += 1;
+        let stale = name.ends_with(".png") && !keep.contains(&name);
+        if !stale || !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(error) => eprintln!("kiekje: could not remove thumbnail {name}: {error}"),
         }
     }
     Ok(removed)
@@ -266,6 +270,18 @@ mod tests {
         assert_eq!(fs::read_dir(&cache).unwrap().count(), 1);
         assert_eq!(prune(&cache, &[]).unwrap(), 1);
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn prunes_stale_thumbnails_but_not_writes_in_progress() {
+        let cache = scratch("prune");
+        fs::create_dir_all(cache.join("folder")).unwrap();
+        fs::write(cache.join("0000000000000001.png"), b"old").unwrap();
+        fs::write(cache.join("0000000000000002.png.1-0.tmp"), b"busy").unwrap();
+        assert_eq!(prune(&cache, &[]).unwrap(), 1);
+        assert!(cache.join("0000000000000002.png.1-0.tmp").exists());
+        assert!(cache.join("folder").is_dir());
+        fs::remove_dir_all(cache).unwrap();
     }
 
     #[test]
