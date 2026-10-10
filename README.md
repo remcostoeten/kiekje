@@ -75,9 +75,9 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Format | Architectures | Status |
 | --- | --- | --- |
 | Tarball with `install.sh` | x86_64 | In release `0.1.0-alpha.2` |
-| Tarball | aarch64 | From the next release |
-| `.deb` | x86_64, aarch64 | From the next release |
-| `.rpm` | x86_64, aarch64 | From the next release |
+| Tarball | aarch64 | From 0.1.0-alpha.3 |
+| `.deb` | x86_64, aarch64 | From 0.1.0-alpha.3 |
+| `.rpm` | x86_64, aarch64 | From 0.1.0-alpha.3 |
 | AUR `kiekje`, `kiekje-bin` | x86_64 | PKGBUILDs in `packaging/`, not published to the AUR yet |
 | From source with Cargo | any | Works |
 
@@ -225,7 +225,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 
 ### Release packages
 
-Download from [Releases](https://github.com/remcostoeten/kiekje/releases). `.deb` and `.rpm` packages ship from the next release on.
+Download from [Releases](https://github.com/remcostoeten/kiekje/releases). `.deb` and `.rpm` packages ship from 0.1.0-alpha.3 on.
 
 ```bash
 sudo apt install ./kiekje_VERSION-1_amd64.deb                              # Ubuntu, Debian, Mint
