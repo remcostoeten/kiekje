@@ -689,6 +689,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             notifications: config.notifications,
             capture: config.capture,
             overlay: config.overlay,
+            drawing_keys: config.drawing.keys,
             host: session.shortcut_host.borrow().clone(),
             bound,
         };
@@ -776,6 +777,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         let notifications = config.notifications;
         let inline = config.capture.after_selection == AfterSelection::Edit;
         let overlay = config.overlay;
+        let drawing = config.drawing;
         let previous_region = (request.mode == CaptureMode::Region)
             .then(|| known_region.or_else(last_region::load))
             .flatten();
@@ -799,6 +801,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             notifications,
             inline,
             overlay,
+            drawing,
             previous_region,
             glib::monotonic_time(),
         ));
@@ -807,7 +810,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let Ok((result, notifications, inline, overlay, previous_region, captured_us)) =
+        let Ok((result, notifications, inline, overlay, drawing, previous_region, captured_us)) =
             receiver.recv().await
         else {
             session.busy.set(false);
@@ -821,6 +824,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
                 let options = overlay::Options {
                     edit: request.edit || inline,
                     overlay,
+                    drawing,
                     last_region: previous_region,
                 };
                 handle_capture(&app, request, capture, region, &monitors, options, session)

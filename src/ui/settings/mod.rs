@@ -1,5 +1,6 @@
 mod about;
 mod danger;
+mod drawing;
 mod general;
 
 use std::cell::{Cell, RefCell};
@@ -11,6 +12,7 @@ use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
 use crate::config::{self, Capture, Config, ConfigError, Notifications, Overlay, Storage};
+use crate::editor::DrawingKeys;
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
     record,
@@ -27,6 +29,7 @@ pub struct Model {
     pub notifications: Notifications,
     pub capture: Capture,
     pub overlay: Overlay,
+    pub drawing_keys: DrawingKeys,
 }
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
@@ -247,6 +250,7 @@ pub fn show(
         configure.connect_clicked(move |_| on_configure());
         pages.shortcuts.append(&configure);
     }
+    let drawing = drawing::append(&pages.shortcuts, &window, model.drawing_keys);
 
     let editor = Rc::new(Editor {
         host: model.host,
@@ -288,6 +292,9 @@ pub fn show(
             let defaults = Config::default();
             if let Some(general) = general.upgrade() {
                 general.reset(&defaults);
+            }
+            if let Some(drawing) = drawing.upgrade() {
+                drawing.reset(defaults.drawing.keys);
             }
             if let Some(editor) = reset_editor.upgrade() {
                 editor.shortcuts.replace(defaults.shortcuts);

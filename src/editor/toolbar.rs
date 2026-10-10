@@ -4,6 +4,7 @@ use gtk::prelude::*;
 
 use super::Editor;
 use super::document::{Color, Tool};
+use super::keys::{DrawAction, DrawKey};
 
 const SWATCH: i32 = 14;
 
@@ -65,11 +66,11 @@ pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
     let mut tools = Vec::new();
     for tool in Tool::ALL {
         let (label, key) = match tool {
-            Tool::Crop if editor.is_inline() => ("Region", "s"),
-            _ => (tool.label(), tool.key()),
+            Tool::Crop if editor.is_inline() => ("Region", DrawKey::Key('s')),
+            _ => (tool.label(), editor.keys.get(DrawAction::Tool(tool))),
         };
         let button = chip(label, &mut group);
-        button.set_tooltip_text(Some(&format!("{label} ({})", key.to_uppercase())));
+        button.set_tooltip_text(Some(&hinted(label, key)));
         button.set_active(tool == editor.tool.get());
         let target = Rc::downgrade(editor);
         button.connect_toggled(move |button| {
@@ -104,7 +105,6 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
     let colors = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
-    let mut swatches = Vec::new();
     for color in Color::ALL {
         let button = swatch(color, &mut group);
         button.set_active(color == editor.color.get());
@@ -117,16 +117,21 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
             }
         });
         colors.append(&button);
-        swatches.push((color, button));
     }
-    editor.swatches.replace(swatches);
     bottom.append(&colors);
-    bottom.append(&slider(
-        "Size",
-        "Line and text size ([ and ])",
-        &editor.size,
-        |value| format!("{value} px"),
-    ));
+    let keys = [DrawAction::Smaller, DrawAction::Larger]
+        .map(|action| editor.keys.get(action))
+        .into_iter()
+        .filter(|key| *key != DrawKey::Off)
+        .map(DrawKey::label)
+        .collect::<Vec<_>>();
+    let size_tip = match keys.as_slice() {
+        [] => "Line and text size".to_owned(),
+        keys => format!("Line and text size ({})", keys.join(" and ")),
+    };
+    bottom.append(&slider("Size", &size_tip, &editor.size, |value| {
+        format!("{value} px")
+    }));
     bottom.append(&slider(
         "Opacity",
         "Opacity of lines, shapes and text",
@@ -174,6 +179,13 @@ fn slider(
     adjustment.connect_value_changed(show.clone());
     group.append(&value);
     group
+}
+
+pub(super) fn hinted(label: &str, key: DrawKey) -> String {
+    match key {
+        DrawKey::Key(_) => format!("{label} ({key})"),
+        DrawKey::Off => label.to_owned(),
+    }
 }
 
 pub(super) fn on_click(editor: &Rc<Editor>, button: &gtk::Button, run: fn(&Rc<Editor>)) {

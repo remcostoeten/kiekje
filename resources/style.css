@@ -768,3 +768,50 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
   background-color: var(--accent);
   outline: 2px solid var(--focus-wash);
 }
+
+popover.context-menu > contents {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.context-list.panel {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.context-list button.menu-item {
+  background: none;
+  background-color: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  box-shadow: none;
+  padding: 5px 10px;
+  min-width: 200px;
+}
+
+.context-list button.menu-item:hover,
+.context-list button.menu-item:focus-visible {
+  background-color: var(--wash);
+  border-color: var(--stroke);
+}
+
+.context-list button.menu-item.current {
+  background-color: var(--accent-wash);
+}
+
+.context-list button.menu-item:disabled {
+  color: var(--muted);
+}
+
+.context-list separator {
+  background-color: var(--stroke);
+  min-height: 1px;
+  margin: 4px 6px;
+}

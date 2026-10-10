@@ -36,6 +36,7 @@ const MIN_SELECTION: i32 = 3;
 pub struct Options {
     pub edit: bool,
     pub overlay: config::Overlay,
+    pub drawing: config::Drawing,
     pub last_region: Option<LogicalRect>,
 }
 
@@ -141,6 +142,7 @@ struct Shared {
     pointer: Cell<Option<(f64, f64)>>,
     hints: RefCell<Vec<gtk::Box>>,
     hints_on: Cell<bool>,
+    drawing: config::Drawing,
 }
 
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
@@ -198,6 +200,7 @@ pub fn show(
         pointer: Cell::new(None),
         hints: RefCell::new(Vec::new()),
         hints_on: Cell::new(options.overlay.hints),
+        drawing: options.drawing,
     });
 
     for (frame_index, frame) in frames.iter().enumerate() {
@@ -633,7 +636,7 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
             begin_edit(shared, pointer_frame(shared), None, Some(gdk::Key::p));
             true
         }
-        _ if Inline::is_tool_key(key) => {
+        _ if Inline::is_tool_key(&shared.drawing.keys, key) => {
             begin_edit(shared, pointer_frame(shared), None, Some(key));
             true
         }
@@ -758,7 +761,7 @@ fn begin_edit(
             return;
         };
         let ending = Rc::downgrade(&shared);
-        let opened = Inline::open(image, CaptureMode::Region, move |end| {
+        let opened = Inline::open(image, CaptureMode::Region, shared.drawing, move |end| {
             let Some(shared) = ending.upgrade() else {
                 return;
             };
