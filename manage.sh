@@ -878,13 +878,20 @@ function cmd_backup() {
     detail "source" "$dir ($count files)"
     step "Writing $output"
     local -a extra=()
-    (( library )) && [[ -f "$DATA_DIR/library.db" ]] && extra+=("$DATA_DIR/library.db")
+    if (( library )) && [[ -f "$DATA_DIR/library.db" ]]; then
+        command -v sqlite3 >/dev/null || die "--with-library needs sqlite3 to copy the library while Kiekje may be writing it."
+        local snapshot
+        snapshot="$(mktemp -d)"
+        trap 'rm -rf -- "$snapshot"; trap - RETURN' RETURN
+        sqlite3 -readonly "$DATA_DIR/library.db" ".backup '$snapshot/library.db'" || die "Could not copy the library."
+        extra+=("$snapshot/library.db")
+    fi
     if command -v zip >/dev/null 2>&1; then
         (cd "$(dirname "$dir")" && zip -qr9 "$output" "$(basename "$dir")")
         (( ${#extra[@]} )) && zip -qj "$output" "${extra[@]}"
     elif command -v bsdtar >/dev/null 2>&1; then
         local -a library_args=()
-        (( ${#extra[@]} )) && library_args=(-C "$DATA_DIR" library.db)
+        (( ${#extra[@]} )) && library_args=(-C "$(dirname "${extra[0]}")" library.db)
         bsdtar -a -cf "$output" -C "$(dirname "$dir")" "$(basename "$dir")" ${library_args[@]+"${library_args[@]}"}
     else
         die "Install zip or bsdtar to make backups."
@@ -955,4 +962,6 @@ function main() {
     esac
 }
 
+# Exiting here keeps bash from reading on into this file after `update` rewrites it.
 main "$@"
+exit $?
