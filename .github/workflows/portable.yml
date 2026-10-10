@@ -1,0 +1,124 @@
+name: Portable build
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/portable.yml
+      - .github/workflows/release.yml
+      - Cargo.toml
+      - Cargo.lock
+      - build.rs
+
+concurrency:
+  group: portable-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  LAYER_SHELL_VERSION: v1.1.1
+  SYSTEM_DEPS_GTK4_LAYER_SHELL_0_LINK: static
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libwayland-dev wayland-protocols \
+            meson ninja-build pkg-config
+
+      - name: Cache gtk4-layer-shell
+        id: layer-shell
+        uses: actions/cache@v4
+        with:
+          path: ~/layer-shell-static
+          key: layer-shell-static-${{ env.LAYER_SHELL_VERSION }}-ubuntu-24.04
+
+      # Linked into the binary because Ubuntu 24.04 and its derivatives do not package it.
+      - name: Build gtk4-layer-shell
+        if: steps.layer-shell.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$LAYER_SHELL_VERSION" https://github.com/wmww/gtk4-layer-shell.git /tmp/gls
+          meson setup /tmp/gls/build /tmp/gls --prefix="$HOME/layer-shell-static" --libdir=lib \
+            -Ddefault_library=static \
+            -Dexamples=false -Ddocs=false -Dtests=false -Dintrospection=false -Dvapi=false
+          ninja -C /tmp/gls/build install
+
+      - name: Point the build at gtk4-layer-shell
+        run: echo "PKG_CONFIG_PATH=$HOME/layer-shell-static/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: portable
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Check the link
+        run: |
+          binary=target/release/kiekje
+          if readelf -d "$binary" | grep -q layer-shell; then
+            echo "gtk4-layer-shell is still a shared library dependency" >&2
+            exit 1
+          fi
+          # The libwayland shim only works when the executable exports these.
+          nm -D --defined-only "$binary" | grep -q " T wl_proxy_marshal_array_flags$" || {
+            echo "the libwayland shim symbols are not exported" >&2
+            exit 1
+          }
+          readelf -d "$binary" | grep NEEDED
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kiekje-x86_64-linux
+          path: target/release/kiekje
+          if-no-files-found: error
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: archlinux:latest
+            install: pacman -Syu --noconfirm gtk4
+          - image: fedora:latest
+            install: dnf install -y gtk4
+          - image: opensuse/tumbleweed
+            install: zypper --non-interactive install libgtk-4-1
+          - image: debian:trixie
+            install: apt-get update && apt-get install -y --no-install-recommends libgtk-4-1
+          - image: ubuntu:24.04
+            install: apt-get update && apt-get install -y --no-install-recommends libgtk-4-1
+          - image: ubuntu:25.10
+            install: apt-get update && apt-get install -y --no-install-recommends libgtk-4-1
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install GTK
+        run: ${{ matrix.install }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kiekje-x86_64-linux
+
+      - name: Start the binary
+        run: |
+          chmod +x kiekje
+          ldd kiekje
+          if ldd kiekje | grep -q "not found"; then
+            echo "missing libraries on ${{ matrix.image }}" >&2
+            exit 1
+          fi
+          ./kiekje --version
