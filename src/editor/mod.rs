@@ -321,6 +321,7 @@ impl Editor {
     }
 
     fn undo(&self) {
+        self.finish_text(true);
         self.deselect();
         if self.document.borrow_mut().undo() {
             self.edited();
@@ -328,6 +329,7 @@ impl Editor {
     }
 
     fn redo(&self) {
+        self.finish_text(true);
         self.deselect();
         if self.document.borrow_mut().redo() {
             self.edited();
@@ -335,6 +337,7 @@ impl Editor {
     }
 
     fn clear(&self) {
+        self.finish_text(true);
         let shapes = self.document.borrow().shapes().to_vec();
         if shapes.is_empty() {
             return;
