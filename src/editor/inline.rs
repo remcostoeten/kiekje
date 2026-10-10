@@ -5,12 +5,13 @@ use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
 
 use super::canvas::View;
-use super::document::{Area, Point, Tool};
+use super::document::{Area, Point};
 use super::pixels::{self, LoadError};
 use super::render::{self, Layers};
-use super::{Editor, Host, Input, SaveError, prepare, toolbar};
+use super::{DrawAction, DrawingKeys, Editor, Host, Input, Loaded, SaveError, prepare, toolbar};
 use crate::capture::mapping::PixelRect;
 use crate::capture::{CaptureMode, LogicalRect};
+use crate::config;
 use crate::output::Image;
 use crate::ui;
 
@@ -69,11 +70,12 @@ impl Inline {
     /// # Examples
     ///
     /// ```ignore
-    /// let inline = Inline::open(image, CaptureMode::Region, |ending| {}).await?;
+    /// let inline = Inline::open(image, CaptureMode::Region, drawing, |ending| {}).await?;
     /// ```
     pub async fn open(
         image: Image,
         mode: CaptureMode,
+        drawing: config::Drawing,
         on_end: impl FnOnce(Ending) + 'static,
     ) -> Result<Self, OpenError> {
         let prepared = gio::spawn_blocking(move || prepare(Input::Image(image)))
@@ -81,13 +83,12 @@ impl Inline {
             .map_err(|_| OpenError::Worker)??;
         let layers = Layers::new(prepared.base, prepared.hidden)?;
         let host = Host::Inline(RefCell::new(Some(Box::new(on_end))));
-        Ok(Self(Editor::new(
-            host,
-            mode,
-            None,
-            prepared.picture,
+        let loaded = Loaded {
+            picture: prepared.picture,
             layers,
-        )))
+            drawing,
+        };
+        Ok(Self(Editor::new(host, mode, None, loaded)))
     }
 
     /// Covers `layer` with the frame and puts the tool and action bars around the region.
@@ -145,11 +146,13 @@ impl Inline {
     /// # Examples
     ///
     /// ```ignore
-    /// if Inline::is_tool_key(gdk::Key::a) { start_drawing(); }
+    /// if Inline::is_tool_key(&keys, gdk::Key::a) { start_drawing(); }
     /// ```
-    pub fn is_tool_key(key: gdk::Key) -> bool {
-        let letter = key.to_lower().name().unwrap_or_default();
-        Tool::ALL.into_iter().any(|tool| tool.key() == letter)
+    pub fn is_tool_key(keys: &DrawingKeys, key: gdk::Key) -> bool {
+        key.to_lower()
+            .to_unicode()
+            .and_then(|typed| keys.action(typed))
+            .is_some_and(|action| matches!(action, DrawAction::Tool(_)))
     }
 
     /// Handles a key pressed anywhere on the overlay.

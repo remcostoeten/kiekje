@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use toml::Table;
 
+use crate::editor::{Color, DrawAction, DrawKey, DrawingKeys, KeyConflict};
 use crate::shortcuts::{Conflict, ShortcutAction, Shortcuts, Slot};
 use crate::storage::{self, Template};
 pub use migrate::{MigrateError, VERSION};
@@ -26,7 +27,18 @@ pub struct Config {
     #[serde(default)]
     pub notifications: Notifications,
     #[serde(default)]
+    pub drawing: Drawing,
+    #[serde(default)]
     pub shortcuts: Shortcuts,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Drawing {
+    pub color: Color,
+    pub size: u32,
+    pub opacity: u32,
+    pub keys: DrawingKeys,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -119,6 +131,8 @@ pub enum ConfigError {
     Write { path: PathBuf, source: io::Error },
     #[error("{}: {source}", path.display())]
     Shortcuts { path: PathBuf, source: Conflict },
+    #[error("{}: {source}", path.display())]
+    Keys { path: PathBuf, source: KeyConflict },
     #[error("could not encode the config: {0}")]
     Encode(#[from] toml::ser::Error),
 }
@@ -135,6 +149,7 @@ impl Default for Config {
             capture: Capture::default(),
             overlay: Overlay::default(),
             notifications: Notifications::default(),
+            drawing: Drawing::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -148,6 +163,17 @@ impl Default for Overlay {
             slow_pointer: SlowPointer::default(),
             window_snap: true,
             hints: true,
+        }
+    }
+}
+
+impl Default for Drawing {
+    fn default() -> Self {
+        Self {
+            color: Color::default(),
+            size: 3,
+            opacity: 100,
+            keys: DrawingKeys::default(),
         }
     }
 }
@@ -316,6 +342,33 @@ pub fn ensure_file(path: &Path) -> Result<bool, ConfigError> {
     Ok(true)
 }
 
+/// Sets the key for one drawing action in the config at `path` and returns the keys as saved.
+///
+/// A key another drawing action already uses, or a config that can't be read, leaves the file
+/// untouched. Touches the disk, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let keys = config::set_drawing_key(&config::path(), DrawAction::Smaller, DrawKey::Key('-'))?;
+/// ```
+pub fn set_drawing_key(
+    path: &Path,
+    action: DrawAction,
+    key: DrawKey,
+) -> Result<DrawingKeys, ConfigError> {
+    let mut config = load_from(path)?.unwrap_or_default();
+    config.drawing.keys.set(action, key);
+    if let Some(source) = config.drawing.keys.conflict() {
+        return Err(ConfigError::Keys {
+            path: path.to_path_buf(),
+            source,
+        });
+    }
+    save_to(path, &config)?;
+    Ok(config.drawing.keys)
+}
+
 /// Sets one shortcut in the config at `path` and returns the shortcuts as saved.
 ///
 /// The rest of the file is kept. A trigger another action already uses, or a config that
@@ -373,6 +426,12 @@ fn parse(text: &str, path: &Path) -> Result<Config, ConfigError> {
     let config: Config = table.try_into().map_err(parse_error)?;
     if let Some(source) = config.shortcuts.conflict() {
         return Err(ConfigError::Shortcuts {
+            path: path.to_path_buf(),
+            source,
+        });
+    }
+    if let Some(source) = config.drawing.keys.conflict() {
+        return Err(ConfigError::Keys {
             path: path.to_path_buf(),
             source,
         });
@@ -481,6 +540,67 @@ mod tests {
             Config::default().capture.after_selection,
             AfterSelection::Finish
         );
+    }
+
+    #[test]
+    fn reads_the_drawing_style_and_defaults_the_rest() {
+        let config = parse(
+            "[drawing]\ncolor = \"blue\"\nsize = 6",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.drawing,
+            Drawing {
+                color: Color::Blue,
+                size: 6,
+                opacity: 100,
+                keys: DrawingKeys::default()
+            }
+        );
+        let orange = parse("[drawing]\ncolor = \"orange\"", Path::new("config.toml")).unwrap();
+        assert_eq!(orange.drawing.color, Color::Accent);
+        assert_eq!(Config::default().drawing.size, 3);
+    }
+
+    #[test]
+    fn reads_drawing_keys_and_an_empty_one_as_off() {
+        let config = parse(
+            "[drawing.keys]\nbox = \"b\"\nthinner = \"-\"\nstep = \"\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        let keys = config.drawing.keys;
+        assert_eq!(keys.rectangle, DrawKey::Key('b'));
+        assert_eq!(keys.thinner, DrawKey::Key('-'));
+        assert_eq!(keys.step, DrawKey::Off);
+        assert_eq!(keys.pen, DrawKey::Key('p'));
+    }
+
+    #[test]
+    fn rejects_drawing_keys_that_clash_or_the_overlay_uses() {
+        let clash = parse("[drawing.keys]\nbox = \"p\"", Path::new("config.toml"));
+        assert!(matches!(clash, Err(ConfigError::Keys { .. })));
+        assert!(parse("[drawing.keys]\npen = \"f\"", Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn sets_one_drawing_key_and_refuses_a_taken_one() {
+        let path = scratch("drawing-keys");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+        let keys = set_drawing_key(&path, DrawAction::Smaller, DrawKey::Key('-')).unwrap();
+        assert_eq!(keys.thinner, DrawKey::Key('-'));
+        let taken = set_drawing_key(&path, DrawAction::Larger, DrawKey::Key('-'));
+        assert!(matches!(taken, Err(ConfigError::Keys { .. })));
+        let saved = load_from(&path).unwrap().unwrap();
+        assert_eq!(saved.drawing.keys.thinner, DrawKey::Key('-'));
+        assert_eq!(saved.drawing.keys.thicker, DrawKey::Key(']'));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn rejects_an_unknown_drawing_colour() {
+        assert!(parse("[drawing]\ncolor = \"purple\"", Path::new("config.toml")).is_err());
     }
 
     #[test]

@@ -730,3 +730,88 @@ window.kiekje-pin popover.menu modelbutton:hover,
 window.kiekje-pin popover.menu modelbutton:focus-visible {
   background-color: var(--accent-wash);
 }
+
+.editor .stroke-option {
+  padding: 0 4px;
+}
+
+.editor scale {
+  min-width: 96px;
+  padding: 6px 0;
+}
+
+.editor scale > trough {
+  background-color: var(--stroke);
+  border: none;
+  border-radius: 999px;
+  min-height: 4px;
+}
+
+.editor scale > trough > highlight {
+  background-color: color-mix(in srgb, var(--fg) 45%, transparent);
+  border: none;
+  border-radius: 999px;
+}
+
+.editor scale > trough > slider {
+  background: none;
+  background-color: var(--fg);
+  border: none;
+  border-radius: 999px;
+  box-shadow: none;
+  min-width: 12px;
+  min-height: 12px;
+  margin: -4px;
+}
+
+.editor scale:focus-visible > trough > slider {
+  background-color: var(--accent);
+  outline: 2px solid var(--focus-wash);
+}
+
+popover.context-menu > contents {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.context-list.panel {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.context-list button.menu-item {
+  background: none;
+  background-color: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  box-shadow: none;
+  padding: 5px 10px;
+  min-width: 200px;
+}
+
+.context-list button.menu-item:hover,
+.context-list button.menu-item:focus-visible {
+  background-color: var(--wash);
+  border-color: var(--stroke);
+}
+
+.context-list button.menu-item.current {
+  background-color: var(--accent-wash);
+}
+
+.context-list button.menu-item:disabled {
+  color: var(--muted);
+}
+
+.context-list separator {
+  background-color: var(--stroke);
+  min-height: 1px;
+  margin: 4px 6px;
+}
