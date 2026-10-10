@@ -7,7 +7,7 @@
 **Kiekje** *(noun)*
 /ˈkik.jə/, *Dutch slang, "a quick snapshot or photo."*
 
-A screenshot tray app for Linux. **Kiekje** grabs the screen the moment you trigger it, shows that frozen frame so you can pick the part you want, then copies it, saves it and keeps it in a gallery. It targets KDE Plasma and Hyprland (Omarchy) on Wayland.
+A screenshot tray app for Linux. Kiekje grabs the screen the moment you trigger it, shows that frozen frame so you can pick the part you want, then copies it, saves it and keeps it in a gallery. It targets KDE Plasma and Hyprland (Omarchy) on Wayland.
 
 <p align="center">
   <img src="https://shieldcn.dev/github/remcostoeten/kiekje/ci.svg?font=jetbrains-mono" alt="CI" />
@@ -24,45 +24,213 @@ A screenshot tray app for Linux. **Kiekje** grabs the screen the moment you trig
   <sub>Recorded in a headless Sway session with a lab build.</sub>
 </p>
 
-Capture happens first and selection second: the overlay always shows a frame grabbed at trigger time, so what you crop is what was on screen when you pressed the key.
+> [!WARNING]
+> Kiekje is pre-release (`0.1.0-alpha.2`). Everything below has been tested in virtual machines and headless sessions only. Runs on real hardware with Omarchy, Plasma and GNOME are still open and tracked in [issue #41](https://github.com/remcostoeten/kiekje/issues/41). Detailed lab results are in [docs/phase-0-results.md](docs/phase-0-results.md).
 
-- **Selects on a frozen frame**, across monitors and at fractional scales.
-- Copies to the clipboard and saves a PNG named from a template you edit in settings.
-- Marks up with boxes, ellipses, arrows, lines, pen, marker, numbered steps, pixelate, text and crop, on the overlay or in a separate editor.
-- Keeps every capture in a gallery with grid and list views, search, filters and sorting.
-- Sits in the tray with a menu, and binds Print and Shift+Print through the GlobalShortcuts portal, or through a managed bind file on Hyprland.
-- Delays a capture, repeats the last region and sends a notification with an optional sound.
+## Contents
 
-Kiekje is pre-release. It has been run in virtual machines running Plasma, Hyprland and Sway. Runs on real hardware with Omarchy, Plasma and GNOME are still open, and GNOME is unverified. Results are in [docs/phase-0-results.md](docs/phase-0-results.md), the architecture is in [docs/proposal.md](docs/proposal.md).
+- [Supported](#supported)
+- [Not supported](#not-supported)
+- [Features](#features)
+- [Keys](#keys)
+- [Commands](#commands)
+- [Install](#install)
+- [Getting started](#getting-started)
+- [Privacy](#privacy)
+- [Development](#development)
 
-## Usage
+## Supported
 
-Run `kiekje daemon` to start Kiekje in the tray, and turn on Start Kiekje at login in Settings to have it at login. Click the tray icon for the capture menu.
+Status legend: **Lab tested** means it passed in a VM or headless session. **Unverified** means the code path exists but has not run on that desktop yet.
 
-Press Print to capture a region or Shift+Print to capture every screen. Drag to select, then let go: the region is copied and saved. Escape cancels.
+### Desktops
 
-A loupe next to the pointer shows the pixels under it, the position in physical pixels and the colour as hex. Z hides or shows it and C copies the hex colour. Turn it off in Settings to start with it hidden.
+| Desktop | Capture backend | Overlay | Global shortcuts | Status |
+| --- | --- | --- | --- | --- |
+| KDE Plasma 6, Wayland | KWin `ScreenShot2` over D-Bus | layer-shell | GlobalShortcuts portal, kglobalaccel | Lab tested on Plasma 6.7.5 in a VM |
+| Hyprland, Omarchy | `ext-image-copy-capture`, then `wlr-screencopy` | layer-shell | managed `hyprland.conf` include, GlobalShortcuts portal | Lab tested on Hyprland 0.56.2 in a VM. Omarchy unverified |
+| Sway and other wlroots compositors | `ext-image-copy-capture`, then `wlr-screencopy` | layer-shell | GlobalShortcuts portal where the portal offers it | Lab tested on headless sway 1.9 and 1.12 |
+| GNOME, Wayland | xdg-desktop-portal Screenshot | fullscreen window | GlobalShortcuts portal | Lab tested on GNOME 50.5 in a VM. Shortcut keys and overlay focus unverified |
+| KDE Plasma, X11 | KWin `ScreenShot2` | fullscreen window | kglobalaccel | Unverified |
 
-On KDE Plasma 6 and Hyprland the window under the pointer lights up; click without dragging to select that window. Turn it off in Settings if you prefer a plain drag.
+The backend is picked at runtime from the Wayland registry, D-Bus names and portal versions, never from which binaries are installed. Run `kiekje doctor` to see what your session supports.
 
-To keep a capture in view while you work, pin it: use Pin on the overlay action bar, Pin on screen in the gallery menu, or `kiekje pin <path>`. Drag a pin to move it, scroll to zoom and press Escape or double-click to close it. On GNOME and X11 a pin is a normal window that may end up behind others.
+### Distributions
 
-Turn on "Edit a region on screen before copying and saving it" in settings, or run `kiekje capture region --edit`, to mark up the selection on the overlay. Enter accepts and Escape cancels.
+The release binary links gtk4-layer-shell statically. CI installs and starts it on every distribution below before a release ships.
 
-`kiekje gallery` opens the gallery and `kiekje settings` opens settings, where you set the save folder, the file name template, notifications and shortcuts. Settings are stored in `~/.config/kiekje/config.toml`.
+| Distribution | x86_64 | aarch64 | Styling |
+| --- | --- | --- | --- |
+| Arch Linux | yes | not built | full |
+| Fedora | yes | yes | full |
+| openSUSE Tumbleweed | yes | not built | full |
+| Debian 13 | yes | yes | full |
+| Ubuntu 25.10 | yes | not built | full |
+| Ubuntu 24.04 | yes | yes | **none**, GTK 4.14, see below |
 
-On KDE, run `kiekje install-desktop-file` once, because KWin only allows screenshots from an app with a desktop file. `kiekje doctor` reports what the current session supports and how to fix what is missing.
+Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in CI. Started in CI means the binary launches and opens its surfaces. It does not mean a desktop was clicked through on that distribution.
+
+### Packages
+
+| Format | Architectures | Status |
+| --- | --- | --- |
+| Tarball with `install.sh` | x86_64 | In release `0.1.0-alpha.2` |
+| Tarball | aarch64 | From the next release |
+| `.deb` | x86_64, aarch64 | From the next release |
+| `.rpm` | x86_64, aarch64 | From the next release |
+| AUR `kiekje`, `kiekje-bin` | x86_64 | PKGBUILDs in `packaging/`, not published to the AUR yet |
+| From source with Cargo | any | Works |
+
+## Not supported
+
+| What | Status | Notes |
+| --- | --- | --- |
+| GTK 4.14 styling | Known limit | Ubuntu 24.04 and Mint 22 ship GTK 4.14, which rejects the stylesheet's CSS variables and `color-mix()`. Kiekje starts and works there but looks unstyled. Full styling needs GTK 4.16 or newer. |
+| X11 capture backend | On hold | Pure X11 sessions other than Plasma have no capture path. `doctor` reports it as unavailable. |
+| Flatpak | Not yet | Native packages come first. A portal-only Flatpak build is planned later. |
+| macOS, Windows | Not planned | Kiekje is Linux only. |
+| Screen recording | Post-V1 | Planned with GStreamer. |
+| Text recognition (OCR) | Post-V1 | Planned with Tesseract. |
+| Update check | Not built | There is no release feed to check against yet. |
+| Window capture as its own mode | Partial | On Plasma 6 and Hyprland a click selects the window under the pointer inside the region overlay. There is no separate window command. |
+| Real hardware | Unverified | No run on physical machines with Omarchy, Plasma or GNOME yet. See [issue #41](https://github.com/remcostoeten/kiekje/issues/41). |
+
+## Features
+
+### Capture
+
+| Feature | Details | Status |
+| --- | --- | --- |
+| Frozen-frame selection | The screen is grabbed at trigger time; you select on that still image | Lab tested |
+| Region capture | Drag to select, release to copy and save | Lab tested |
+| Full screen | Every monitor, stitched into one image | Lab tested |
+| Repeat last region | Crops the last selected area again without the overlay | Lab tested on sway |
+| Delay | `--delay` up to 60 seconds | Lab tested on sway |
+| Multi-monitor | Selections can cross monitors and mixed scales, cropped at native resolution | Lab tested on Plasma, sway, Hyprland |
+| Fractional scaling and rotation | Mapped back to physical pixels | Lab tested on sway and Hyprland virtual outputs |
+| Window snapping | The window under the pointer lights up; click to take it | Plasma 6 and Hyprland, unverified |
+| Pixel loupe | Magnifier with position and hex colour under the pointer | Unverified on desktops |
+| Colour picker | C copies the hex colour; picked colours are listed in the gallery | Unverified on desktops |
+| Hint bar | Lists the overlay keys; `?` hides it | Lab tested on sway |
+
+### Annotation
+
+| Feature | Details | Status |
+| --- | --- | --- |
+| Inline editor | Draw on the selection right on the overlay, Spectacle style, with Accept, Cancel, Save, Save as and Copy | Lab tested on sway |
+| Editor window | Opens from the gallery or straight after a capture | Lab tested on sway |
+| Tools | Select, box, ellipse, arrow, line, pen, marker, numbered steps, text, pixelate, crop | Lab tested on sway |
+| Styling | 7 colours, size slider (1 to 24 px), opacity slider (10 to 100%), remembered between editors | Lab tested on sway |
+| Edit shapes | Move, resize, nudge, restyle and delete placed shapes | Lab tested on sway |
+| Right-click menu | Every tool, line size, undo, redo and delete | Lab tested on sway |
+| Rebindable keys | Every tool and thinner or thicker lines, set in Settings, Shortcuts, Drawing keys | Lab tested on sway |
+| Undo and redo | Every change is one undoable step | Unit tested |
+| Non-destructive | Saving an edit writes a new `-edited` file; the original stays | Lab tested on sway |
+
+### Output and library
+
+| Feature | Details | Status |
+| --- | --- | --- |
+| Clipboard | PNG on the clipboard, also from the background daemon on Plasma | Lab tested |
+| Save to disk | PNG in `~/Pictures/Kiekje`, exclusive create, never overwrites | Lab tested |
+| Filename templates | e.g. `kiekje-{mode}-{date}-{time}`, live preview in Settings | Unit and lab tested |
+| Pin on screen | Keep a capture floating above other windows; drag, scroll to zoom | Unverified on desktops |
+| Notifications | With the image, Open and Show in folder actions, optional sound | Lab tested |
+| Gallery | Grid and list views, search, kind and period filters, sorting | Lab tested on sway |
+| File actions | Open, show in folder, copy image, copy path, trash, remove, edit, pin | Lab tested on sway |
+| Missing files | Detects moved or deleted files and lets you relink them | Lab tested on sway |
+| Large libraries | Thumbnails load only for visible items; 10,000 captures tested | Lab tested on sway |
+
+### App
+
+| Feature | Details | Status |
+| --- | --- | --- |
+| Tray | Styled popover on left click, native menu on right click | Lab tested on Plasma. Waybar and GNOME unverified |
+| Global shortcuts | Print for a region, Shift+Print for every screen, rebindable with a recorder | Lab tested on Plasma and Hyprland |
+| Settings | Capture, Shortcuts, Saving, General and About pages | Lab tested on sway |
+| Start at login | Toggle in Settings | Unverified |
+| Doctor | Reports what the session supports and how to fix the rest | Lab tested |
+| Danger zone | Reset settings, clear gallery, colours or thumbnails, with a two-click guard | Lab tested on sway |
+| Single instance | CLI commands talk to the running daemon over D-Bus | Lab tested |
+
+## Keys
+
+### Overlay, before selecting
+
+| Key | Action |
+| --- | --- |
+| Drag | Select a region |
+| Click | Take the window under the pointer (Plasma 6, Hyprland) |
+| F | Take the monitor under the pointer |
+| W, Enter | Take the hovered window |
+| Shift+R | Take the last region |
+| D, or a tool key | Start drawing first, pick the region afterwards with S |
+| Z | Show or hide the loupe |
+| C | Copy the colour under the pointer |
+| ? | Show or hide the hint bar |
+| Esc | Cancel |
+
+### Inline editor
+
+| Key | Action |
+| --- | --- |
+| Enter | Accept: copy and save |
+| Esc | Cancel |
+| Ctrl+C | Copy only |
+| Ctrl+S | Save only |
+| Ctrl+Shift+S | Save as |
+| Arrows | Move the region |
+| Ctrl+Arrows | Resize the region |
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z, Ctrl+Y | Redo |
+
+### Drawing tools (defaults, rebindable)
+
+| Key | Tool |
+| --- | --- |
+| V | Select |
+| R | Box |
+| E | Ellipse |
+| A | Arrow |
+| L | Line |
+| P | Pen |
+| M | Marker |
+| N | Numbered step |
+| T | Text |
+| X | Pixelate |
+| C | Crop (editor window) |
+| [ and ] | Thinner and thicker lines |
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `kiekje daemon` | Start the background instance with the tray |
+| `kiekje capture [region]` | Freeze the screen and select an area (default) |
+| `kiekje capture fullscreen` | Capture every screen |
+| `kiekje capture repeat` | Capture the last region again |
+| `kiekje capture ... --delay <s>` | Wait before grabbing the frame |
+| `kiekje capture ... --edit` | Annotate before copying and saving |
+| `kiekje capture ... --no-save` | Copy only |
+| `kiekje menu` | Open or close the capture menu |
+| `kiekje gallery` | Open the gallery |
+| `kiekje settings` | Open settings |
+| `kiekje pin <path>` | Keep an image on screen above other windows |
+| `kiekje doctor` | Report what this session supports |
+| `kiekje install-desktop-file` | Register the launcher entry, required on KDE |
+| `kiekje quit` | Stop the running instance |
+| `kiekje help`, `kiekje version` | Help and version |
 
 ## Install
 
 ### Release packages
 
-Each [release](https://github.com/remcostoeten/kiekje/releases) has a `.deb`, an `.rpm` and a tarball for x86_64 and aarch64, plus PKGBUILDs for `kiekje` and `kiekje-bin`. gtk4-layer-shell is built in, so they need only GTK 4.16 or newer. CI installs and starts them on Arch, Fedora, openSUSE Tumbleweed, Debian 13, Ubuntu 24.04 and Ubuntu 25.10 (Fedora, Debian 13 and Ubuntu 24.04 on aarch64) before a release ships. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts, but the stylesheet does not load.
+Download from [Releases](https://github.com/remcostoeten/kiekje/releases). `.deb` and `.rpm` packages ship from the next release on.
 
 ```bash
-sudo apt install ./kiekje_VERSION-1_amd64.deb             # Ubuntu, Debian, Mint
-sudo dnf install ./kiekje-VERSION-1.x86_64.rpm            # Fedora
-sudo zypper install --allow-unsigned-rpm ./kiekje-VERSION-1.x86_64.rpm   # openSUSE
+sudo apt install ./kiekje_VERSION-1_amd64.deb                              # Ubuntu, Debian, Mint
+sudo dnf install ./kiekje-VERSION-1.x86_64.rpm                             # Fedora
+sudo zypper install --allow-unsigned-rpm ./kiekje-VERSION-1.x86_64.rpm     # openSUSE
 ```
 
 The tarball works anywhere else:
@@ -83,24 +251,42 @@ cargo install --path . --locked
 kiekje install-desktop-file
 ```
 
-On other distributions you need GTK 4.16 or newer, because GTK 4.14 rejects the app's stylesheet, and gtk4-layer-shell 1.1. [.github/workflows/ci.yml](.github/workflows/ci.yml) shows how to build gtk4-layer-shell from source.
+Other distributions need GTK 4.16 or newer and gtk4-layer-shell 1.1. [.github/workflows/ci.yml](.github/workflows/ci.yml) shows how to build gtk4-layer-shell from source.
+
+## Getting started
+
+1. Run `kiekje daemon`, or turn on Start Kiekje at login in Settings.
+2. On KDE, run `kiekje install-desktop-file` once. KWin only allows screenshots from an app with a desktop file.
+3. On Hyprland, add the `source` line that `kiekje doctor` prints to your `hyprland.conf` so the Print binds load.
+4. Press Print, drag, and let go. The region is on your clipboard and in `~/Pictures/Kiekje`.
+
+Settings live in `~/.config/kiekje/config.toml`. Set `[capture] after_selection = "edit"` to always open the inline editor after selecting.
 
 ## Privacy
 
-**Kiekje's code makes no network requests.** Captures stay on your machine: PNGs go to `~/Pictures/Kiekje` by default, the gallery index lives under `$XDG_DATA_HOME/kiekje`, thumbnails and unsaved captures under `$XDG_CACHE_HOME/kiekje`, and settings under `$XDG_CONFIG_HOME/kiekje`. There are no analytics and no update check, and [Cargo.toml](Cargo.toml) lists no HTTP client. The guarantee stops at your desktop: a copied image sits on the clipboard where other apps can read it, and notifications, the screenshot portal and the tray go through your desktop's own services.
+**Kiekje's code makes no network requests.** There are no analytics and no update check, and [Cargo.toml](Cargo.toml) lists no HTTP client.
+
+| Data | Location |
+| --- | --- |
+| Captures | `~/Pictures/Kiekje` (configurable) |
+| Settings | `$XDG_CONFIG_HOME/kiekje` |
+| Gallery index | `$XDG_DATA_HOME/kiekje` |
+| Thumbnails, unsaved captures | `$XDG_CACHE_HOME/kiekje` |
+
+The guarantee stops at your desktop: a copied image sits on the clipboard where other apps can read it, and notifications, the screenshot portal and the tray go through your desktop's own services.
 
 ## Development
 
 Needs Rust 1.85 or newer (edition 2024), GTK 4.16 and gtk4-layer-shell 1.1.
 
 ```bash
-cargo build                                                    # debug build
-cargo run -- doctor                                            # what this session supports
-cargo test                                                     # unit tests
-cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings   # what CI checks
+cargo build                                                                     # debug build
+cargo run -- doctor                                                             # what this session supports
+cargo test                                                                      # unit tests
+cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings     # what CI checks
 ```
 
-Layout, architecture rules and code style are in [AGENTS.md](AGENTS.md).
+Architecture, capability matrix and phases are in [docs/proposal.md](docs/proposal.md). Layout, rules and code style are in [AGENTS.md](AGENTS.md).
 
 <br/>
 
