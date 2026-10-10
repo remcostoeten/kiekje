@@ -105,7 +105,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL --retry 6 --retry-delay 10 --retry-all-errors -o /tmp/source.tar.gz "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz"
+          archive="https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz"
+          if ! curl -fsSL --retry 3 --retry-delay 10 --retry-all-errors \
+              -H "Authorization: Bearer $GH_TOKEN" -o /tmp/source.tar.gz "$archive"; then
+            echo "::warning::$archive is not downloadable; the kiekje PKGBUILD checksum comes from git archive"
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            git archive --format=tar.gz --prefix="kiekje-$VERSION/" -o /tmp/source.tar.gz "$TAG"
+          fi
           packaging/aur/bump.sh "$VERSION" /tmp/aur /tmp/source.tar.gz \
             "dist/kiekje-$VERSION-x86_64-linux.tar.gz" "dist/kiekje-$VERSION-aarch64-linux.tar.gz"
           cp /tmp/aur/kiekje/PKGBUILD dist/PKGBUILD-kiekje
