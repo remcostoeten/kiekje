@@ -3,23 +3,26 @@ use std::rc::Rc;
 use gtk::prelude::*;
 
 use super::Editor;
-use super::document::{Color, Tool, Weight};
+use super::document::{Color, Tool};
+use super::keys::{DrawAction, DrawKey};
 
 const SWATCH: i32 = 14;
 
-pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
+pub(super) fn build(editor: &Rc<Editor>) -> gtk::Box {
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(8)
+        .css_classes(["toolbar"])
         .build();
 
-    let top = tools(editor);
-    top.append(&spacer());
-    history(editor, &top);
+    let top = row();
+    top.append(&tools(editor));
     bar.append(&top);
 
     let bottom = styles(editor);
     bottom.append(&spacer());
+    history(editor, &bottom);
+    bottom.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     for (label, tooltip, primary, run) in [
         (
             "Copy",
@@ -29,7 +32,10 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         ),
         ("Save", "Save as a new file (Ctrl+S)", true, Editor::save),
     ] {
-        let button = action(label, tooltip);
+        let button = gtk::Button::builder()
+            .label(label)
+            .tooltip_text(tooltip)
+            .build();
         if primary {
             button.add_css_class("primary");
         }
@@ -37,24 +43,34 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::ScrolledWindow {
         on_click(editor, &button, run);
     }
     bar.append(&bottom);
-    gtk::ScrolledWindow::builder()
-        .child(&bar)
-        .vscrollbar_policy(gtk::PolicyType::Never)
-        .propagate_natural_height(true)
-        .build()
+    bar
+}
+
+pub(super) fn footer(editor: &Editor, width: u32, height: u32) -> gtk::Box {
+    let footer = row();
+    footer.add_css_class("footer");
+    editor.status.set_hexpand(true);
+    footer.append(&editor.status);
+    footer.append(
+        &gtk::Label::builder()
+            .label(format!("{width} × {height}"))
+            .css_classes(["note", "value"])
+            .build(),
+    );
+    footer
 }
 
 pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
-    let top = row();
+    let top = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
     let mut tools = Vec::new();
     for tool in Tool::ALL {
-        let button = chip(tool.label(), &mut group);
-        button.set_tooltip_text(Some(&format!(
-            "{} ({})",
-            tool.label(),
-            tool.key().to_uppercase()
-        )));
+        let (label, key) = match tool {
+            Tool::Crop if editor.is_inline() => ("Region", DrawKey::Key('s')),
+            _ => (tool.label(), editor.keys.get(DrawAction::Tool(tool))),
+        };
+        let button = chip(label, &mut group);
+        button.set_tooltip_text(Some(&hinted(label, key)));
         button.set_active(tool == editor.tool.get());
         let target = Rc::downgrade(editor);
         button.connect_toggled(move |button| {
@@ -87,6 +103,7 @@ pub(super) fn history(editor: &Rc<Editor>, row: &gtk::Box) {
 
 pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
+    let colors = segmented();
     let mut group: Option<gtk::ToggleButton> = None;
     for color in Color::ALL {
         let button = swatch(color, &mut group);
@@ -96,25 +113,79 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
             if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
                 editor.color.set(color);
                 editor.restyle();
+                editor.remember();
             }
         });
-        bottom.append(&button);
+        colors.append(&button);
     }
-    bottom.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-    let mut group: Option<gtk::ToggleButton> = None;
-    for weight in Weight::ALL {
-        let button = chip(weight.label(), &mut group);
-        button.set_active(weight == editor.weight.get());
-        let target = Rc::downgrade(editor);
-        button.connect_toggled(move |button| {
-            if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
-                editor.weight.set(weight);
-                editor.restyle();
-            }
-        });
-        bottom.append(&button);
-    }
+    bottom.append(&colors);
+    let keys = [DrawAction::Smaller, DrawAction::Larger]
+        .map(|action| editor.keys.get(action))
+        .into_iter()
+        .filter(|key| *key != DrawKey::Off)
+        .map(DrawKey::label)
+        .collect::<Vec<_>>();
+    let size_tip = match keys.as_slice() {
+        [] => "Line and text size".to_owned(),
+        keys => format!("Line and text size ({})", keys.join(" and ")),
+    };
+    bottom.append(&slider("Size", &size_tip, &editor.size, |value| {
+        format!("{value} px")
+    }));
+    bottom.append(&slider(
+        "Opacity",
+        "Opacity of lines, shapes and text",
+        &editor.opacity,
+        |value| format!("{value}%"),
+    ));
     bottom
+}
+
+fn slider(
+    name: &str,
+    tooltip: &str,
+    adjustment: &gtk::Adjustment,
+    shown: fn(u32) -> String,
+) -> gtk::Box {
+    let group = row();
+    group.add_css_class("stroke-option");
+    group.set_tooltip_text(Some(tooltip));
+    group.append(
+        &gtk::Label::builder()
+            .label(name)
+            .css_classes(["caps"])
+            .build(),
+    );
+    let scale = gtk::Scale::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .adjustment(adjustment)
+        .draw_value(false)
+        .round_digits(0)
+        .width_request(96)
+        .focusable(true)
+        .build();
+    scale.update_property(&[gtk::accessible::Property::Label(name)]);
+    group.append(&scale);
+    let value = gtk::Label::builder()
+        .width_chars(5)
+        .xalign(1.0)
+        .css_classes(["note", "value"])
+        .build();
+    let label = value.clone();
+    let show = move |adjustment: &gtk::Adjustment| {
+        label.set_label(&shown(adjustment.value().round() as u32));
+    };
+    show(adjustment);
+    adjustment.connect_value_changed(show.clone());
+    group.append(&value);
+    group
+}
+
+pub(super) fn hinted(label: &str, key: DrawKey) -> String {
+    match key {
+        DrawKey::Key(_) => format!("{label} ({key})"),
+        DrawKey::Off => label.to_owned(),
+    }
 }
 
 pub(super) fn on_click(editor: &Rc<Editor>, button: &gtk::Button, run: fn(&Rc<Editor>)) {
@@ -138,6 +209,14 @@ pub(super) fn row() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
+        .build()
+}
+
+fn segmented() -> gtk::Box {
+    gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(2)
+        .css_classes(["segmented"])
         .build()
 }
 

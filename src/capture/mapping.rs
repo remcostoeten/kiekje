@@ -179,6 +179,47 @@ pub fn logical_point_to_pixel(
     ))
 }
 
+/// Converts frame pixels back to a monitor-local logical rectangle.
+///
+/// The inverse of [`logical_to_pixels`]: edges round outward, so the logical rectangle always
+/// covers every pixel of `rect`, and the result is clamped to the monitor.
+///
+/// # Examples
+///
+/// ```ignore
+/// let pixels = PixelRect { x: 15, y: 15, width: 150, height: 75 };
+/// let logical = pixels_to_logical(pixels, (1920, 1080), (2880, 1620));
+/// assert_eq!(logical, Some(LogicalRect { x: 10, y: 10, width: 100, height: 50 }));
+/// ```
+pub fn pixels_to_logical(
+    rect: PixelRect,
+    monitor_size: (i32, i32),
+    frame_size: (u32, u32),
+) -> Option<LogicalRect> {
+    if monitor_size.0 <= 0 || monitor_size.1 <= 0 || frame_size.0 == 0 || frame_size.1 == 0 {
+        return None;
+    }
+    let scale_x = f64::from(monitor_size.0) / f64::from(frame_size.0);
+    let scale_y = f64::from(monitor_size.1) / f64::from(frame_size.1);
+    let clamp = |value: f64, max: i32| value.clamp(0.0, f64::from(max)) as i32;
+    let left = clamp((f64::from(rect.x) * scale_x).floor(), monitor_size.0);
+    let top = clamp((f64::from(rect.y) * scale_y).floor(), monitor_size.1);
+    let right = clamp(
+        (f64::from(rect.x + rect.width) * scale_x).ceil(),
+        monitor_size.0,
+    );
+    let bottom = clamp(
+        (f64::from(rect.y + rect.height) * scale_y).ceil(),
+        monitor_size.1,
+    );
+    (right > left && bottom > top).then_some(LogicalRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
 /// Normalizes a drag from `start` to `end` into a rectangle with positive size.
 ///
 /// # Examples
@@ -210,6 +251,43 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn maps_pixels_back_to_logical_at_fractional_scale() {
+        let pixels = PixelRect {
+            x: 15,
+            y: 15,
+            width: 150,
+            height: 75,
+        };
+        assert_eq!(
+            pixels_to_logical(pixels, (1920, 1080), (2880, 1620)),
+            Some(rect(10, 10, 100, 50))
+        );
+    }
+
+    #[test]
+    fn rounds_odd_pixels_outward_to_cover_them() {
+        let pixels = PixelRect {
+            x: 1,
+            y: 1,
+            width: 1,
+            height: 1,
+        };
+        assert_eq!(
+            pixels_to_logical(pixels, (1920, 1080), (2880, 1620)),
+            Some(rect(0, 0, 2, 2))
+        );
+    }
+
+    #[test]
+    fn round_trips_a_full_monitor() {
+        let full = logical_to_pixels(rect(0, 0, 2560, 1440), (2560, 1440), (3840, 2160));
+        assert_eq!(
+            full.and_then(|pixels| pixels_to_logical(pixels, (2560, 1440), (3840, 2160))),
+            Some(rect(0, 0, 2560, 1440))
+        );
     }
 
     #[test]

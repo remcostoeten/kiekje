@@ -56,9 +56,26 @@ pub fn draw<'a>(
 ) -> Result<(), cairo::Error> {
     cr.set_source_surface(&layers.base, 0.0, 0.0)?;
     cr.paint()?;
+    draw_shapes(cr, layers, shapes)
+}
+
+/// Draws the shapes without the picture under them, for a canvas that already shows it.
+///
+/// Markers multiply with what is under them, so a canvas with markers paints the picture first.
+///
+/// # Examples
+///
+/// ```ignore
+/// render::draw_shapes(&cr, &layers, document.shapes().iter())?;
+/// ```
+pub fn draw_shapes<'a>(
+    cr: &cairo::Context,
+    layers: &Layers,
+    shapes: impl IntoIterator<Item = &'a Shape>,
+) -> Result<(), cairo::Error> {
     for shape in shapes {
         cr.save()?;
-        let drawn = draw_shape(cr, layers, shape);
+        let drawn = draw_faded(cr, layers, shape);
         cr.restore()?;
         drawn?;
     }
@@ -120,6 +137,18 @@ pub fn flatten(
             None => drawn.to_image(),
         },
     )
+}
+
+fn draw_faded(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(), cairo::Error> {
+    let opacity = shape.stroke().map_or(1.0, |stroke| stroke.opacity);
+    if opacity >= 1.0 {
+        return draw_shape(cr, layers, shape);
+    }
+    cr.push_group();
+    let drawn = draw_shape(cr, layers, shape);
+    cr.pop_group_to_source()?;
+    drawn?;
+    cr.paint_with_alpha(opacity)
 }
 
 fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(), cairo::Error> {
@@ -328,12 +357,32 @@ mod tests {
             stroke: Stroke {
                 color: Color::Black,
                 width: 2.0,
+                opacity: 1.0,
             },
         };
         let image = flatten(&picture, &[shape], None).unwrap();
         assert_eq!(pixel(&image, 10, 20), [0x11, 0x11, 0x11, 255]);
         assert_eq!(pixel(&image, 20, 20), [255, 255, 255, 255]);
         assert_eq!(pixel(&image, 2, 2), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn fades_a_shape_as_a_whole() {
+        let picture = white(40, 40);
+        let shape = Shape::Line {
+            from: Point { x: 0.0, y: 20.0 },
+            to: Point { x: 40.0, y: 20.0 },
+            stroke: Stroke {
+                color: Color::Black,
+                width: 4.0,
+                opacity: 0.5,
+            },
+        };
+        let image = flatten(&picture, &[shape], None).unwrap();
+        let [red, _, _, alpha] = pixel(&image, 20, 20);
+        assert_eq!(alpha, 255);
+        assert!((130..=140).contains(&red), "red was {red}");
+        assert_eq!(pixel(&image, 20, 5), [255, 255, 255, 255]);
     }
 
     #[test]
@@ -376,6 +425,7 @@ mod tests {
             stroke: Stroke {
                 color: Color::Black,
                 width: 2.0,
+                opacity: 1.0,
             },
         };
         let crop = Area {

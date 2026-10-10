@@ -3,7 +3,7 @@ use gtk::prelude::*;
 
 use super::Editor;
 use super::canvas::View;
-use super::document::{Color, Edit, Point, Shape, Stroke, Tool};
+use super::document::{Color, Edit, Point, Shape, Tool};
 use super::shapes::Handle;
 
 const REACH: f64 = 8.0;
@@ -24,32 +24,39 @@ pub(super) struct Moving {
     start: Point,
 }
 
+pub(super) fn tool_cursor(tool: Tool) -> &'static str {
+    match tool {
+        Tool::Text => "text",
+        Tool::Select => "default",
+        _ => "crosshair",
+    }
+}
+
 impl Editor {
     pub(super) fn set_tool(&self, tool: Tool) {
         self.tool.set(tool);
         self.cancel_draft();
         self.finish_text(true);
-        if tool == Tool::Crop {
-            self.canvas.set_cursor_from_name(Some("crosshair"));
+        self.canvas.set_cursor_from_name(Some(tool_cursor(tool)));
+        if tool != Tool::Select {
             self.deselect();
-            self.say(
+        }
+        match tool {
+            Tool::Crop if self.is_inline() => self.say(
+                "Drag to choose the region. Drag inside it to move it, a handle to resize it.",
+                false,
+            ),
+            Tool::Crop => self.say(
                 "Drag to keep part of the image. Click once to clear the crop.",
                 false,
-            );
-        } else if tool == Tool::Text {
-            self.canvas.set_cursor_from_name(Some("text"));
-            self.deselect();
-            self.say("Click where the text goes, type, then press Enter.", false);
-        } else if tool == Tool::Select {
-            self.canvas.set_cursor_from_name(Some("default"));
-            self.say(
+            ),
+            Tool::Text => self.say("Click where the text goes, type, then press Enter.", false),
+            Tool::Select => self.say(
                 "Click a shape, then drag to move, drag a handle to resize, Delete removes, \
                  arrows nudge.",
                 false,
-            );
-        } else {
-            self.canvas.set_cursor_from_name(Some("crosshair"));
-            self.deselect();
+            ),
+            _ => {}
         }
     }
 
@@ -134,9 +141,17 @@ impl Editor {
     }
 
     pub(super) fn restyle(&self) {
-        let color: Color = self.color.get();
-        let stroke: Stroke = self.stroke();
-        self.replace_selected(|shape| shape.restyled(color, Some(stroke.width)));
+        let Some(index) = self.selected.get() else {
+            return;
+        };
+        let Some(before) = self.document.borrow().shapes().get(index).cloned() else {
+            return;
+        };
+        let after = before.restyled(self.stroke());
+        if after != before {
+            self.document.borrow_mut().restyle(index, after);
+            self.edited();
+        }
     }
 
     pub(super) fn delete_selected(&self) -> bool {

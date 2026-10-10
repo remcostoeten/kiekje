@@ -49,6 +49,8 @@ pub(super) fn build(on_change: impl Fn(Change) + 'static) -> Parts {
     let (sidebar, missing) = sidebar(&on_change);
     let tabs = chips(&Kind::ALL, Kind::label, &on_change, Change::Kind);
     tabs.add_css_class("tabs");
+    tabs.add_css_class("segmented");
+    tabs.set_halign(gtk::Align::Start);
 
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -75,12 +77,14 @@ pub(super) fn build(on_change: impl Fn(Change) + 'static) -> Parts {
         &on_change,
         Change::Sort,
     ));
-    bar.append(&chips(
+    let views = chips(
         &[View::Grid, View::List],
         View::label,
         &on_change,
         Change::View,
-    ));
+    );
+    views.add_css_class("segmented");
+    bar.append(&views);
     Parts {
         sidebar,
         tabs,

@@ -13,11 +13,14 @@ mod precision;
 use magnifier::Magnifier;
 use precision::Precision;
 
-use crate::capture::mapping::{SelectionPlan, plan_selection, rect_from_drag};
+use crate::capture::mapping::{
+    PixelRect, SelectionPlan, logical_to_pixels, pixels_to_logical, plan_selection, rect_from_drag,
+};
 use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::config;
 use crate::editor::{Ending, Finish, Inline};
 use crate::output::{self, Image};
+use crate::ui;
 
 mod snap;
 
@@ -33,6 +36,8 @@ const MIN_SELECTION: i32 = 3;
 pub struct Options {
     pub edit: bool,
     pub overlay: config::Overlay,
+    pub drawing: config::Drawing,
+    pub last_region: Option<LogicalRect>,
 }
 
 #[derive(Clone, Copy)]
@@ -123,6 +128,7 @@ struct Shared {
     drag: RefCell<Option<Drag>>,
     chosen: Cell<Option<LogicalRect>>,
     inline: RefCell<Option<Inline>>,
+    editing: Cell<Option<usize>>,
     windows: RefCell<Vec<gtk::Window>>,
     areas: RefCell<Vec<Area>>,
     surfaces: RefCell<Vec<(usize, gtk::Overlay)>>,
@@ -132,6 +138,11 @@ struct Shared {
     on_first_paint: RefCell<Option<PaintCallback>>,
     magnifier: Magnifier,
     precision: Precision,
+    last_region: Option<LogicalRect>,
+    pointer: Cell<Option<(f64, f64)>>,
+    hints: RefCell<Vec<gtk::Box>>,
+    hints_on: Cell<bool>,
+    drawing: config::Drawing,
 }
 
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
@@ -142,7 +153,10 @@ struct Shared {
 /// loupe follows the pointer until a selection is made. Escape cancels, and
 /// unplugging a monitor that shows a frame ends the selection. `on_done` runs once with the
 /// outcome. `windows` are the visible window frames at trigger time, topmost first; hovering
-/// one highlights it and a click without a drag selects it.
+/// one highlights it and a click without a drag selects it. Before a selection, F takes the
+/// monitor under the pointer, W the window under it, Shift+R the last region, and D or a tool
+/// letter starts annotating the frame, after which a region can still be chosen. A hint bar
+/// lists these keys; ? hides it.
 ///
 /// # Examples
 ///
@@ -163,6 +177,7 @@ pub fn show(
         .map(|frame| (frame.monitor.logical, (frame.width, frame.height)))
         .collect();
     let logical: Vec<LogicalRect> = geometry.iter().map(|(rect, _)| *rect).collect();
+    ui::load_stylesheet();
     let shared = Rc::new(Shared {
         frames: frames.clone(),
         geometry,
@@ -171,6 +186,7 @@ pub fn show(
         drag: RefCell::new(None),
         chosen: Cell::new(None),
         inline: RefCell::new(None),
+        editing: Cell::new(None),
         windows: RefCell::new(Vec::new()),
         areas: RefCell::new(Vec::new()),
         surfaces: RefCell::new(Vec::new()),
@@ -180,6 +196,11 @@ pub fn show(
         on_first_paint: RefCell::new(Some(Box::new(on_first_paint))),
         magnifier: Magnifier::new(options.overlay.magnifier, options.overlay.magnifier_pixels),
         precision: Precision::new(options.overlay.slow_pointer.factor()),
+        last_region: options.last_region,
+        pointer: Cell::new(None),
+        hints: RefCell::new(Vec::new()),
+        hints_on: Cell::new(options.overlay.hints),
+        drawing: options.drawing,
     });
 
     for (frame_index, frame) in frames.iter().enumerate() {
@@ -290,6 +311,10 @@ fn build_surface(
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&picture));
     overlay.add_overlay(&area);
+    let hints = hint_bar(shared);
+    hints.set_visible(shared.hints_on.get());
+    overlay.add_overlay(&hints);
+    shared.hints.borrow_mut().push(hints);
     window.set_child(Some(&overlay));
 
     let drag = gtk::GestureDrag::new();
@@ -310,6 +335,7 @@ fn build_surface(
             current: start,
         }));
         point_at(&begin_shared, Some(start));
+        show_hints(&begin_shared, false);
         redraw(&begin_shared);
     });
     let update_shared = shared.clone();
@@ -344,20 +370,12 @@ fn build_surface(
         } else {
             Some(rect_from_drag(drag.start, end))
         };
-        let plan = rect
+        let chosen = rect
             .filter(|rect| rect.width >= MIN_SELECTION && rect.height >= MIN_SELECTION)
-            .and_then(|rect| {
-                plan_selection(rect, &end_shared.geometry).map(|plan| Selection { rect, plan })
-            });
-        match plan {
-            Some(
-                selection @ Selection {
-                    plan: SelectionPlan::Crop { frame_index, .. },
-                    ..
-                },
-            ) if end_shared.edit => begin_edit(&end_shared, selection, frame_index),
-            Some(selection) => finish(&end_shared, Outcome::Selected(selection)),
-            None => redraw(&end_shared),
+            .is_some_and(|rect| choose(&end_shared, rect));
+        if !chosen {
+            show_hints(&end_shared, end_shared.hints_on.get());
+            redraw(&end_shared);
         }
     });
     area.add_controller(drag);
@@ -408,19 +426,24 @@ fn build_surface(
         if let Some(inline) = inline {
             return inline.key(key, state);
         }
-        if key_shared.chosen.get().is_none()
-            && key_shared.magnifier.key(key, state, &key_shared.frames)
-        {
+        if key == gdk::Key::Escape {
+            finish(&key_shared, Outcome::Canceled);
+            return glib::Propagation::Stop;
+        }
+        if key_shared.chosen.get().is_some() || key_shared.drag.borrow().is_some() {
+            return glib::Propagation::Proceed;
+        }
+        if key_shared.magnifier.key(key, state, &key_shared.frames) {
             for area in key_shared.areas.borrow().iter() {
                 area.layer.queue_draw();
             }
             return glib::Propagation::Stop;
         }
-        if key == gdk::Key::Escape {
-            finish(&key_shared, Outcome::Canceled);
-            return glib::Propagation::Stop;
+        if shortcut(&key_shared, key, state) {
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
         }
-        glib::Propagation::Proceed
     });
     window.add_controller(keys);
 
@@ -460,6 +483,9 @@ fn place_on_layer(window: &gtk::Window, monitor: &gdk::Monitor) {
 }
 
 fn paint(shared: &Shared, frame_index: usize, widget: &gtk::Widget, snapshot: &gtk::Snapshot) {
+    if shared.editing.get() == Some(frame_index) {
+        return;
+    }
     paint_selection(shared, frame_index, widget, snapshot);
     if shared.chosen.get().is_none() {
         shared
@@ -581,40 +607,184 @@ fn paint_size_label(
     snapshot.restore();
 }
 
-fn begin_edit(shared: &Rc<Shared>, selection: Selection, frame_index: usize) {
-    shared.chosen.set(Some(selection.rect));
+fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> bool {
+    if state.intersects(
+        gdk::ModifierType::CONTROL_MASK
+            | gdk::ModifierType::ALT_MASK
+            | gdk::ModifierType::SUPER_MASK,
+    ) {
+        return false;
+    }
+    let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+    match key.to_lower() {
+        _ if key == gdk::Key::question => {
+            let on = !shared.hints_on.get();
+            shared.hints_on.set(on);
+            show_hints(shared, on);
+            true
+        }
+        gdk::Key::r if shift => shared
+            .last_region
+            .is_some_and(|region| choose(shared, region)),
+        _ if shift => false,
+        gdk::Key::f => choose(shared, shared.geometry[pointer_frame(shared)].0),
+        gdk::Key::w | gdk::Key::Return | gdk::Key::KP_Enter => shared
+            .snap
+            .hovered()
+            .is_some_and(|window| choose(shared, window)),
+        gdk::Key::d => {
+            begin_edit(shared, pointer_frame(shared), None, Some(gdk::Key::p));
+            true
+        }
+        _ if Inline::is_tool_key(&shared.drawing.keys, key) => {
+            begin_edit(shared, pointer_frame(shared), None, Some(key));
+            true
+        }
+        _ => false,
+    }
+}
+
+fn choose(shared: &Rc<Shared>, rect: LogicalRect) -> bool {
+    let Some(plan) = plan_selection(rect, &shared.geometry) else {
+        return false;
+    };
+    match plan {
+        SelectionPlan::Crop { frame_index, .. } if shared.edit => {
+            begin_edit(shared, frame_index, Some(rect), None);
+        }
+        _ => finish(shared, Outcome::Selected(Selection { rect, plan })),
+    }
+    true
+}
+
+fn pointer_frame(shared: &Shared) -> usize {
+    shared
+        .pointer
+        .get()
+        .and_then(|(x, y)| {
+            shared
+                .geometry
+                .iter()
+                .position(|(logical, _)| logical.contains_point(x.floor() as i32, y.floor() as i32))
+        })
+        .unwrap_or(0)
+}
+
+fn hint_bar(shared: &Shared) -> gtk::Box {
+    let bar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(14)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::End)
+        .margin_bottom(32)
+        .can_target(false)
+        .css_classes(["panel", "overlay-hints"])
+        .build();
+    let windows = shared.snap.has_windows();
+    let magnifier = shared.magnifier.enabled();
+    for (keys, label, shown) in [
+        ("Drag", "select", true),
+        ("F", "screen", true),
+        ("W", "window", windows),
+        ("Shift R", "last region", shared.last_region.is_some()),
+        ("D", "draw", true),
+        ("Z", "loupe", magnifier),
+        ("C", "colour", magnifier),
+        ("?", "hide", true),
+        ("Esc", "cancel", true),
+    ] {
+        if !shown {
+            continue;
+        }
+        let hint = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .build();
+        hint.append(
+            &gtk::Label::builder()
+                .label(keys)
+                .css_classes(["keycap"])
+                .build(),
+        );
+        hint.append(
+            &gtk::Label::builder()
+                .label(label)
+                .css_classes(["hint"])
+                .build(),
+        );
+        bar.append(&hint);
+    }
+    bar
+}
+
+fn show_hints(shared: &Shared, shown: bool) {
+    for hints in shared.hints.borrow().iter() {
+        hints.set_visible(shown);
+    }
+}
+
+fn begin_edit(
+    shared: &Rc<Shared>,
+    frame_index: usize,
+    region: Option<LogicalRect>,
+    first_key: Option<gdk::Key>,
+) {
+    let monitor = shared.frames[frame_index].monitor.logical;
+    shared.chosen.set(Some(region.unwrap_or(monitor)));
+    show_hints(shared, false);
     for area in shared.areas.borrow().iter() {
         area.layer.set_cursor_from_name(Some("default"));
     }
     redraw(shared);
     let frames = shared.frames.clone();
-    let plan = selection.plan;
     let weak = Rc::downgrade(shared);
     glib::spawn_future_local(async move {
-        let rendered = gio::spawn_blocking(move || output::render_selection(&frames, plan)).await;
+        let rendered = gio::spawn_blocking(move || {
+            let frame = &frames[frame_index];
+            output::crop(
+                frame,
+                PixelRect {
+                    x: 0,
+                    y: 0,
+                    width: frame.width,
+                    height: frame.height,
+                },
+            )
+        })
+        .await;
         let Some(shared) = weak.upgrade().filter(|shared| !shared.finished.get()) else {
             return;
         };
         let Ok(image) = rendered else {
             eprintln!("kiekje: the render worker stopped, finishing without editing");
-            finish(&shared, Outcome::Selected(selection));
+            finish_unedited(&shared, region);
             return;
         };
         let ending = Rc::downgrade(&shared);
-        let opened = Inline::open(image, CaptureMode::Region, move |end| {
+        let opened = Inline::open(image, CaptureMode::Region, shared.drawing, move |end| {
             let Some(shared) = ending.upgrade() else {
                 return;
             };
             match end {
                 Ending::Canceled => finish(&shared, Outcome::Canceled),
-                Ending::Finished { image, finish: how } => finish(
-                    &shared,
-                    Outcome::Edited {
-                        selection,
-                        image,
-                        finish: how,
-                    },
-                ),
+                Ending::Finished {
+                    image,
+                    finish: how,
+                    region,
+                } => match edited_selection(&shared, frame_index, region) {
+                    Some(selection) => finish(
+                        &shared,
+                        Outcome::Edited {
+                            selection,
+                            image,
+                            finish: how,
+                        },
+                    ),
+                    None => {
+                        eprintln!("kiekje: the edited region is not on its monitor, nothing saved");
+                        finish(&shared, Outcome::Canceled);
+                    }
+                },
             }
         })
         .await;
@@ -625,28 +795,83 @@ fn begin_edit(shared: &Rc<Shared>, selection: Selection, frame_index: usize) {
             Ok(inline) => inline,
             Err(error) => {
                 eprintln!("kiekje: inline editing is unavailable, finishing without it: {error}");
-                finish(&shared, Outcome::Selected(selection));
+                finish_unedited(&shared, region);
                 return;
             }
         };
         let surfaces = shared.surfaces.borrow();
         let Some((_, surface)) = surfaces.iter().find(|(index, _)| *index == frame_index) else {
             drop(surfaces);
-            finish(&shared, Outcome::Selected(selection));
+            finish_unedited(&shared, region);
             return;
         };
-        let monitor = shared.frames[frame_index].monitor.logical;
+        let frame = &shared.frames[frame_index];
+        let pixels = region.and_then(|rect| {
+            let local = LogicalRect {
+                x: rect.x - monitor.x,
+                y: rect.y - monitor.y,
+                ..rect
+            };
+            logical_to_pixels(
+                local,
+                (monitor.width, monitor.height),
+                (frame.width, frame.height),
+            )
+        });
         let layer = gtk::Fixed::new();
         surface.add_overlay(&layer);
-        let local = LogicalRect {
-            x: selection.rect.x - monitor.x,
-            y: selection.rect.y - monitor.y,
-            ..selection.rect
-        };
-        inline.mount(&layer, local, (monitor.width, monitor.height));
+        inline.mount(&layer, (monitor.width, monitor.height), pixels);
         drop(surfaces);
+        shared.editing.set(Some(frame_index));
+        for area in shared.areas.borrow().iter() {
+            area.layer.queue_draw();
+        }
+        if let Some(key) = first_key {
+            inline.key(key, gdk::ModifierType::empty());
+        }
         shared.inline.replace(Some(inline));
     });
+}
+
+fn finish_unedited(shared: &Shared, region: Option<LogicalRect>) {
+    let selection = region.and_then(|rect| {
+        plan_selection(rect, &shared.geometry).map(|plan| Selection { rect, plan })
+    });
+    match selection {
+        Some(selection) => finish(shared, Outcome::Selected(selection)),
+        None => finish(shared, Outcome::Canceled),
+    }
+}
+
+fn edited_selection(
+    shared: &Shared,
+    frame_index: usize,
+    region: Option<PixelRect>,
+) -> Option<Selection> {
+    let frame = &shared.frames[frame_index];
+    let monitor = frame.monitor.logical;
+    let pixels = region.unwrap_or(PixelRect {
+        x: 0,
+        y: 0,
+        width: frame.width,
+        height: frame.height,
+    });
+    let local = pixels_to_logical(
+        pixels,
+        (monitor.width, monitor.height),
+        (frame.width, frame.height),
+    )?;
+    Some(Selection {
+        rect: LogicalRect {
+            x: monitor.x + local.x,
+            y: monitor.y + local.y,
+            ..local
+        },
+        plan: SelectionPlan::Crop {
+            frame_index,
+            rect: pixels,
+        },
+    })
 }
 
 fn redraw(shared: &Shared) {
@@ -687,6 +912,9 @@ fn track(shared: &Shared, pointer: (f64, f64), state: gdk::ModifierType) -> (f64
 }
 
 fn point_at(shared: &Shared, point: Option<(f64, f64)>) {
+    if point.is_some() {
+        shared.pointer.set(point);
+    }
     let previous = shared.magnifier.move_to(point);
     if !shared.magnifier.enabled() || shared.chosen.get().is_some() {
         return;

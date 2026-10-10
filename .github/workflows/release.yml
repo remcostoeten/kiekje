@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pick the tag
+        id: pick
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            [[ "v$version" == "$GITHUB_REF_NAME" ]] || { echo "tag $GITHUB_REF_NAME does not match version $version" >&2; exit 1; }
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "v$version already exists; bump the version in Cargo.toml first" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+  portable:
+    needs: version
+    uses: ./.github/workflows/portable.yml
+
+  release:
+    needs: [version, portable]
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kiekje-x86_64-linux
+          path: target/release
+
+      - name: Package
+        run: |
+          name="kiekje-$VERSION-x86_64-linux"
+          mkdir -p "dist/$name/packaging" "dist/$name/resources/fonts"
+          install -Dm755 target/release/kiekje "dist/$name/kiekje"
+          cp packaging/install.sh packaging/dev.remcostoeten.Kiekje.desktop "dist/$name/packaging/"
+          cp -r resources/icons "dist/$name/resources/"
+          cp resources/fonts/OFL.txt "dist/$name/resources/fonts/"
+          cp LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+          echo "TITLE=kiekje $VERSION" >> "$GITHUB_ENV"
+
+      - name: Write the notes
+        run: |
+          {
+            if [[ -f "docs/releases/$VERSION.md" ]]; then
+              cat "docs/releases/$VERSION.md"
+            else
+              git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+              git tag -l --format='%(contents)' "$TAG"
+            fi
+            echo
+            echo "## Install"
+            echo
+            echo "Needs GTK 4.16 or newer. gtk4-layer-shell is built in. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts but the stylesheet does not load."
+            echo
+            echo '```'
+            echo "tar -xzf $ARCHIVE.tar.gz"
+            echo "cd $ARCHIVE"
+            echo "sudo packaging/install.sh ./kiekje"
+            echo '```'
+          } > dist/notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.TITLE }}
+          body_path: dist/notes.md
+          prerelease: ${{ contains(env.TAG, '-') }}
+          files: |
+            dist/${{ env.ARCHIVE }}.tar.gz
+            dist/${{ env.ARCHIVE }}.tar.gz.sha256

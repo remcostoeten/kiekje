@@ -434,3 +434,9 @@ Lab run on 2026-10-04: headless sway 1.9 with the pixman renderer (GTK falls bac
 - End jumped to the last capture and made 257 more thumbnails. Only bound items get thumbnails, so a jump does not decode the 9,500 items in between.
 
 Since then, thumbnails for the gallery and the tray popover are decoded into textures on the worker that loads them, rather than on the GTK main thread. Unverified: a real GPU renderer, and timing on Plasma, Hyprland or GNOME.
+
+## Static gtk4-layer-shell in the release binary
+
+The release build links gtk4-layer-shell 1.1.1 statically (`SYSTEM_DEPS_GTK4_LAYER_SHELL_0_LINK=static` against a `-Ddefault_library=static` build), so the binary no longer needs `libgtk4-layer-shell.so.0`. The library's libwayland shim works because the executable defines and exports `wl_proxy_marshal_array_flags` and friends, which take precedence over libwayland-client, and the shim reaches the real functions through `dlsym(RTLD_NEXT)`.
+
+Tested on Ubuntu 24.04 (GTK 4.14.5) under headless sway 1.9 with `WAYLAND_DEBUG=1`: `capture region`, `pin` and `menu` each created their surface with `zwlr_layer_shell_v1.get_layer_surface` and no `xdg_toplevel`, and the shim printed no warning. `readelf -d` lists no layer-shell library. The `Portable build` workflow starts the binary on Arch, Fedora, Tumbleweed, Debian 13, Ubuntu 24.04 and 25.10. Unverified: Plasma 6 and Hyprland with the static binary.

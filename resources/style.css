@@ -4,11 +4,18 @@
   --muted: #8a8a8a;
   --accent: #fe5101;
   --line: color-mix(in srgb, var(--fg) 16%, transparent);
+  --surface: color-mix(in srgb, var(--fg) 4%, var(--bg));
+  --raised: color-mix(in srgb, var(--fg) 7%, var(--bg));
+  --raised-hi: color-mix(in srgb, var(--fg) 11%, var(--bg));
+  --stroke: color-mix(in srgb, var(--fg) 11%, var(--bg));
+  --stroke-hi: color-mix(in srgb, var(--fg) 18%, var(--bg));
+  --specular: inset 0 1px color-mix(in srgb, var(--fg) 6%, transparent);
   --wash: color-mix(in srgb, var(--fg) 6%, transparent);
   --accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
   --focus-wash: color-mix(in srgb, var(--fg) 10%, transparent);
   --accent-strong: color-mix(in srgb, var(--accent) 24%, transparent);
-  --radius: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
   --sans: "Geist", "Inter", sans-serif;
   --mono: "Geist Mono", "JetBrains Mono", monospace;
 }
@@ -18,12 +25,13 @@ window.kiekje-popover {
 }
 
 .popover-panel {
-  background-color: var(--bg);
+  background-color: var(--surface);
   color: var(--fg);
   font-family: var(--sans);
   font-size: 13px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
   padding: 12px;
 }
 
@@ -37,17 +45,18 @@ window.kiekje-popover {
 
 .panel button {
   background: none;
-  background-color: transparent;
+  background-color: var(--raised);
   color: var(--fg);
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
-  box-shadow: none;
+  box-shadow: var(--specular);
   padding: 8px 10px;
   transition: background-color 120ms ease-out, transform 120ms ease-out;
 }
 
 .panel button:hover {
-  background-color: var(--wash);
+  background-color: var(--raised-hi);
+  border-color: var(--stroke-hi);
 }
 
 .panel button:active {
@@ -69,17 +78,24 @@ window.kiekje-popover {
 }
 
 .panel button.primary {
-  border: 1px solid var(--accent);
-  background-color: var(--accent-wash);
+  border: 1px solid color-mix(in srgb, var(--fg) 30%, var(--accent));
+  background-color: var(--accent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--fg) 18%, transparent);
 }
 
 .panel button.primary:hover,
 .panel button.primary:focus-visible {
-  background-color: var(--accent-strong);
+  background-color: color-mix(in srgb, var(--fg) 12%, var(--accent));
 }
 
 .panel button.ghost {
+  background-color: transparent;
   border-color: transparent;
+  box-shadow: none;
+}
+
+.panel button.ghost:hover {
+  background-color: var(--wash);
 }
 
 .action-label {
@@ -110,7 +126,7 @@ window.kiekje-popover {
 
 .panel separator.rule {
   background: none;
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--stroke);
   min-height: 0;
   margin: 4px 0;
 }
@@ -124,7 +140,7 @@ window.settings-window {
   color: var(--fg);
   font-family: var(--sans);
   font-size: 13px;
-  padding: 20px;
+  padding: 0;
 }
 
 .note {
@@ -137,15 +153,81 @@ window.settings-window {
   padding-left: 8px;
 }
 
-.settings button:not(.trigger) > label {
+.settings button:not(.trigger) > label,
+.editor button:not(.chip) > label {
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
 }
 
+.settings .page {
+  padding: 20px 24px 28px;
+}
+
 .settings .caps {
-  margin-top: 8px;
+  margin: 8px 4px 0;
+}
+
+.settings .group {
+  background-color: var(--raised);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+}
+
+.settings .group .rows {
+  background: none;
+  background-color: transparent;
+}
+
+.settings .group row.pref {
+  background: none;
+  background-color: transparent;
+  padding: 12px 16px;
+  min-height: 0;
+}
+
+.settings .group row.pref:not(:first-child),
+.settings .group .footer {
+  border-top: 1px solid var(--stroke);
+}
+
+.settings .group row.pref:disabled .row-title,
+.settings .group row.pref:disabled .subtitle {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.settings .pref .subtitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings .group .footer {
+  padding: 10px 16px;
+}
+
+.settings .group .footer.problem {
+  border-left: none;
+  padding-left: 16px;
+  color: var(--accent);
+}
+
+.settings .group button {
+  background-color: var(--raised-hi);
+}
+
+.settings .group button.ghost {
+  background-color: transparent;
+}
+
+.settings .group entry {
+  background-color: var(--surface);
+}
+
+.settings button.optional:disabled {
+  opacity: 0;
 }
 
 .settings .value {
@@ -159,39 +241,59 @@ window.settings-window {
   padding: 0 8px;
 }
 
-.settings checkbutton {
-  color: var(--fg);
-  padding: 2px 0;
-}
-
-.settings checkbutton check {
+.settings switch {
   background: none;
-  background-color: transparent;
-  border: 1px solid var(--line);
-  border-radius: 3px;
+  background-color: var(--raised-hi);
+  border: 1px solid var(--stroke-hi);
+  border-radius: 999px;
+  box-shadow: var(--specular);
+  min-width: 38px;
+  min-height: 22px;
+  padding: 0;
+  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+}
+
+.settings switch > slider {
+  background: none;
+  background-color: var(--muted);
+  border: none;
+  border-radius: 999px;
   box-shadow: none;
-  color: var(--accent);
-  min-width: 14px;
-  min-height: 14px;
-  margin-right: 8px;
+  min-width: 16px;
+  min-height: 16px;
+  margin: 2px;
+  transition: background-color 150ms ease-out;
 }
 
-.settings checkbutton check:checked {
+.settings switch > image {
+  color: transparent;
+  -gtk-icon-size: 0;
+}
+
+.settings switch:checked {
+  background-color: var(--accent);
+  border-color: color-mix(in srgb, var(--fg) 30%, var(--accent));
+}
+
+.settings switch:checked > slider {
+  background-color: var(--fg);
+}
+
+.settings switch:focus-visible {
   border-color: var(--accent);
-  background-color: var(--accent-wash);
+  background-color: var(--focus-wash);
 }
 
-.settings checkbutton:disabled {
-  color: var(--muted);
+.settings switch:checked:focus-visible {
+  background-color: color-mix(in srgb, var(--fg) 12%, var(--accent));
 }
 
-.settings checkbutton:focus-visible check {
-  border-color: var(--accent);
-  background-color: var(--wash);
+.settings switch:disabled {
+  opacity: 0.5;
 }
 
-.settings checkbutton:focus-visible check:checked {
-  background-color: color-mix(in srgb, var(--accent) 28%, transparent);
+.settings .about {
+  margin: 4px 4px 8px;
 }
 
 .panel button.trigger {
@@ -265,8 +367,8 @@ window.settings-window {
 }
 
 .card picture {
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
 }
 
 .skeleton {
@@ -281,7 +383,9 @@ window.settings-window {
   text-transform: uppercase;
   padding: 4px 10px;
   color: var(--muted);
+  background-color: transparent;
   border-color: transparent;
+  box-shadow: none;
   transition: color 150ms ease-out, background-color 150ms ease-out, transform 120ms ease-out;
 }
 
@@ -299,6 +403,26 @@ window.settings-window {
 .panel button.chip:checked {
   color: var(--fg);
   background-color: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+.panel .segmented {
+  background-color: var(--bg);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  padding: 3px;
+}
+
+.panel .segmented button.chip:checked {
+  background-color: var(--raised-hi);
+  border-color: var(--stroke-hi);
+  box-shadow: var(--specular);
+}
+
+.panel .segmented button.chip:checked:hover,
+.panel .segmented button.chip:checked:focus-visible {
+  background-color: var(--raised-hi);
+  border-color: var(--accent);
 }
 
 .panel button.chip:checked:hover,
@@ -308,9 +432,9 @@ window.settings-window {
 
 .gallery entry,
 .settings entry {
-  background-color: transparent;
+  background-color: var(--raised);
   color: var(--fg);
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
   box-shadow: none;
   min-height: 32px;
@@ -318,7 +442,6 @@ window.settings-window {
 
 .gallery entry:focus-within,
 .settings entry:focus-within {
-  border-style: solid;
   border-color: var(--accent);
 }
 
@@ -332,13 +455,13 @@ window.settings-window {
 }
 
 .row picture {
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
 }
 
 .gallery popover.menu contents {
-  background-color: var(--bg);
-  border: 1px dashed var(--line);
+  background-color: var(--raised);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
 }
 
@@ -353,9 +476,26 @@ window.settings-window {
   background-color: var(--accent-wash);
 }
 
+.panel.editor {
+  padding: 16px 20px;
+}
+
+.editor .footer {
+  margin-top: 4px;
+}
+
+.editor .footer .note {
+  font-size: 12px;
+}
+
+.panel .segmented button.chip.swatch:checked {
+  border-color: var(--stroke-hi);
+  box-shadow: var(--specular), inset 0 0 0 1px color-mix(in srgb, var(--fg) 40%, transparent);
+}
+
 .editor .canvas {
   background-color: color-mix(in srgb, var(--fg) 3%, var(--bg));
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
 }
 
@@ -375,17 +515,44 @@ window.settings-window {
 }
 
 .inline-bar {
-  background-color: var(--bg);
+  background-color: var(--surface);
   color: var(--fg);
   font-family: var(--sans);
   font-size: 13px;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
   padding: 6px;
 }
 
 .inline-bar .action-label {
   padding: 0 8px;
+}
+
+.overlay-hints {
+  background-color: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 8px 14px;
+}
+
+.overlay-hints .keycap {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--fg);
+  background-color: var(--raised-hi);
+  border: 1px solid var(--stroke-hi);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.overlay-hints .hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .panel button.chip.swatch {
@@ -394,7 +561,7 @@ window.settings-window {
 
 .editor popover contents {
   background-color: var(--bg);
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
   padding: 6px;
 }
@@ -402,7 +569,7 @@ window.settings-window {
 .editor entry {
   background-color: transparent;
   color: var(--fg);
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
   box-shadow: none;
   min-height: 32px;
@@ -413,23 +580,8 @@ window.settings-window {
   border-color: var(--accent);
 }
 
-.settings checkbutton:disabled label {
-  color: var(--muted);
-  opacity: 1;
-  filter: none;
-}
-
-.settings checkbutton:disabled check,
-.settings checkbutton:disabled check:checked {
-  border-color: var(--line);
-  background-color: transparent;
-  color: var(--muted);
-  opacity: 1;
-  filter: none;
-}
-
 .panel button.danger {
-  min-width: 150px;
+  min-width: 96px;
 }
 
 .panel button.danger.armed {
@@ -446,23 +598,24 @@ window.settings-window {
   padding: 0;
 }
 
-.gallery .sidebar {
+.panel .sidebar {
   background-color: var(--bg);
   min-width: 180px;
   padding: 20px 12px;
-  border-right: 1px dashed var(--line);
+  border-right: 1px solid var(--stroke);
 }
 
-.gallery .brand {
+.panel .brand {
   color: var(--fg);
   margin: 0 8px 12px;
 }
 
-.gallery .main {
+.panel .main {
+  background-color: var(--surface);
   padding: 20px;
 }
 
-.gallery .title {
+.panel .title {
   font-size: 20px;
   font-weight: 600;
 }
@@ -471,7 +624,7 @@ window.settings-window {
   margin-top: 0;
 }
 
-.gallery button.nav {
+.panel button.nav {
   background: none;
   border-color: transparent;
   box-shadow: none;
@@ -481,36 +634,59 @@ window.settings-window {
   transition: color 150ms ease-out, background-color 150ms ease-out;
 }
 
-.gallery button.nav > label {
+.panel button.nav > label {
   font-family: var(--sans);
   font-size: 13px;
   letter-spacing: 0;
   text-transform: none;
 }
 
-.gallery button.nav:hover {
+.panel button.nav.credit {
+  margin-top: 4px;
+  padding: 4px 8px;
+}
+
+.panel button.nav.credit > box > label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.panel .heart {
+  color: var(--accent);
+}
+
+.panel button.nav:hover {
   background-color: var(--wash);
   color: var(--fg);
 }
 
-.gallery button.nav:checked {
-  background-color: var(--accent-wash);
+.panel button.nav:checked {
+  background-color: var(--raised-hi);
+  box-shadow: var(--specular);
   color: var(--fg);
 }
 
-.gallery button.nav:focus-visible {
+.panel button.nav:focus-visible {
   border-color: transparent;
   color: var(--fg);
   background-color: var(--focus-wash);
 }
 
-.gallery button.nav:checked:hover,
-.gallery button.nav:checked:focus-visible {
-  background-color: var(--accent-strong);
+.panel button.nav:checked:hover {
+  background-color: var(--raised-hi);
+  color: var(--fg);
+}
+
+.panel button.nav:checked:focus-visible {
+  background-color: var(--raised-hi);
+  border-color: var(--accent);
+  color: var(--fg);
 }
 
 .gallery .card picture {
-  background-color: color-mix(in srgb, var(--fg) 3%, transparent);
+  background-color: var(--raised);
 }
 
 window.kiekje-pin {
@@ -532,7 +708,7 @@ window.kiekje-pin {
   font-size: 11px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
   padding: 4px 8px;
   margin: 6px;
@@ -540,7 +716,7 @@ window.kiekje-pin {
 
 window.kiekje-pin popover.menu contents {
   background-color: var(--bg);
-  border: 1px dashed var(--line);
+  border: 1px solid var(--stroke);
   border-radius: var(--radius);
 }
 
@@ -553,4 +729,89 @@ window.kiekje-pin popover.menu modelbutton {
 window.kiekje-pin popover.menu modelbutton:hover,
 window.kiekje-pin popover.menu modelbutton:focus-visible {
   background-color: var(--accent-wash);
+}
+
+.editor .stroke-option {
+  padding: 0 4px;
+}
+
+.editor scale {
+  min-width: 96px;
+  padding: 6px 0;
+}
+
+.editor scale > trough {
+  background-color: var(--stroke);
+  border: none;
+  border-radius: 999px;
+  min-height: 4px;
+}
+
+.editor scale > trough > highlight {
+  background-color: color-mix(in srgb, var(--fg) 45%, transparent);
+  border: none;
+  border-radius: 999px;
+}
+
+.editor scale > trough > slider {
+  background: none;
+  background-color: var(--fg);
+  border: none;
+  border-radius: 999px;
+  box-shadow: none;
+  min-width: 12px;
+  min-height: 12px;
+  margin: -4px;
+}
+
+.editor scale:focus-visible > trough > slider {
+  background-color: var(--accent);
+  outline: 2px solid var(--focus-wash);
+}
+
+popover.context-menu > contents {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.context-list.panel {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.context-list button.menu-item {
+  background: none;
+  background-color: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  box-shadow: none;
+  padding: 5px 10px;
+  min-width: 200px;
+}
+
+.context-list button.menu-item:hover,
+.context-list button.menu-item:focus-visible {
+  background-color: var(--wash);
+  border-color: var(--stroke);
+}
+
+.context-list button.menu-item.current {
+  background-color: var(--accent-wash);
+}
+
+.context-list button.menu-item:disabled {
+  color: var(--muted);
+}
+
+.context-list separator {
+  background-color: var(--stroke);
+  min-height: 1px;
+  margin: 4px 6px;
 }

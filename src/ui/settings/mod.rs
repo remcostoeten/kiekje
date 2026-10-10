@@ -1,5 +1,6 @@
 mod about;
 mod danger;
+mod drawing;
 mod general;
 
 use std::cell::{Cell, RefCell};
@@ -11,12 +12,14 @@ use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
 use crate::config::{self, Capture, Config, ConfigError, Notifications, Overlay, Storage};
+use crate::editor::DrawingKeys;
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
     record,
 };
 use crate::storage;
 use crate::ui;
+use crate::ui::widgets::{credit, group, note, problem, row};
 
 pub struct Model {
     pub shortcuts: Shortcuts,
@@ -26,9 +29,114 @@ pub struct Model {
     pub notifications: Notifications,
     pub capture: Capture,
     pub overlay: Overlay,
+    pub drawing_keys: DrawingKeys,
 }
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
+
+const WINDOW_WIDTH: i32 = 780;
+const WINDOW_HEIGHT: i32 = 600;
+
+pub(super) struct Pages {
+    capture: gtk::Box,
+    shortcuts: gtk::Box,
+    saving: gtk::Box,
+    general: gtk::Box,
+    about: gtk::Box,
+}
+
+impl Pages {
+    fn new(stack: &gtk::Stack) -> Self {
+        Self {
+            capture: page(stack, "capture", "Capture"),
+            shortcuts: page(stack, "shortcuts", "Shortcuts"),
+            saving: page(stack, "saving", "Saving"),
+            general: page(stack, "general", "General"),
+            about: page(stack, "about", "About"),
+        }
+    }
+}
+
+fn page(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Box {
+    let page = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .css_classes(["page"])
+        .build();
+    page.append(
+        &gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .css_classes(["title"])
+            .build(),
+    );
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&page)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .css_classes(["main"])
+        .build();
+    stack.add_titled(&scroller, Some(name), title);
+    page
+}
+
+fn sidebar(stack: &gtk::Stack) -> gtk::Box {
+    let sidebar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .css_classes(["sidebar"])
+        .build();
+    sidebar.append(
+        &gtk::Label::builder()
+            .label("Settings")
+            .xalign(0.0)
+            .css_classes(["caps", "brand"])
+            .build(),
+    );
+    let mut leader: Option<gtk::ToggleButton> = None;
+    for (name, title) in [
+        ("capture", "Capture"),
+        ("shortcuts", "Shortcuts"),
+        ("saving", "Saving"),
+        ("general", "General"),
+        ("about", "About"),
+    ] {
+        let button = gtk::ToggleButton::builder()
+            .child(&gtk::Label::builder().label(title).xalign(0.0).build())
+            .active(leader.is_none())
+            .css_classes(["nav"])
+            .build();
+        match &leader {
+            Some(first) => button.set_group(Some(first)),
+            None => leader = Some(button.clone()),
+        }
+        let stack = stack.clone();
+        button.connect_toggled(move |button| {
+            if button.is_active() {
+                stack.set_visible_child_name(name);
+            }
+        });
+        sidebar.append(&button);
+    }
+    sidebar.append(
+        &gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .vexpand(true)
+            .build(),
+    );
+    sidebar.append(
+        &gtk::Button::builder()
+            .child(&gtk::Label::builder().label("Gallery").xalign(0.0).build())
+            .action_name("app.gallery")
+            .css_classes(["nav"])
+            .build(),
+    );
+    sidebar.append(&credit());
+    sidebar
+}
+
+fn default_slot(action: ShortcutAction) -> Slot {
+    Trigger::parse(action.default_trigger()).map_or(Slot::Off, Slot::Key)
+}
 
 struct Editor {
     host: ShortcutHost,
@@ -37,6 +145,7 @@ struct Editor {
     recording: Cell<Option<ShortcutAction>>,
     saving: Cell<bool>,
     buttons: HashMap<&'static str, gtk::Button>,
+    resets: HashMap<&'static str, gtk::Button>,
     problem: gtk::Label,
     on_saved: SavedCallback,
 }
@@ -64,45 +173,39 @@ pub fn show(
     let window = gtk::Window::builder()
         .application(app)
         .title("Kiekje settings")
-        .default_width(560)
-        .default_height(640)
+        .default_width(WINDOW_WIDTH)
+        .default_height(WINDOW_HEIGHT)
         .css_classes(["settings-window"])
         .build();
 
-    let content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
+    let root = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
         .css_classes(["panel", "settings"])
         .build();
+    let stack = gtk::Stack::builder()
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .transition_duration(120)
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    root.append(&sidebar(&stack));
+    root.append(&stack);
+    window.set_child(Some(&root));
+
+    let pages = Pages::new(&stack);
     let general = general::append(
-        &content,
+        &pages,
         &model.storage,
         model.notifications,
         model.capture,
         model.overlay,
     );
-    content.append(&caps("Shortcuts"));
-    content.append(&note(&host_note(&model.host)));
 
+    let keys_group = group(&pages.shortcuts, "Keys");
     let editable = model.host.editable();
     let mut buttons = HashMap::new();
-    let rows = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .build();
     let mut resets = Vec::new();
     for action in ShortcutAction::ALL {
-        let row = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(12)
-            .build();
-        row.append(
-            &gtk::Label::builder()
-                .label(action.description())
-                .xalign(0.0)
-                .hexpand(true)
-                .build(),
-        );
         let trigger = gtk::Button::builder()
             .label(trigger_text(
                 &model.host,
@@ -113,26 +216,29 @@ pub fn show(
             .sensitive(editable)
             .css_classes(["trigger"])
             .build();
-        row.append(&trigger);
         let reset = gtk::Button::builder()
             .label("Reset")
             .visible(editable)
-            .css_classes(["ghost"])
+            .css_classes(["ghost", "optional"])
             .build();
-        row.append(&reset);
-        rows.append(&row);
+        let controls = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        controls.append(&trigger);
+        controls.append(&reset);
+        keys_group.add(row(action.description(), None, Some(&controls)));
         buttons.insert(action.id(), trigger);
         resets.push((action, reset));
     }
-    content.append(&rows);
-
-    let problem = gtk::Label::builder()
-        .xalign(0.0)
-        .wrap(true)
-        .visible(false)
-        .css_classes(["problem"])
-        .build();
-    content.append(&problem);
+    keys_group.footer(&note(&host_note(&model.host)));
+    if editable {
+        keys_group.footer(&note(
+            "Click a shortcut, then press the new keys. Esc cancels, Backspace turns it off.",
+        ));
+    }
+    let problem = problem();
+    keys_group.footer(&problem);
     if let ShortcutHost::Desktop {
         configurable: true, ..
     } = model.host
@@ -142,19 +248,9 @@ pub fn show(
             .halign(gtk::Align::Start)
             .build();
         configure.connect_clicked(move |_| on_configure());
-        content.append(&configure);
+        pages.shortcuts.append(&configure);
     }
-    if editable {
-        content.append(&note(
-            "Click a shortcut, then press the new keys. Esc cancels, Backspace turns it off.",
-        ));
-    }
-    window.set_child(Some(
-        &gtk::ScrolledWindow::builder()
-            .child(&content)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build(),
-    ));
+    let drawing = drawing::append(&pages.shortcuts, &window, model.drawing_keys);
 
     let editor = Rc::new(Editor {
         host: model.host,
@@ -163,9 +259,14 @@ pub fn show(
         recording: Cell::new(None),
         saving: Cell::new(false),
         buttons,
+        resets: resets
+            .iter()
+            .map(|(action, reset)| (action.id(), reset.clone()))
+            .collect(),
         problem,
         on_saved: Rc::new(on_saved),
     });
+    editor.refresh();
     for action in ShortcutAction::ALL {
         if let Some(button) = editor.buttons.get(action.id()) {
             let weak = Rc::downgrade(&editor);
@@ -180,8 +281,7 @@ pub fn show(
         let weak = Rc::downgrade(&editor);
         reset.connect_clicked(move |_| {
             if let Some(editor) = weak.upgrade() {
-                let slot = Trigger::parse(action.default_trigger()).map_or(Slot::Off, Slot::Key);
-                editor.save(action, slot);
+                editor.save(action, default_slot(action));
             }
         });
     }
@@ -193,6 +293,9 @@ pub fn show(
             if let Some(general) = general.upgrade() {
                 general.reset(&defaults);
             }
+            if let Some(drawing) = drawing.upgrade() {
+                drawing.reset(defaults.drawing.keys);
+            }
             if let Some(editor) = reset_editor.upgrade() {
                 editor.shortcuts.replace(defaults.shortcuts);
                 editor.stop();
@@ -203,8 +306,8 @@ pub fn show(
         | danger::Danger::ClearColours
         | danger::Danger::ClearThumbnails => on_cleared(),
     });
-    about::append(&content);
-    danger::append(&content, &editor.host, on_done);
+    about::append(&pages.about);
+    danger::append(&pages.about, &editor.host, on_done);
 
     let handle = Handle(Rc::downgrade(&editor));
     let keys = gtk::EventControllerKey::new();
@@ -279,6 +382,11 @@ impl Editor {
             }
             if let Some(button) = self.buttons.get(action.id()) {
                 button.set_label(&trigger_text(&self.host, &shortcuts, &bound, action));
+            }
+            if let Some(reset) = self.resets.get(action.id()) {
+                let changed = *shortcuts.slot(action) != default_slot(action);
+                reset.set_sensitive(changed);
+                reset.set_can_target(changed);
             }
         }
     }
@@ -435,21 +543,4 @@ fn key_name(controller: &gtk::EventControllerKey, keyval: gdk::Key, keycode: u32
         .name()
         .map(|name| name.to_string())
         .unwrap_or_default()
-}
-
-fn caps(text: &str) -> gtk::Label {
-    gtk::Label::builder()
-        .label(text)
-        .xalign(0.0)
-        .css_classes(["caps"])
-        .build()
-}
-
-fn note(text: &str) -> gtk::Label {
-    gtk::Label::builder()
-        .label(text)
-        .xalign(0.0)
-        .wrap(true)
-        .css_classes(["note"])
-        .build()
 }

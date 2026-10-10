@@ -3,19 +3,23 @@ use std::path::PathBuf;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
-use super::{caps, note};
 use crate::config;
 use crate::library::{self, thumbs};
 use crate::storage;
 use crate::ui::files;
+use crate::ui::widgets::{group, note, path_row, row};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub(super) fn append(content: &gtk::Box) {
-    content.append(&caps("About"));
+pub(super) fn append(page: &gtk::Box) {
+    let header = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .css_classes(["about"])
+        .build();
     let title = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
+        .spacing(10)
         .build();
     title.append(
         &gtk::Label::builder()
@@ -32,65 +36,46 @@ pub(super) fn append(content: &gtk::Box) {
             .css_classes(["value"])
             .build(),
     );
-    content.append(&title);
-    content.append(&note(
+    header.append(&title);
+    header.append(&note(
         "Captures the screen at the moment you ask, then lets you pick, mark up and keep the part you need.",
     ));
+    page.append(&header);
 
-    let places = [
+    let places = group(page, "On this computer");
+    for (label, path) in [
         ("Config", config::path()),
         ("Library", library::path()),
         ("Thumbnails", thumbs::dir()),
-    ];
-    for (label, path) in places {
-        content.append(&place(label, path));
+    ] {
+        places.add(place(label, path));
     }
 
+    let support = group(page, "Support");
     let status = note("");
     status.set_visible(false);
-    let copy = gtk::Button::with_label("Copy doctor report");
-    copy.set_halign(gtk::Align::Start);
-    copy.set_tooltip_text(Some("Copies what this session supports, for a bug report"));
+    let copy = gtk::Button::with_label("Copy");
     let shown = status.clone();
     copy.connect_clicked(move |button| copy_report(button, &shown));
-    content.append(&copy);
-    content.append(&status);
+    support.add(row(
+        "Doctor report",
+        Some("What this session supports, for a bug report."),
+        Some(&copy),
+    ));
+    support.footer(&status);
 }
 
-fn place(label: &str, path: PathBuf) -> gtk::Box {
-    let row = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(12)
-        .build();
-    row.append(
-        &gtk::Label::builder()
-            .label(label)
-            .xalign(0.0)
-            .width_chars(10)
-            .build(),
-    );
-    row.append(
-        &gtk::Label::builder()
-            .label(storage::tilde(&path))
-            .xalign(0.0)
-            .hexpand(true)
-            .ellipsize(gtk::pango::EllipsizeMode::Middle)
-            .css_classes(["value"])
-            .build(),
-    );
+fn place(label: &str, path: PathBuf) -> gtk::ListBoxRow {
+    let tilde = storage::tilde(&path);
     let show = gtk::Button::builder()
         .label("Show")
         .css_classes(["ghost"])
-        .tooltip_text(format!(
-            "Show {} in the file manager",
-            storage::tilde(&path)
-        ))
+        .tooltip_text(format!("Show {tilde} in the file manager"))
         .build();
     show.connect_clicked(move |_| {
         glib::spawn_future_local(files::reveal(path.clone()));
     });
-    row.append(&show);
-    row
+    path_row(label, &tilde, Some(&show))
 }
 
 fn copy_report(button: &gtk::Button, status: &gtk::Label) {

@@ -2,6 +2,8 @@ mod canvas;
 mod crop;
 mod document;
 mod inline;
+mod keys;
+mod menu;
 mod pixels;
 mod render;
 mod select;
@@ -14,6 +16,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
@@ -25,11 +28,15 @@ use crate::output::{self, Image};
 use crate::storage::Naming;
 use crate::{storage, ui};
 use canvas::View;
-use document::{Area, Color, Document, Edit, Point, Shape, Stroke, Tool, Weight};
+use document::{
+    Area, Document, Edit, MAX_SIZE_PX, MIN_OPACITY, MIN_SIZE_PX, Point, Shape, Stroke, Tool,
+};
 use pixels::{LoadError, Picture};
 use render::Layers;
 
+pub use document::Color;
 pub use inline::{Ending, Finish, Inline};
+pub use keys::{DrawAction, DrawKey, DrawingKeys, KeyConflict};
 
 /// What an editor window works on: a saved capture, or a fresh one that is not on disk yet.
 pub enum Source {
@@ -61,6 +68,12 @@ struct Prepared {
     hidden: Picture,
 }
 
+struct Loaded {
+    picture: Picture,
+    layers: Layers,
+    drawing: config::Drawing,
+}
+
 type EndCallback = Box<dyn FnOnce(Ending)>;
 
 enum Host {
@@ -77,7 +90,12 @@ struct Editor {
     document: RefCell<Document>,
     tool: Cell<Tool>,
     color: Cell<Color>,
-    weight: Cell<Weight>,
+    size: gtk::Adjustment,
+    opacity: gtk::Adjustment,
+    keys: DrawingKeys,
+    menu: RefCell<Option<menu::Menu>>,
+    remembered: Cell<config::Drawing>,
+    remembering: RefCell<Option<glib::SourceId>>,
     draft: RefCell<Vec<Point>>,
     view: Cell<View>,
     canvas: gtk::DrawingArea,
@@ -91,6 +109,8 @@ struct Editor {
     writer: gtk::Popover,
     entry: gtk::Entry,
     layer: RefCell<Option<(gtk::Fixed, Point)>>,
+    bars: RefCell<Option<inline::Bars>>,
+    reshaping: RefCell<Option<crop::Reshaping>>,
     typing: RefCell<Option<text::Typing>>,
     busy: Cell<bool>,
     discard: Cell<bool>,
@@ -134,11 +154,19 @@ pub fn open(app: &gtk::Application, source: Source) {
     window.present();
 
     glib::spawn_future_local(async move {
-        let prepared = gio::spawn_blocking(move || prepare(input)).await;
+        let prepared = gio::spawn_blocking(move || {
+            prepare(input).map(|ready| (ready, config::load().drawing))
+        })
+        .await;
         let failure = match prepared {
-            Ok(Ok(prepared)) => match Layers::new(prepared.base, prepared.hidden) {
+            Ok(Ok((prepared, drawing))) => match Layers::new(prepared.base, prepared.hidden) {
                 Ok(layers) => {
-                    Editor::build(&window, mode, original, prepared.picture, layers);
+                    let loaded = Loaded {
+                        picture: prepared.picture,
+                        layers,
+                        drawing,
+                    };
+                    Editor::build(&window, mode, original, loaded);
                     return;
                 }
                 Err(error) => format!("The capture could not be shown: {error}"),
@@ -174,7 +202,7 @@ fn panel(child: &impl IsA<gtk::Widget>) -> gtk::Box {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
-        .css_classes(["panel", "settings", "editor"])
+        .css_classes(["panel", "editor"])
         .build();
     content.append(child);
     content
@@ -187,23 +215,15 @@ fn file_name(path: &Path) -> String {
 }
 
 impl Editor {
-    fn build(
-        window: &gtk::Window,
-        mode: CaptureMode,
-        original: Option<PathBuf>,
-        picture: Picture,
-        layers: Layers,
-    ) {
-        let editor = Self::new(
-            Host::Window(window.downgrade()),
-            mode,
-            original,
-            picture,
-            layers,
-        );
+    fn build(window: &gtk::Window, mode: CaptureMode, original: Option<PathBuf>, loaded: Loaded) {
+        let editor = Self::new(Host::Window(window.downgrade()), mode, original, loaded);
         let content = panel(&toolbar::build(&editor));
         content.append(&editor.canvas);
-        content.append(&editor.status);
+        content.append(&toolbar::footer(
+            &editor,
+            editor.picture.width,
+            editor.picture.height,
+        ));
         window.set_child(Some(&content));
         editor.sync();
         editor.canvas.grab_focus();
@@ -219,13 +239,12 @@ impl Editor {
         window.connect_close_request(move |_| owner.close_request());
     }
 
-    fn new(
-        host: Host,
-        mode: CaptureMode,
-        original: Option<PathBuf>,
-        picture: Picture,
-        layers: Layers,
-    ) -> Rc<Self> {
+    fn new(host: Host, mode: CaptureMode, original: Option<PathBuf>, loaded: Loaded) -> Rc<Self> {
+        let Loaded {
+            picture,
+            layers,
+            drawing,
+        } = loaded;
         let document = if original.is_some() {
             Document::default()
         } else {
@@ -252,8 +271,27 @@ impl Editor {
             layers,
             document: RefCell::new(document),
             tool: Cell::new(Tool::default()),
-            color: Cell::new(Color::default()),
-            weight: Cell::new(Weight::default()),
+            color: Cell::new(drawing.color),
+            size: gtk::Adjustment::new(
+                f64::from(drawing.size),
+                f64::from(MIN_SIZE_PX),
+                f64::from(MAX_SIZE_PX),
+                1.0,
+                4.0,
+                0.0,
+            ),
+            opacity: gtk::Adjustment::new(
+                f64::from(drawing.opacity),
+                f64::from(MIN_OPACITY),
+                100.0,
+                5.0,
+                10.0,
+                0.0,
+            ),
+            keys: drawing.keys,
+            menu: RefCell::new(None),
+            remembered: Cell::new(drawing),
+            remembering: RefCell::new(None),
             draft: RefCell::new(Vec::new()),
             view: Cell::new(View::IDENTITY),
             canvas,
@@ -270,13 +308,76 @@ impl Editor {
                 .width_chars(24)
                 .build(),
             layer: RefCell::new(None),
+            bars: RefCell::new(None),
+            reshaping: RefCell::new(None),
             typing: RefCell::new(None),
             busy: Cell::new(false),
             discard: Cell::new(false),
         });
         canvas::attach(&editor);
         text::attach(&editor);
+        menu::attach(&editor);
+        for adjustment in [&editor.size, &editor.opacity] {
+            let target = Rc::downgrade(&editor);
+            adjustment.connect_value_changed(move |_| {
+                if let Some(editor) = target.upgrade() {
+                    editor.restyle();
+                    editor.remember();
+                }
+            });
+        }
         editor
+    }
+
+    fn drawing(&self) -> config::Drawing {
+        config::Drawing {
+            color: self.color.get(),
+            size: self.size.value().round() as u32,
+            opacity: self.opacity.value().round() as u32,
+            keys: self.keys,
+        }
+    }
+
+    fn remember(self: &Rc<Self>) {
+        let drawing = self.drawing();
+        if drawing == self.remembered.replace(drawing) {
+            return;
+        }
+        if let Some(pending) = self.remembering.take() {
+            pending.remove();
+        }
+        let target = Rc::downgrade(self);
+        let source = glib::timeout_add_local_once(Duration::from_millis(400), move || {
+            if let Some(editor) = target.upgrade() {
+                editor.remembering.take();
+            }
+            gio::spawn_blocking(move || {
+                if let Err(error) = config::update(&config::path(), |config| {
+                    config.drawing.color = drawing.color;
+                    config.drawing.size = drawing.size;
+                    config.drawing.opacity = drawing.opacity;
+                }) {
+                    eprintln!("kiekje: could not remember the drawing style: {error}");
+                }
+            });
+        });
+        self.remembering.replace(Some(source));
+    }
+
+    fn key_action(&self, key: gdk::Key, shift: bool) -> Option<DrawAction> {
+        let typed = key.to_lower().to_unicode()?;
+        if shift && typed.is_ascii_alphabetic() {
+            return None;
+        }
+        self.keys.action(typed)
+    }
+
+    fn run(&self, action: DrawAction) {
+        match action {
+            DrawAction::Tool(tool) => self.pick(tool),
+            DrawAction::Smaller => self.size.set_value(self.size.value() - 1.0),
+            DrawAction::Larger => self.size.set_value(self.size.value() + 1.0),
+        }
     }
 
     fn size(&self) -> (f64, f64) {
@@ -287,9 +388,11 @@ impl Editor {
     }
 
     fn stroke(&self) -> Stroke {
+        let drawing = self.drawing();
         Stroke::scaled(
-            self.color.get(),
-            self.weight.get(),
+            drawing.color,
+            drawing.size,
+            drawing.opacity,
             (self.picture.width, self.picture.height),
         )
     }
@@ -351,6 +454,7 @@ impl Editor {
     fn edited(&self) {
         self.discard.set(false);
         self.sync();
+        self.place_bars();
         self.canvas.queue_draw();
     }
 
@@ -375,10 +479,14 @@ impl Editor {
         let step = if shift { 10.0 } else { 1.0 };
         let handled = match (control, letter.as_str()) {
             (false, "Delete" | "BackSpace") => self.delete_selected(),
-            (false, "Left") => self.nudge(-step, 0.0),
-            (false, "Right") => self.nudge(step, 0.0),
-            (false, "Up") => self.nudge(0.0, -step),
-            (false, "Down") => self.nudge(0.0, step),
+            (false, "Left") => self.nudge(-step, 0.0) || self.step_region(-step, 0.0, false),
+            (false, "Right") => self.nudge(step, 0.0) || self.step_region(step, 0.0, false),
+            (false, "Up") => self.nudge(0.0, -step) || self.step_region(0.0, -step, false),
+            (false, "Down") => self.nudge(0.0, step) || self.step_region(0.0, step, false),
+            (true, "Left") => self.step_region(-step, 0.0, true),
+            (true, "Right") => self.step_region(step, 0.0, true),
+            (true, "Up") => self.step_region(0.0, -step, true),
+            (true, "Down") => self.step_region(0.0, step, true),
             _ => false,
         };
         if handled {
@@ -394,15 +502,21 @@ impl Editor {
             (true, "p") if self.is_inline() => self.conclude(Finish::Pin),
             (false, "Return" | "KP_Enter") if self.is_inline() => self.conclude(Finish::Accept),
             (false, "Escape") => {
-                if !(self.cancel_grab() || self.cancel_draft() || self.deselect()) {
+                if !(self.close_menu()
+                    || self.cancel_reshape()
+                    || self.cancel_grab()
+                    || self.cancel_draft()
+                    || self.deselect())
+                {
                     self.dismiss();
                 }
             }
-            (false, _) if !alt && !shift => {
-                let Some(tool) = Tool::ALL.into_iter().find(|tool| tool.key() == letter) else {
+            (false, "s") if self.is_inline() => self.pick(Tool::Crop),
+            (false, _) if !alt => {
+                let Some(action) = self.key_action(key, shift) else {
                     return glib::Propagation::Proceed;
                 };
-                self.pick(tool);
+                self.run(action);
             }
             _ => return glib::Propagation::Proceed,
         }

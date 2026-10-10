@@ -1,21 +1,31 @@
 mod sprite;
 
-use sprite::{HEIGHT, SPRITE};
+use sprite::SPRITE;
 
 use crate::style::{Rgb, Style, mix};
 
-pub use sprite::WIDTH;
+const SCALE: usize = 2;
+const BLOB_WIDTH: usize = sprite::WIDTH / SCALE;
+const BLOB_HEIGHT: usize = sprite::HEIGHT / SCALE;
+const PAD_X: usize = 3;
+const PAD_Y: usize = 2;
+const CANVAS_HEIGHT: usize = (BLOB_HEIGHT + 2 * PAD_Y).next_multiple_of(2);
 
-pub const ROWS: usize = HEIGHT / 2;
+pub const WIDTH: usize = BLOB_WIDTH + 2 * PAD_X;
+pub const ROWS: usize = CANVAS_HEIGHT / 2;
 
 const BODY: u32 = 1;
 const EYE: u32 = 2;
+const ARM: usize = 5;
+const THICKNESS: usize = 2;
+const SPREAD: usize = 3;
+const BRACKET: Rgb = (250, 238, 233);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
-    pub lift: usize,
     pub glow: f32,
     pub lid: f32,
+    pub viewfinder: f32,
     pub unlit: Rgb,
 }
 
@@ -26,7 +36,7 @@ enum Pixel {
     Eye(Rgb),
 }
 
-fn decode(x: usize, y: usize) -> Pixel {
+fn source(x: usize, y: usize) -> Pixel {
     let Some(&value) = SPRITE.get(y).and_then(|row| row.get(x)) else {
         return Pixel::Empty;
     };
@@ -38,6 +48,47 @@ fn decode(x: usize, y: usize) -> Pixel {
     }
 }
 
+fn average(colors: &[Rgb]) -> Rgb {
+    let count = colors.len().max(1) as u32;
+    let sum = colors.iter().fold((0u32, 0u32, 0u32), |sum, color| {
+        (
+            sum.0 + u32::from(color.0),
+            sum.1 + u32::from(color.1),
+            sum.2 + u32::from(color.2),
+        )
+    });
+    (
+        (sum.0 / count) as u8,
+        (sum.1 / count) as u8,
+        (sum.2 / count) as u8,
+    )
+}
+
+fn decode(x: usize, y: usize) -> Pixel {
+    if x >= BLOB_WIDTH || y >= BLOB_HEIGHT {
+        return Pixel::Empty;
+    }
+    let mut body = Vec::new();
+    let mut eye = Vec::new();
+    for dy in 0..SCALE {
+        for dx in 0..SCALE {
+            match source(x * SCALE + dx, y * SCALE + dy) {
+                Pixel::Empty => {}
+                Pixel::Body(color) => body.push(color),
+                Pixel::Eye(color) => eye.push(color),
+            }
+        }
+    }
+    let block = SCALE * SCALE;
+    if eye.len() * 2 >= block {
+        Pixel::Eye(average(&eye))
+    } else if (body.len() + eye.len()) * 2 >= block {
+        Pixel::Body(average(&body))
+    } else {
+        Pixel::Empty
+    }
+}
+
 fn eye_span(x: usize, y: usize) -> (usize, usize) {
     let is_eye = |row: usize| matches!(decode(x, row), Pixel::Eye(_));
     let top = (0..=y)
@@ -45,7 +96,7 @@ fn eye_span(x: usize, y: usize) -> (usize, usize) {
         .take_while(|&row| is_eye(row))
         .last()
         .unwrap_or(y);
-    let bottom = (y..HEIGHT)
+    let bottom = (y..BLOB_HEIGHT)
         .take_while(|&row| is_eye(row))
         .last()
         .unwrap_or(y);
@@ -65,21 +116,52 @@ fn lidded(x: usize, y: usize, lid: f32) -> Option<Rgb> {
 }
 
 fn reveal(glow: f32, x: usize, y: usize) -> f32 {
-    let dx = x as f32 / (WIDTH - 1) as f32 - 0.5;
-    let dy = y as f32 / (HEIGHT - 1) as f32 - 0.5;
+    let dx = x as f32 / (BLOB_WIDTH - 1) as f32 - 0.5;
+    let dy = y as f32 / (BLOB_HEIGHT - 1) as f32 - 0.5;
     let distance = (dx * dx + dy * dy).sqrt() * 2.0;
     let local = (glow * 1.6 - distance * 0.6).clamp(0.0, 1.0);
     1.0 - (1.0 - local).powi(3)
 }
 
-fn pixel(pose: Pose, x: usize, row: usize) -> Option<Rgb> {
-    let y = row + pose.lift;
+fn blob(pose: Pose, x: usize, row: usize) -> Option<Rgb> {
+    let x = x.checked_sub(PAD_X)?;
+    let y = row.checked_sub(PAD_Y)?;
     let color = match decode(x, y) {
         Pixel::Empty => return None,
         Pixel::Body(color) => color,
         Pixel::Eye(color) => lidded(x, y, pose.lid).unwrap_or(color),
     };
     Some(mix(pose.unlit, color, reveal(pose.glow, x, y)))
+}
+
+fn mirrored(position: usize, extent: usize) -> usize {
+    if position * 2 < extent {
+        position
+    } else {
+        extent - 1 - position
+    }
+}
+
+fn in_bracket(pose: Pose, x: usize, row: usize) -> bool {
+    let inset = ((1.0 - pose.viewfinder.clamp(0.0, 1.0)) * SPREAD as f32).round() as usize;
+    let Some((x, y)) = mirrored(x, WIDTH)
+        .checked_sub(inset)
+        .zip(mirrored(row, CANVAS_HEIGHT).checked_sub(inset))
+    else {
+        return false;
+    };
+    let horizontal = y < THICKNESS && x < ARM;
+    let vertical = x < THICKNESS && y < ARM;
+    let rounded = (x == 0 || x == ARM - 1) && (y == 0 || y == ARM - 1);
+    (horizontal || vertical) && !rounded
+}
+
+fn viewfinder(pose: Pose, x: usize, row: usize) -> Option<Rgb> {
+    in_bracket(pose, x, row).then(|| mix(pose.unlit, BRACKET, pose.viewfinder))
+}
+
+fn pixel(pose: Pose, x: usize, row: usize) -> Option<Rgb> {
+    blob(pose, x, row).or_else(|| viewfinder(pose, x, row))
 }
 
 fn cell(style: &Style, top: Option<Rgb>, bottom: Option<Rgb>) -> String {
@@ -97,14 +179,16 @@ fn cell(style: &Style, top: Option<Rgb>, bottom: Option<Rgb>) -> String {
     style.paint(&code, glyph)
 }
 
-/// Renders the blob mascot as [`ROWS`] lines of half-block characters, each [`WIDTH`] cells wide.
+/// Renders the blob mascot inside four corner brackets, as [`ROWS`] lines of half-block
+/// characters that are each [`WIDTH`] cells wide.
 ///
-/// `lift` raises the sprite into its empty top rows, so a hop never clips it.
+/// The sprite is box-filtered down by `SCALE`. `viewfinder` moves the brackets out from
+/// tight around the blob, `1.0` being settled; `lid` shuts the eyes, `1.0` being closed.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let pose = Pose { lift: 0, glow: 1.0, lid: 0.0, unlit: (0, 0, 0) };
+/// let pose = Pose { glow: 1.0, lid: 0.0, viewfinder: 1.0, unlit: (0, 0, 0) };
 /// for line in mascot::rows(&Style::stdout(), pose) {
 ///     println!("{line}");
 /// }
@@ -125,51 +209,41 @@ pub fn rows(style: &Style, pose: Pose) -> Vec<String> {
         .collect()
 }
 
-/// Number of empty sprite rows above the mascot, the most it can hop without clipping.
-///
-/// # Examples
-///
-/// ```ignore
-/// let height = mascot::headroom().min(2);
-/// ```
-pub fn headroom() -> usize {
-    (0..HEIGHT)
-        .take_while(|&y| (0..WIDTH).all(|x| decode(x, y) == Pixel::Empty))
-        .count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const REST: Pose = Pose {
-        lift: 0,
         glow: 1.0,
         lid: 0.0,
+        viewfinder: 1.0,
         unlit: (0, 0, 0),
     };
 
     fn eyes() -> Vec<(usize, usize)> {
-        (0..HEIGHT)
-            .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+        (0..BLOB_HEIGHT)
+            .flat_map(|y| (0..BLOB_WIDTH).map(move |x| (x, y)))
             .filter(|&(x, y)| matches!(decode(x, y), Pixel::Eye(_)))
             .collect()
     }
 
-    #[test]
-    fn keeps_room_above_the_mascot_to_hop() {
-        assert!(headroom() >= 2);
-        assert_eq!(HEIGHT % 2, 0);
+    fn bracket_cells(pose: Pose) -> Vec<(usize, usize)> {
+        (0..CANVAS_HEIGHT)
+            .flat_map(|y| (0..WIDTH).map(move |x| (x, y)))
+            .filter(|&(x, y)| in_bracket(pose, x, y))
+            .collect()
     }
 
     #[test]
-    fn has_two_open_eyes_at_rest() {
+    fn keeps_two_eyes_after_scaling_down() {
         let eyes = eyes();
-        assert!(eyes.len() >= 8);
+        assert!(eyes.len() >= 4);
+        let columns: std::collections::BTreeSet<usize> = eyes.iter().map(|&(x, _)| x).collect();
+        assert!(columns.len() >= 2);
         assert!(
             eyes.iter()
                 .all(|&(x, y)| matches!(decode(x, y), Pixel::Eye(color)
-                    if pixel(REST, x, y) == Some(color)))
+                    if blob(REST, x + PAD_X, y + PAD_Y) == Some(color)))
         );
     }
 
@@ -177,16 +251,55 @@ mod tests {
     fn closes_every_eye_pixel_when_the_lid_is_down() {
         let shut = Pose { lid: 1.0, ..REST };
         assert!(eyes().iter().all(|&(x, y)| {
-            matches!((decode(x, y), pixel(shut, x, y)), (Pixel::Eye(eye), Some(lid)) if eye != lid)
+            matches!(
+                (decode(x, y), blob(shut, x + PAD_X, y + PAD_Y)),
+                (Pixel::Eye(eye), Some(lid)) if eye != lid
+            )
         }));
     }
 
     #[test]
     fn starts_dark_and_lights_up_fully() {
         let dark = Pose { glow: 0.0, ..REST };
-        let (x, y) = (WIDTH / 2, HEIGHT / 2);
+        let (x, y) = (WIDTH / 2, CANVAS_HEIGHT / 2);
         assert_eq!(pixel(dark, x, y), Some((0, 0, 0)));
         assert_ne!(pixel(REST, x, y), Some((0, 0, 0)));
+    }
+
+    #[test]
+    fn draws_four_rounded_brackets_at_rest() {
+        let per_bracket = 2 * ARM * THICKNESS - THICKNESS * THICKNESS - 3;
+        assert_eq!(bracket_cells(REST).len(), 4 * per_bracket);
+        assert!(!in_bracket(REST, 0, 0));
+        assert!(in_bracket(REST, 1, 0));
+        assert!(in_bracket(REST, WIDTH - 2, CANVAS_HEIGHT - 1));
+        assert_eq!(pixel(REST, 1, 0), Some(BRACKET));
+    }
+
+    #[test]
+    fn keeps_the_brackets_clear_of_the_blob() {
+        assert!(
+            bracket_cells(REST)
+                .iter()
+                .all(|&(x, y)| blob(REST, x, y).is_none())
+        );
+    }
+
+    #[test]
+    fn opens_the_brackets_out_from_around_the_blob() {
+        let tight = Pose {
+            viewfinder: 0.0,
+            ..REST
+        };
+        assert_eq!(bracket_cells(tight).len(), bracket_cells(REST).len());
+        assert!(!in_bracket(tight, 1, 0));
+        assert!(in_bracket(tight, SPREAD + 1, SPREAD));
+        assert!(in_bracket(
+            tight,
+            WIDTH - 2 - SPREAD,
+            CANVAS_HEIGHT - 1 - SPREAD
+        ));
+        assert_eq!(pixel(tight, SPREAD + 1, SPREAD), Some((0, 0, 0)));
     }
 
     #[test]

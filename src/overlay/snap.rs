@@ -18,6 +18,10 @@ impl Snap {
         }
     }
 
+    pub fn has_windows(&self) -> bool {
+        !self.windows.is_empty()
+    }
+
     pub fn hovered(&self) -> Option<LogicalRect> {
         self.hovered.get()
     }

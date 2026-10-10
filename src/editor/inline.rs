@@ -4,11 +4,14 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
 
-use super::document::Point;
-use super::pixels::LoadError;
+use super::canvas::View;
+use super::document::{Area, Point};
+use super::pixels::{self, LoadError};
 use super::render::{self, Layers};
-use super::{Editor, Host, Input, SaveError, prepare, toolbar};
+use super::{DrawAction, DrawingKeys, Editor, Host, Input, Loaded, SaveError, prepare, toolbar};
+use crate::capture::mapping::PixelRect;
 use crate::capture::{CaptureMode, LogicalRect};
+use crate::config;
 use crate::output::Image;
 use crate::ui;
 
@@ -26,9 +29,22 @@ pub enum Finish {
 }
 
 /// How inline editing ended.
+///
+/// A finished edit carries the region it kept, in frame pixels, or `None` for the whole frame.
 pub enum Ending {
     Canceled,
-    Finished { image: Image, finish: Finish },
+    Finished {
+        image: Image,
+        finish: Finish,
+        region: Option<PixelRect>,
+    },
+}
+
+pub(super) struct Bars {
+    tools: gtk::Box,
+    actions: gtk::Box,
+    size: gtk::Label,
+    surface: (i32, i32),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,7 +62,7 @@ pub enum OpenError {
 pub struct Inline(Rc<Editor>);
 
 impl Inline {
-    /// Prepares an inline editor for a freshly rendered selection.
+    /// Prepares an inline editor for a monitor's frozen frame.
     ///
     /// Pixels are prepared off the main thread. `on_end` runs once, when the user accepts,
     /// copies, saves or cancels; a finished edit carries the flattened image.
@@ -54,11 +70,12 @@ impl Inline {
     /// # Examples
     ///
     /// ```ignore
-    /// let inline = Inline::open(image, CaptureMode::Region, |ending| {}).await?;
+    /// let inline = Inline::open(image, CaptureMode::Region, drawing, |ending| {}).await?;
     /// ```
     pub async fn open(
         image: Image,
         mode: CaptureMode,
+        drawing: config::Drawing,
         on_end: impl FnOnce(Ending) + 'static,
     ) -> Result<Self, OpenError> {
         let prepared = gio::spawn_blocking(move || prepare(Input::Image(image)))
@@ -66,60 +83,76 @@ impl Inline {
             .map_err(|_| OpenError::Worker)??;
         let layers = Layers::new(prepared.base, prepared.hidden)?;
         let host = Host::Inline(RefCell::new(Some(Box::new(on_end))));
-        Ok(Self(Editor::new(
-            host,
-            mode,
-            None,
-            prepared.picture,
+        let loaded = Loaded {
+            picture: prepared.picture,
             layers,
-        )))
+            drawing,
+        };
+        Ok(Self(Editor::new(host, mode, None, loaded)))
     }
 
-    /// Places the canvas over `selection` and the tool and action bars around it.
+    /// Covers `layer` with the frame and puts the tool and action bars around the region.
     ///
-    /// `selection` is in the coordinates of `layer`, which covers a surface of `surface` size.
+    /// `layer` covers a surface of `surface` logical size. `region` is the part of the frame to
+    /// keep, in frame pixels; `None` starts with the whole frame and no region yet.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// inline.mount(&fixed, LogicalRect { x: 40, y: 40, width: 640, height: 360 }, (1920, 1080));
+    /// inline.mount(&fixed, (1920, 1080), Some(PixelRect { x: 40, y: 40, width: 640, height: 360 }));
     /// ```
-    pub fn mount(&self, layer: &gtk::Fixed, selection: LogicalRect, surface: (i32, i32)) {
+    pub fn mount(&self, layer: &gtk::Fixed, surface: (i32, i32), region: Option<PixelRect>) {
         ui::load_stylesheet();
         let editor = &self.0;
         layer.add_css_class("editor");
         layer.add_css_class("inline");
-        editor
-            .canvas
-            .set_size_request(selection.width, selection.height);
-        layer.put(
-            &editor.canvas,
-            f64::from(selection.x),
-            f64::from(selection.y),
-        );
+        if let Some(region) = region {
+            editor.document.borrow_mut().start_crop(Area {
+                x: f64::from(region.x),
+                y: f64::from(region.y),
+                width: f64::from(region.width),
+                height: f64::from(region.height),
+            });
+        }
+        editor.canvas.set_size_request(surface.0, surface.1);
+        layer.put(&editor.canvas, 0.0, 0.0);
 
         editor.entry.set_visible(false);
         layer.put(&editor.entry, 0.0, 0.0);
-        editor.layer.replace(Some((
-            layer.clone(),
-            Point {
-                x: f64::from(selection.x),
-                y: f64::from(selection.y),
-            },
-        )));
+        editor
+            .layer
+            .replace(Some((layer.clone(), Point { x: 0.0, y: 0.0 })));
 
         let tools = tool_bar(editor);
-        let actions = action_bar(editor, selection);
+        let (actions, size) = action_bar(editor);
         keep_focus(tools.upcast_ref());
         keep_focus(actions.upcast_ref());
         layer.put(&tools, 0.0, 0.0);
         layer.put(&actions, 0.0, 0.0);
-        let (top, bottom) = place_bars(selection, surface, natural(&tools), natural(&actions));
-        layer.move_(&tools, f64::from(top.0), f64::from(top.1));
-        layer.move_(&actions, f64::from(bottom.0), f64::from(bottom.1));
+        editor.bars.replace(Some(Bars {
+            tools,
+            actions,
+            size,
+            surface,
+        }));
+        editor.place_bars();
 
         editor.sync();
         editor.canvas.grab_focus();
+    }
+
+    /// Whether `key` picks an annotation tool, so the overlay can start drawing with it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if Inline::is_tool_key(&keys, gdk::Key::a) { start_drawing(); }
+    /// ```
+    pub fn is_tool_key(keys: &DrawingKeys, key: gdk::Key) -> bool {
+        key.to_lower()
+            .to_unicode()
+            .and_then(|typed| keys.action(typed))
+            .is_some_and(|action| matches!(action, DrawAction::Tool(_)))
     }
 
     /// Handles a key pressed anywhere on the overlay.
@@ -139,6 +172,14 @@ impl Editor {
         let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };
+        let region = crop
+            .and_then(|area| pixels::region(area, picture.width, picture.height))
+            .map(|region| PixelRect {
+                x: region.x,
+                y: region.y,
+                width: region.width,
+                height: region.height,
+            });
         let editor = self.clone();
         glib::spawn_future_local(async move {
             let flattened =
@@ -149,7 +190,11 @@ impl Editor {
                     if let Host::Inline(ending) = &editor.host
                         && let Some(end) = ending.take()
                     {
-                        end(Ending::Finished { image, finish });
+                        end(Ending::Finished {
+                            image,
+                            finish,
+                            region,
+                        });
                     }
                 }
                 Ok(Err(error)) => {
@@ -158,6 +203,69 @@ impl Editor {
                 Err(_) => editor.say("The render worker stopped", true),
             }
         });
+    }
+
+    pub(super) fn place_bars(&self) {
+        let bars = self.bars.borrow();
+        let Some(bars) = bars.as_ref() else {
+            return;
+        };
+        let Some((layer, _)) = self.layer.borrow().clone() else {
+            return;
+        };
+        let (width, height) = (self.picture.width, self.picture.height);
+        let crop = self.document.borrow().crop();
+        let kept = crop.and_then(|area| pixels::region(area, width, height));
+        let (kept_width, kept_height) =
+            kept.map_or((width, height), |kept| (kept.width, kept.height));
+        bars.size
+            .set_label(&format!("{kept_width} × {kept_height}"));
+        let view = View::fit(
+            (f64::from(bars.surface.0), f64::from(bars.surface.1)),
+            self.size(),
+            f64::INFINITY,
+        );
+        let selection = match crop {
+            Some(area) => {
+                let (left, top) = view.to_widget(Point {
+                    x: area.x,
+                    y: area.y,
+                });
+                let (right, bottom) = view.to_widget(Point {
+                    x: area.x + area.width,
+                    y: area.y + area.height,
+                });
+                LogicalRect {
+                    x: left.round() as i32,
+                    y: top.round() as i32,
+                    width: (right - left).round() as i32,
+                    height: (bottom - top).round() as i32,
+                }
+            }
+            None => LogicalRect {
+                x: 0,
+                y: 0,
+                width: bars.surface.0,
+                height: bars.surface.1,
+            },
+        };
+        let (top, bottom) = place_bars(
+            selection,
+            bars.surface,
+            natural(&bars.tools),
+            natural(&bars.actions),
+        );
+        layer.move_(&bars.tools, f64::from(top.0), f64::from(top.1));
+        layer.move_(&bars.actions, f64::from(bottom.0), f64::from(bottom.1));
+        bars.tools.set_visible(true);
+        bars.actions.set_visible(true);
+    }
+
+    pub(super) fn hide_bars(&self) {
+        if let Some(bars) = self.bars.borrow().as_ref() {
+            bars.tools.set_visible(false);
+            bars.actions.set_visible(false);
+        }
     }
 }
 
@@ -173,18 +281,10 @@ fn tool_bar(editor: &Rc<Editor>) -> gtk::Box {
     bar
 }
 
-fn action_bar(editor: &Rc<Editor>, selection: LogicalRect) -> gtk::Box {
+fn action_bar(editor: &Rc<Editor>) -> (gtk::Box, gtk::Label) {
     let bar = bar();
     let row = toolbar::row();
-    let (width, height) = (editor.picture.width, editor.picture.height);
-    let size = gtk::Label::builder()
-        .label(format!("{width} × {height}"))
-        .tooltip_text(format!(
-            "{} × {} on screen",
-            selection.width, selection.height
-        ))
-        .css_classes(["action-label"])
-        .build();
+    let size = gtk::Label::builder().css_classes(["action-label"]).build();
     row.append(&size);
     for (label, tooltip, primary, run) in [
         (
@@ -221,7 +321,7 @@ fn action_bar(editor: &Rc<Editor>, selection: LogicalRect) -> gtk::Box {
     editor.status.set_wrap(true);
     editor.status.set_max_width_chars(60);
     bar.append(&editor.status);
-    bar
+    (bar, size)
 }
 
 fn accept(editor: &Rc<Editor>) {
