@@ -17,7 +17,7 @@ use wayland_client::protocol::{wl_buffer, wl_output, wl_shm};
 use wayland_client::{Connection, EventQueue, Proxy, QueueHandle};
 
 use crate::backends::{Capabilities, CaptureBackend};
-use crate::capture::{CaptureError, Frame, MonitorInfo, PixelFormat};
+use crate::capture::{CaptureError, Frame, MonitorInfo, PixelFormat, check_layout};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 const PREFERRED_FORMATS: [wl_shm::Format; 4] = [
@@ -232,10 +232,19 @@ impl State {
             self.fail(index, "the compositor offered an empty buffer");
             return None;
         }
+        let row = width.checked_mul(4);
+        let stride = match (target.offered_stride, row) {
+            (Some(stride), Some(row)) if stride >= row => stride,
+            (None, Some(row)) => row,
+            _ => {
+                self.fail(index, "the compositor offered a stride shorter than a row");
+                return None;
+            }
+        };
         let layout = Layout {
             width,
             height,
-            stride: target.offered_stride.unwrap_or(width * 4),
+            stride,
             format,
         };
         let mut pool = match RawPool::new(layout.stride as usize * height as usize, &self.shm) {
@@ -277,8 +286,15 @@ impl Target {
         let layout = buffer.layout;
         let format = pixel_format(layout.format)
             .ok_or(CaptureError::UnsupportedFormat(layout.format.into()))?;
+        let mapped = &buffer.pool.mmap()[..];
+        check_layout(
+            layout.width,
+            layout.height,
+            layout.stride as usize,
+            mapped.len(),
+        )?;
         let image = transform::upright(
-            &buffer.pool.mmap()[..],
+            mapped,
             layout.width,
             layout.height,
             layout.stride as usize,

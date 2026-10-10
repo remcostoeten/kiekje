@@ -287,9 +287,58 @@ impl CaptureError {
     }
 }
 
+/// Checks that `len` bytes hold a `width` by `height` frame of 4-byte pixels with rows `stride` bytes apart.
+///
+/// Backends call it on what a compositor hands them, so a bad buffer becomes an error instead
+/// of a panic or a null texture later.
+///
+/// # Examples
+///
+/// ```ignore
+/// check_layout(1920, 1080, 7680, data.len())?;
+/// ```
+pub fn check_layout(
+    width: u32,
+    height: u32,
+    stride: usize,
+    len: usize,
+) -> Result<(), CaptureError> {
+    if width == 0 || height == 0 {
+        return Err(CaptureError::Decode(format!(
+            "empty {width}x{height} frame"
+        )));
+    }
+    let row = (width as usize).checked_mul(4);
+    if row.is_none_or(|row| stride < row) {
+        return Err(CaptureError::Decode(format!(
+            "stride {stride} is too short for {width} pixels"
+        )));
+    }
+    match stride.checked_mul(height as usize) {
+        Some(needed) if len >= needed => Ok(()),
+        _ => Err(CaptureError::Decode(format!(
+            "{len} bytes is too short for {height} rows of {stride} bytes"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_a_frame_with_padded_rows() {
+        assert!(check_layout(3, 2, 16, 32).is_ok());
+    }
+
+    #[test]
+    fn rejects_frames_a_texture_or_crop_would_misread() {
+        assert!(check_layout(0, 2, 16, 32).is_err());
+        assert!(check_layout(3, 0, 16, 32).is_err());
+        assert!(check_layout(4, 2, 12, 32).is_err());
+        assert!(check_layout(3, 2, 16, 31).is_err());
+        assert!(check_layout(u32::MAX, u32::MAX, usize::MAX, usize::MAX).is_err());
+    }
 
     #[test]
     fn parses_every_mode_from_its_name() {
