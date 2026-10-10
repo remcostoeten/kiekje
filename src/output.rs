@@ -17,12 +17,19 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn texture(&self) -> gdk::MemoryTexture {
+    /// Turns the image into a texture by handing its pixels to GDK without copying them.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// clipboard.set_texture(&image.into_texture());
+    /// ```
+    pub fn into_texture(self) -> gdk::MemoryTexture {
         gdk::MemoryTexture::new(
             self.width as i32,
             self.height as i32,
             self.format.memory_format(),
-            &glib::Bytes::from(&self.data),
+            &glib::Bytes::from_owned(self.data),
             self.stride,
         )
     }

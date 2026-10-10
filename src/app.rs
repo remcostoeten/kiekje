@@ -12,7 +12,7 @@ use crate::backends;
 use crate::backends::windows::WindowError;
 use crate::capture::mapping::{self, SelectionPlan};
 use crate::capture::{
-    BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
+    BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo, PixelFormat,
 };
 use crate::clipboard::Clipboard;
 use crate::config::{self, AfterSelection, Notifications};
@@ -1013,51 +1013,103 @@ fn deliver(render: Render, request: Request, session: Rc<Session>) {
         return;
     }
     let clipboard = session.clipboard.clone();
-    let mut copied = false;
-    let render: Render = match clipboard {
-        Some(_) => render,
-        None => {
-            let Some(image) = render() else {
-                finish_delivery(&session, empty_notice());
-                return;
-            };
-            copied = copy_with_gtk(&image);
-            if !request.save {
-                let notice = if copied {
-                    Notice::Copied {
-                        width: image.width,
-                        height: image.height,
-                    }
-                } else {
-                    Notice::CaptureFailed {
-                        reason: "no display to put the image on the clipboard".into(),
-                    }
-                };
-                finish_delivery(&session, notice);
-                return;
-            }
-            Box::new(move || Some(image))
-        }
-    };
+    let display = gdk::Display::default().is_some();
+    if clipboard.is_none() && !display && !request.save {
+        eprintln!("kiekje: no display, clipboard not set");
+        finish_delivery(
+            &session,
+            Notice::CaptureFailed {
+                reason: "no display to put the image on the clipboard".into(),
+            },
+        );
+        return;
+    }
 
-    let (sender, receiver) = async_channel::bounded(1);
+    let (sender, receiver) = async_channel::bounded(2);
     thread::spawn(move || {
-        let notice = match render() {
-            Some(image) => store(image, request, clipboard.as_ref(), copied),
-            None => empty_notice(),
+        let Some(image) = render() else {
+            // The receiver only disappears when the app is quitting.
+            let _ = sender.send_blocking(Delivery::Done(empty_notice()));
+            return;
+        };
+        let notice = match clipboard {
+            Some(clipboard) => store(image, request, Some(&clipboard), false),
+            None => copy_off_thread(image, request, display, &sender),
         };
         // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking(notice);
+        let _ = sender.send_blocking(Delivery::Done(notice));
     });
     glib::spawn_future_local(async move {
-        match receiver.recv().await {
-            Ok(notice) => finish_delivery(&session, notice),
-            Err(_) => {
-                eprintln!("kiekje: delivery worker stopped");
-                session.busy.set(false);
+        loop {
+            match receiver.recv().await {
+                Ok(Delivery::Pixels(pixels)) => copy_with_gtk(pixels),
+                Ok(Delivery::Done(notice)) => {
+                    finish_delivery(&session, notice);
+                    return;
+                }
+                Err(_) => {
+                    eprintln!("kiekje: delivery worker stopped");
+                    session.busy.set(false);
+                    return;
+                }
             }
         }
     });
+}
+
+enum Delivery {
+    Pixels(Pixels),
+    Done(Notice),
+}
+
+struct Pixels {
+    width: u32,
+    height: u32,
+    stride: usize,
+    format: PixelFormat,
+    bytes: glib::Bytes,
+}
+
+impl Pixels {
+    fn copied(image: &Image) -> Self {
+        Self {
+            width: image.width,
+            height: image.height,
+            stride: image.stride,
+            format: image.format,
+            bytes: glib::Bytes::from(&image.data),
+        }
+    }
+
+    fn owned(image: Image) -> Self {
+        Self {
+            width: image.width,
+            height: image.height,
+            stride: image.stride,
+            format: image.format,
+            bytes: glib::Bytes::from_owned(image.data),
+        }
+    }
+}
+
+fn copy_off_thread(
+    image: Image,
+    request: Request,
+    display: bool,
+    sender: &async_channel::Sender<Delivery>,
+) -> Notice {
+    if !display {
+        return store(image, request, None, false);
+    }
+    if request.save {
+        // The receiver only disappears when the app is quitting.
+        let _ = sender.send_blocking(Delivery::Pixels(Pixels::copied(&image)));
+        return store(image, request, None, true);
+    }
+    let (width, height) = (image.width, image.height);
+    // The receiver only disappears when the app is quitting.
+    let _ = sender.send_blocking(Delivery::Pixels(Pixels::owned(image)));
+    Notice::Copied { width, height }
 }
 
 fn annotate(render: Render, request: Request, session: Rc<Session>) {
@@ -1397,21 +1449,23 @@ fn write_png(png: &[u8], target: Target, copied: bool) -> Notice {
     }
 }
 
-fn copy_with_gtk(image: &Image) -> bool {
-    match gdk::Display::default() {
-        Some(display) => {
-            display.clipboard().set_texture(&image.texture());
-            println!(
-                "kiekje: copied {}x{} to the GTK clipboard",
-                image.width, image.height
-            );
-            true
-        }
-        None => {
-            eprintln!("kiekje: no display, clipboard not set");
-            false
-        }
-    }
+fn copy_with_gtk(pixels: Pixels) {
+    let Some(display) = gdk::Display::default() else {
+        eprintln!("kiekje: no display, clipboard not set");
+        return;
+    };
+    let texture = gdk::MemoryTexture::new(
+        pixels.width as i32,
+        pixels.height as i32,
+        pixels.format.memory_format(),
+        &pixels.bytes,
+        pixels.stride,
+    );
+    display.clipboard().set_texture(&texture);
+    println!(
+        "kiekje: copied {}x{} to the GTK clipboard",
+        pixels.width, pixels.height
+    );
 }
 
 pub fn gdk_monitors() -> Vec<gdk::Monitor> {
@@ -1486,6 +1540,37 @@ mod tests {
         assert!(!decoded.save);
         assert_eq!(decoded.delay, Duration::from_secs(3));
         assert_eq!(decoded.trigger_us, 42);
+    }
+
+    #[test]
+    fn hands_copy_only_pixels_to_the_main_thread_without_copying() {
+        let data = vec![7u8; 4 * 3 * 2];
+        let source = data.as_ptr();
+        let image = Image {
+            width: 3,
+            height: 2,
+            stride: 12,
+            format: PixelFormat::Bgra,
+            data,
+        };
+        let request = Request {
+            save: false,
+            ..Request::saved(CaptureMode::Region)
+        };
+        let (sender, receiver) = async_channel::bounded(2);
+        let notice = copy_off_thread(image, request, true, &sender);
+        assert!(matches!(
+            notice,
+            Notice::Copied {
+                width: 3,
+                height: 2
+            }
+        ));
+        let Ok(Delivery::Pixels(pixels)) = receiver.try_recv() else {
+            panic!("expected pixels before the notice");
+        };
+        assert_eq!((pixels.width, pixels.height, pixels.stride), (3, 2, 12));
+        assert_eq!(pixels.bytes.as_ref().as_ptr(), source);
     }
 
     #[test]

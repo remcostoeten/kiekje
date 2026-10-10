@@ -129,7 +129,7 @@ pub fn stacking() -> Stacking {
 /// pin::open_image(&app, image, Some(selection.rect));
 /// ```
 pub fn open_image(app: &gtk::Application, image: Image, selection: Option<LogicalRect>) {
-    let texture = image.texture().upcast::<gdk::Texture>();
+    let texture = image.into_texture().upcast::<gdk::Texture>();
     let monitors = gdk_monitors();
     let rects: Vec<LogicalRect> = monitors
         .iter()

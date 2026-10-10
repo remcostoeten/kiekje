@@ -567,12 +567,10 @@ impl Editor {
             editor.busy.set(false);
             match flattened {
                 Ok(Ok(image)) => {
-                    editor.canvas.clipboard().set_texture(&image.texture());
+                    let (width, height) = (image.width, image.height);
+                    editor.canvas.clipboard().set_texture(&image.into_texture());
                     editor.document.borrow_mut().mark_saved();
-                    editor.say(
-                        &format!("Copied {}x{} to the clipboard", image.width, image.height),
-                        false,
-                    );
+                    editor.say(&format!("Copied {width}x{height} to the clipboard"), false);
                 }
                 Ok(Err(error)) => {
                     editor.say(&format!("Not copied: {}", SaveError::from(error)), true);
