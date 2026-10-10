@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/portable.yml
       - .github/workflows/release.yml
+      - packaging/**
       - Cargo.toml
       - Cargo.lock
       - build.rs
@@ -18,11 +19,24 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   LAYER_SHELL_VERSION: v1.1.1
+  NFPM_VERSION: 2.41.1
   SYSTEM_DEPS_GTK4_LAYER_SHELL_0_LINK: static
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+            deb_arch: amd64
+            rpm_lib_suffix: (64bit)
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+            deb_arch: arm64
+            rpm_lib_suffix: (aarch-64)
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,13 +46,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libgtk-4-dev libwayland-dev wayland-protocols \
             meson ninja-build pkg-config
+          curl -fsSL -o /tmp/nfpm.deb \
+            "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_${{ matrix.deb_arch }}.deb"
+          sudo dpkg -i /tmp/nfpm.deb
 
       - name: Cache gtk4-layer-shell
         id: layer-shell
         uses: actions/cache@v4
         with:
           path: ~/layer-shell-static
-          key: layer-shell-static-${{ env.LAYER_SHELL_VERSION }}-ubuntu-24.04
+          key: layer-shell-static-${{ env.LAYER_SHELL_VERSION }}-${{ matrix.runner }}
 
       # Linked into the binary because Ubuntu 24.04 and its derivatives do not package it.
       - name: Build gtk4-layer-shell
@@ -51,13 +68,15 @@ jobs:
           ninja -C /tmp/gls/build install
 
       - name: Point the build at gtk4-layer-shell
-        run: echo "PKG_CONFIG_PATH=$HOME/layer-shell-static/lib/pkgconfig" >> "$GITHUB_ENV"
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/layer-shell-static/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: portable
+          key: portable-${{ matrix.arch }}
 
       - name: Test
         run: cargo test --locked
@@ -79,46 +98,115 @@ jobs:
           }
           readelf -d "$binary" | grep NEEDED
 
+      - name: Package the tarball
+        run: |
+          name="kiekje-$VERSION-${{ matrix.arch }}-linux"
+          mkdir -p "dist/$name/packaging" "dist/$name/resources/fonts"
+          install -Dm755 target/release/kiekje "dist/$name/kiekje"
+          cp packaging/install.sh packaging/dev.remcostoeten.Kiekje.desktop "dist/$name/packaging/"
+          cp -r resources/icons "dist/$name/resources/"
+          cp resources/fonts/OFL.txt "dist/$name/resources/fonts/"
+          cp LICENSE README.md "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -r "dist/$name"
+
+      - name: Package the deb and rpm
+        env:
+          NFPM_ARCH: ${{ matrix.deb_arch }}
+          RPM_LIB_SUFFIX: ${{ matrix.rpm_lib_suffix }}
+        run: |
+          DESTDIR="$PWD/stage" PREFIX=/usr packaging/install.sh target/release/kiekje
+          nfpm package -f packaging/nfpm.yaml -p deb -t dist/
+          nfpm package -f packaging/nfpm.yaml -p rpm -t dist/
+          ls -l dist
+
       - uses: actions/upload-artifact@v4
         with:
-          name: kiekje-x86_64-linux
-          path: target/release/kiekje
+          name: kiekje-${{ matrix.arch }}
+          path: dist/*
           if-no-files-found: error
 
   smoke:
     needs: build
-    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: archlinux:latest
-            install: pacman -Syu --noconfirm gtk4
-          - image: fedora:latest
-            install: dnf install -y gtk4
-          - image: opensuse/tumbleweed
-            install: zypper --non-interactive install libgtk-4-1
-          - image: debian:trixie
-            install: apt-get update && apt-get install -y --no-install-recommends libgtk-4-1
-          - image: ubuntu:24.04
-            install: apt-get update && apt-get install -y --no-install-recommends libgtk-4-1
-          - image: ubuntu:25.10
-            install: apt-get update && apt-get install -y --no-install-recommends libgtk-4-1
+          - { arch: x86_64, runner: ubuntu-24.04, image: "archlinux:latest", family: arch }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "fedora:latest", family: dnf }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "opensuse/tumbleweed", family: zypper }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "debian:trixie", family: apt }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "ubuntu:24.04", family: apt }
+          - { arch: x86_64, runner: ubuntu-24.04, image: "ubuntu:25.10", family: apt }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "fedora:latest", family: dnf }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "debian:trixie", family: apt }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, image: "ubuntu:24.04", family: apt }
+    runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     steps:
       - name: Install GTK
-        run: ${{ matrix.install }}
+        run: |
+          case "${{ matrix.family }}" in
+            arch) pacman -Syu --noconfirm gtk4 desktop-file-utils tar gzip ;;
+            dnf) dnf install -y gtk4 desktop-file-utils tar gzip ;;
+            zypper) zypper --non-interactive install libgtk-4-1 desktop-file-utils tar gzip ;;
+            apt) apt-get update && apt-get install -y --no-install-recommends libgtk-4-1 desktop-file-utils ;;
+          esac
 
       - uses: actions/download-artifact@v4
         with:
-          name: kiekje-x86_64-linux
+          name: kiekje-${{ matrix.arch }}
 
-      - name: Start the binary
+      - name: Start the tarball binary
         run: |
-          chmod +x kiekje
-          ldd kiekje
-          if ldd kiekje | grep -q "not found"; then
+          tar -xzf kiekje-*-linux.tar.gz
+          binary="$(ls -d kiekje-*-linux)/kiekje"
+          ldd "$binary"
+          if ldd "$binary" | grep -q "not found"; then
             echo "missing libraries on ${{ matrix.image }}" >&2
             exit 1
           fi
-          ./kiekje --version
+          "$binary" --version
+
+      - name: Install the package
+        if: matrix.family != 'arch'
+        run: |
+          case "${{ matrix.family }}" in
+            dnf) dnf install -y ./kiekje-*.rpm ;;
+            zypper) zypper --non-interactive install --allow-unsigned-rpm ./kiekje-*.rpm ;;
+            apt) apt-get install -y ./kiekje_*.deb ;;
+          esac
+          /usr/bin/kiekje --version
+          desktop-file-validate /usr/share/applications/dev.remcostoeten.Kiekje.desktop
+
+  aur:
+    needs: build
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - name: Install build tools
+        run: pacman -Syu --noconfirm base-devel namcap git gtk4 wayland glib2 cairo pango fontconfig gdk-pixbuf2 graphene
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kiekje-x86_64
+          path: dist
+
+      - name: Build kiekje-bin from this build's tarball
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          tarball="dist/kiekje-$version-x86_64-linux.tar.gz"
+          git archive --format=tar.gz --prefix="kiekje-$version/" -o /tmp/source.tar.gz HEAD
+          packaging/aur/bump.sh "$version" /tmp/aur /tmp/source.tar.gz "$tarball"
+          namcap /tmp/aur/kiekje/PKGBUILD
+          namcap /tmp/aur/kiekje-bin/PKGBUILD
+          cp "$tarball" /tmp/aur/kiekje-bin/
+          useradd -m builder
+          chown -R builder /tmp/aur
+          su builder -c "cd /tmp/aur/kiekje-bin && makepkg --noconfirm"
+          namcap /tmp/aur/kiekje-bin/kiekje-bin-*.pkg.tar.zst
+          pacman -U --noconfirm /tmp/aur/kiekje-bin/kiekje-bin-*.pkg.tar.zst
+          kiekje --version

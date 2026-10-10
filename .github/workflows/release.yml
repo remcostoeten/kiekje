@@ -14,6 +14,7 @@ jobs:
     outputs:
       version: ${{ steps.pick.outputs.version }}
       tag: ${{ steps.pick.outputs.tag }}
+      deb_version: ${{ steps.pick.outputs.deb_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +30,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "deb_version=$(echo "$version" | sed "s/-/~/")" >> "$GITHUB_OUTPUT"
 
   portable:
     needs: version
@@ -40,26 +42,19 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       TAG: ${{ needs.version.outputs.tag }}
+      DEB_VERSION: ${{ needs.version.outputs.deb_version }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
-          name: kiekje-x86_64-linux
-          path: target/release
+          pattern: kiekje-*
+          path: dist
+          merge-multiple: true
 
-      - name: Package
+      - name: Write the checksums
         run: |
-          name="kiekje-$VERSION-x86_64-linux"
-          mkdir -p "dist/$name/packaging" "dist/$name/resources/fonts"
-          install -Dm755 target/release/kiekje "dist/$name/kiekje"
-          cp packaging/install.sh packaging/dev.remcostoeten.Kiekje.desktop "dist/$name/packaging/"
-          cp -r resources/icons "dist/$name/resources/"
-          cp resources/fonts/OFL.txt "dist/$name/resources/fonts/"
-          cp LICENSE README.md "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
-          echo "ARCHIVE=$name" >> "$GITHUB_ENV"
+          (cd dist && sha256sum kiekje* > SHA256SUMS && cat SHA256SUMS)
           echo "TITLE=kiekje $VERSION" >> "$GITHUB_ENV"
 
       - name: Write the notes
@@ -77,10 +72,14 @@ jobs:
             echo "Needs GTK 4.16 or newer. gtk4-layer-shell is built in. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts but the stylesheet does not load."
             echo
             echo '```'
-            echo "tar -xzf $ARCHIVE.tar.gz"
-            echo "cd $ARCHIVE"
-            echo "sudo packaging/install.sh ./kiekje"
+            echo "Ubuntu, Debian, Mint:  sudo apt install ./kiekje_${DEB_VERSION}-1_amd64.deb"
+            echo "Fedora:                sudo dnf install ./kiekje-${DEB_VERSION}-1.x86_64.rpm"
+            echo "openSUSE:              sudo zypper install --allow-unsigned-rpm ./kiekje-${DEB_VERSION}-1.x86_64.rpm"
+            echo "Arch:                  the kiekje-bin PKGBUILD attached below"
+            echo "Other:                 tar -xzf kiekje-$VERSION-x86_64-linux.tar.gz && sudo kiekje-$VERSION-x86_64-linux/packaging/install.sh kiekje-$VERSION-x86_64-linux/kiekje"
             echo '```'
+            echo
+            echo "ARM: the same files with \`arm64\` or \`aarch64\` in the name."
           } > dist/notes.md
 
       - uses: softprops/action-gh-release@v2
@@ -91,5 +90,16 @@ jobs:
           body_path: dist/notes.md
           prerelease: ${{ contains(env.TAG, '-') }}
           files: |
-            dist/${{ env.ARCHIVE }}.tar.gz
-            dist/${{ env.ARCHIVE }}.tar.gz.sha256
+            dist/kiekje*
+            dist/SHA256SUMS
+
+      - name: Attach the AUR PKGBUILDs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL -o /tmp/source.tar.gz "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$TAG.tar.gz"
+          packaging/aur/bump.sh "$VERSION" /tmp/aur /tmp/source.tar.gz \
+            "dist/kiekje-$VERSION-x86_64-linux.tar.gz" "dist/kiekje-$VERSION-aarch64-linux.tar.gz"
+          cp /tmp/aur/kiekje/PKGBUILD dist/PKGBUILD-kiekje
+          cp /tmp/aur/kiekje-bin/PKGBUILD dist/PKGBUILD-kiekje-bin
+          gh release upload "$TAG" dist/PKGBUILD-kiekje dist/PKGBUILD-kiekje-bin --clobber

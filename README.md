@@ -55,9 +55,17 @@ On KDE, run `kiekje install-desktop-file` once, because KWin only allows screens
 
 ## Install
 
-### Release binary
+### Release packages
 
-Each [release](https://github.com/remcostoeten/kiekje/releases) has an x86_64 tarball with gtk4-layer-shell built in, so it needs only GTK 4.16 or newer. CI starts it on Arch, Fedora, openSUSE Tumbleweed, Debian 13, Ubuntu 24.04 and Ubuntu 25.10 before a release ships. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts, but the stylesheet does not load.
+Each [release](https://github.com/remcostoeten/kiekje/releases) has a `.deb`, an `.rpm` and a tarball for x86_64 and aarch64, plus PKGBUILDs for `kiekje` and `kiekje-bin`. gtk4-layer-shell is built in, so they need only GTK 4.16 or newer. CI installs and starts them on Arch, Fedora, openSUSE Tumbleweed, Debian 13, Ubuntu 24.04 and Ubuntu 25.10 (Fedora, Debian 13 and Ubuntu 24.04 on aarch64) before a release ships. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts, but the stylesheet does not load.
+
+```bash
+sudo apt install ./kiekje_VERSION-1_amd64.deb             # Ubuntu, Debian, Mint
+sudo dnf install ./kiekje-VERSION-1.x86_64.rpm            # Fedora
+sudo zypper install --allow-unsigned-rpm ./kiekje-VERSION-1.x86_64.rpm   # openSUSE
+```
+
+The tarball works anywhere else:
 
 ```bash
 tar -xzf kiekje-VERSION-x86_64-linux.tar.gz

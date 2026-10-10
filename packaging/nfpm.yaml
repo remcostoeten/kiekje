@@ -1,0 +1,32 @@
+name: kiekje
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+release: 1
+section: graphics
+priority: optional
+maintainer: Remco Stoeten <https://github.com/remcostoeten>
+description: Capture, mark up and keep screenshots
+vendor: Remco Stoeten
+homepage: https://github.com/remcostoeten/kiekje
+license: MIT AND OFL-1.1
+
+contents:
+  - src: ./stage/usr/
+    dst: /usr
+    type: tree
+
+overrides:
+  deb:
+    depends:
+      - libgtk-4-1 (>= 4.14)
+      - libc6 (>= 2.39)
+    recommends:
+      - xdg-desktop-portal
+  rpm:
+    depends:
+      - libgtk-4.so.1()${RPM_LIB_SUFFIX}
+      - glibc >= 2.39
+    recommends:
+      - xdg-desktop-portal
