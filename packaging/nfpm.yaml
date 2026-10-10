@@ -26,7 +26,7 @@ overrides:
       - xdg-desktop-portal
   rpm:
     depends:
-      - libgtk-4.so.1()${RPM_LIB_SUFFIX}
+      - libgtk-4.so.1()(64bit)
       - glibc >= 2.39
     recommends:
       - xdg-desktop-portal

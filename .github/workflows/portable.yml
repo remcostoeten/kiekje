@@ -31,11 +31,9 @@ jobs:
           - runner: ubuntu-24.04
             arch: x86_64
             deb_arch: amd64
-            rpm_lib_suffix: (64bit)
           - runner: ubuntu-24.04-arm
             arch: aarch64
             deb_arch: arm64
-            rpm_lib_suffix: (aarch-64)
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +111,6 @@ jobs:
       - name: Package the deb and rpm
         env:
           NFPM_ARCH: ${{ matrix.deb_arch }}
-          RPM_LIB_SUFFIX: ${{ matrix.rpm_lib_suffix }}
         run: |
           DESTDIR="$PWD/stage" PREFIX=/usr packaging/install.sh target/release/kiekje
           nfpm package -f packaging/nfpm.yaml -p deb -t dist/
