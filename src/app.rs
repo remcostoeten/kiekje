@@ -106,6 +106,10 @@ impl Request {
 
     fn from_variant(variant: &glib::Variant) -> Option<Self> {
         let (mode, backend, save, edit, delay_ms, trigger_us) = variant.get::<RequestVariant>()?;
+        if u64::from(delay_ms) > crate::MAX_DELAY_SECONDS * 1000 {
+            eprintln!("kiekje: ignored a capture request with a {delay_ms} ms delay");
+            return None;
+        }
         Some(Self {
             mode: CaptureMode::parse(&mode)?,
             backend: BackendChoice::parse(&backend)?,
@@ -1264,19 +1268,25 @@ fn store_at(image: Image, mode: CaptureMode, path: &std::path::Path) -> Notice {
             };
         }
     };
-    let target = Target {
-        folder: path
-            .parent()
-            .map_or_else(storage::default_captures_dir, std::path::Path::to_path_buf),
-        base: path
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "kiekje".to_owned()),
-        mode,
-        width,
-        height,
-    };
-    write_png(&png, target, false)
+    match storage::save_png_as(&png, path) {
+        Ok(path) => {
+            println!("kiekje: saved {}", path.display());
+            record(&path, mode, width, height, png.len());
+            Notice::Saved {
+                path,
+                width,
+                height,
+                copied: false,
+            }
+        }
+        Err(error) => {
+            eprintln!("kiekje: save failed: {error}");
+            Notice::SaveFailed {
+                reason: format!("could not write {}: {error}", path.display()),
+                copied: false,
+            }
+        }
+    }
 }
 
 fn empty_notice() -> Notice {

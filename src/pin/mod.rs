@@ -611,14 +611,7 @@ impl Pin {
 
 fn write(texture: &gdk::Texture, path: &Path) -> std::io::Result<PathBuf> {
     let png = texture.save_to_png_bytes();
-    let folder = path
-        .parent()
-        .map_or_else(storage::default_captures_dir, Path::to_path_buf);
-    let base = path
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "kiekje-pin".to_owned());
-    let saved = storage::save_png(&png, &folder, &base)?;
+    let saved = storage::save_png_as(&png, path)?;
     let capture = NewCapture {
         path: saved.clone(),
         mode: CaptureMode::Region,
