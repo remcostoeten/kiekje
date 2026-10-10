@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use gtk::glib;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use thiserror::Error;
 
 use crate::capture::CaptureMode;
@@ -120,6 +120,25 @@ pub fn path() -> PathBuf {
     glib::user_data_dir().join("kiekje").join("library.db")
 }
 
+fn use_wal(connection: &Connection) -> Result<(), LibraryError> {
+    let mode: String = connection.pragma_query_value(None, "journal_mode", |row| row.get(0))?;
+    if mode.eq_ignore_ascii_case("wal") {
+        return Ok(());
+    }
+    // Switching to WAL skips SQLite's busy handler, so a library opened twice at once retries here.
+    for _ in 0..20 {
+        match connection.pragma_update(None, "journal_mode", "WAL") {
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == rusqlite::ErrorCode::DatabaseBusy =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            done => return Ok(done?),
+        }
+    }
+    Ok(connection.pragma_update(None, "journal_mode", "WAL")?)
+}
+
 impl Library {
     /// Opens the library at `path`, creating it and bringing its schema up to date.
     ///
@@ -139,21 +158,24 @@ impl Library {
         }
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
-        connection.pragma_update(None, "journal_mode", "WAL")?;
+        use_wal(&connection)?;
         let mut library = Self { connection };
         library.migrate()?;
         Ok(library)
     }
 
     fn migrate(&mut self) -> Result<(), LibraryError> {
-        let version: i64 = self
-            .connection
-            .pragma_query_value(None, "user_version", |row| row.get(0))?;
         let latest = i64::try_from(SCHEMA.len()).unwrap_or(i64::MAX);
+        if Self::version(&self.connection)? == latest {
+            return Ok(());
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let version = Self::version(&transaction)?;
         if version > latest {
             return Err(LibraryError::Newer(version));
         }
-        let transaction = self.connection.transaction()?;
         for (index, step) in SCHEMA
             .iter()
             .enumerate()
@@ -164,6 +186,10 @@ impl Library {
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    fn version(connection: &Connection) -> Result<i64, LibraryError> {
+        Ok(connection.pragma_query_value(None, "user_version", |row| row.get(0))?)
     }
 
     /// Records a saved capture and returns its id; saving the same path again updates it.
@@ -516,6 +542,22 @@ mod tests {
         assert_eq!(library.clear().unwrap(), 2);
         assert!(library.all().unwrap().is_empty());
         assert!(folder.join("a.png").is_file());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn migrates_once_when_opened_from_several_threads() {
+        let folder = scratch("concurrent");
+        let path = folder.join("library.db");
+        let opens: Vec<_> = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                std::thread::spawn(move || Library::open(&path).map(drop))
+            })
+            .collect();
+        for open in opens {
+            assert!(open.join().unwrap().is_ok());
+        }
         std::fs::remove_dir_all(folder).unwrap();
     }
 

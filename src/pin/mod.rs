@@ -97,7 +97,7 @@ struct Pin {
     stacking: Stacking,
     room: (i32, i32),
     margins: Cell<(f64, f64)>,
-    toast_timer: RefCell<Option<glib::SourceId>>,
+    toast_timer: Rc<RefCell<Option<glib::SourceId>>>,
 }
 
 /// How pins are kept on top here: a layer-shell surface where the compositor offers one.
@@ -277,7 +277,7 @@ fn show(
         stacking,
         room,
         margins: Cell::new((f64::from(margins.0), f64::from(margins.1))),
-        toast_timer: RefCell::new(None),
+        toast_timer: Rc::new(RefCell::new(None)),
     });
     pin.apply_margins();
     install_actions(&pin);
@@ -596,7 +596,11 @@ impl Pin {
             timer.remove();
         }
         let toast = self.toast.downgrade();
+        let slot = Rc::downgrade(&self.toast_timer);
         let timer = glib::timeout_add_local_once(TOAST, move || {
+            if let Some(slot) = slot.upgrade() {
+                slot.take();
+            }
             if let Some(toast) = toast.upgrade() {
                 toast.set_visible(false);
             }

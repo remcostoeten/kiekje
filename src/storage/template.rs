@@ -7,6 +7,8 @@ use crate::capture::CaptureMode;
 
 pub const DEFAULT_TEMPLATE: &str = "kiekje-{mode}-{date}-{time}";
 const MAX_LENGTH: usize = 200;
+// 255 bytes per file name, minus room for a `-1000` duplicate suffix and the extension.
+const MAX_BYTES: usize = 255 - 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Token {
@@ -24,6 +26,17 @@ enum Token {
 }
 
 impl Token {
+    fn widest(self) -> usize {
+        match self {
+            Self::Mode => "fullscreen".len(),
+            Self::Date => "2026-10-10".len(),
+            Self::Time => "12-00-00".len(),
+            Self::Year => 4,
+            Self::Month | Self::Day | Self::Hour | Self::Minute | Self::Second => 2,
+            Self::Width | Self::Height => u32::MAX.to_string().len(),
+        }
+    }
+
     fn parse(name: &str) -> Option<Self> {
         match name {
             "mode" => Some(Self::Mode),
@@ -52,7 +65,7 @@ enum Part {
 pub enum TemplateError {
     #[error("the file name template is empty")]
     Empty,
-    #[error("the file name template is longer than {MAX_LENGTH} characters")]
+    #[error("the file name template makes names longer than a file name can be")]
     TooLong,
     #[error("unknown token `{{{0}}}` in the file name template")]
     UnknownToken(String),
@@ -142,6 +155,16 @@ impl Template {
         }
         if !text.is_empty() {
             parts.push(Part::Text(text));
+        }
+        let widest: usize = parts
+            .iter()
+            .map(|part| match part {
+                Part::Text(text) => text.len(),
+                Part::Token(token) => token.widest(),
+            })
+            .sum();
+        if widest > MAX_BYTES {
+            return Err(TemplateError::TooLong);
         }
 
         Ok(Self {
@@ -331,6 +354,19 @@ mod tests {
             Template::parse(&"a".repeat(MAX_LENGTH + 1)),
             Err(TemplateError::TooLong)
         );
+    }
+
+    #[test]
+    fn rejects_templates_that_render_past_a_file_name() {
+        assert_eq!(
+            Template::parse(&"{date}".repeat(33)),
+            Err(TemplateError::TooLong)
+        );
+        assert_eq!(
+            Template::parse(&"\u{732b}".repeat(80)),
+            Err(TemplateError::TooLong)
+        );
+        assert!(Template::parse(&"{date}".repeat(23)).is_ok());
     }
 
     #[test]

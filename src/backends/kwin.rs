@@ -1,18 +1,21 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::AsFd;
+use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use zbus::blocking::{Connection, Proxy, proxy::Builder};
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{Fd, OwnedValue, Value};
 
 use crate::backends::{Capabilities, CaptureBackend};
-use crate::capture::{CaptureError, Frame, MonitorInfo, PixelFormat};
+use crate::capture::{CaptureError, Frame, MonitorInfo, PixelFormat, check_layout};
 
 const DESTINATION: &str = "org.kde.KWin";
 const PATH: &str = "/org/kde/KWin/ScreenShot2";
 const INTERFACE: &str = "org.kde.KWin.ScreenShot2";
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Kwin;
 
@@ -38,7 +41,9 @@ fn capture_monitors(
     monitors: &[MonitorInfo],
     include_cursor: bool,
 ) -> Result<Vec<Frame>, CaptureError> {
-    let connection = Connection::session()?;
+    let connection = zbus::blocking::connection::Builder::session()?
+        .method_timeout(TIMEOUT)
+        .build()?;
     let handles: Vec<_> = monitors
         .iter()
         .cloned()
@@ -71,9 +76,11 @@ fn capture_screen(
         .build()?;
 
     let (mut reader, writer) = std::io::pipe()?;
-    let pixels = thread::spawn(move || {
+    let (sender, pixels) = mpsc::sync_channel(1);
+    thread::spawn(move || {
         let mut data = Vec::new();
-        reader.read_to_end(&mut data).map(|_| data)
+        // The receiver is gone only when the capture already timed out.
+        let _ = sender.send(reader.read_to_end(&mut data).map(|_| data));
     });
 
     let options: HashMap<&str, Value> = HashMap::from([
@@ -91,9 +98,12 @@ fn capture_screen(
     drop(writer);
 
     let results = reply.map_err(map_dbus_error)?;
-    let data = pixels
-        .join()
-        .map_err(|_| CaptureError::Unavailable("pipe reader panicked".into()))??;
+    let data = pixels.recv_timeout(TIMEOUT).map_err(|error| match error {
+        mpsc::RecvTimeoutError::Timeout => CaptureError::Timeout,
+        mpsc::RecvTimeoutError::Disconnected => {
+            CaptureError::Unavailable("pipe reader stopped".into())
+        }
+    })??;
 
     let width = read_u32(&results, "width")?;
     let height = read_u32(&results, "height")?;
@@ -102,13 +112,7 @@ fn capture_screen(
     let format = PixelFormat::from_qimage(format_code)
         .ok_or(CaptureError::UnsupportedFormat(format_code))?;
 
-    if data.len() < stride * height as usize {
-        return Err(CaptureError::Decode(format!(
-            "KWin sent {} bytes, expected {}",
-            data.len(),
-            stride * height as usize
-        )));
-    }
+    check_layout(width, height, stride, data.len())?;
 
     Ok(Frame {
         monitor,

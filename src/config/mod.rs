@@ -3,6 +3,7 @@ mod migrate;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use gtk::glib;
 use serde::{Deserialize, Serialize};
@@ -315,6 +316,18 @@ pub fn load() -> Config {
 /// save_to(&path(), &config)?;
 /// ```
 pub fn save_to(path: &Path, config: &Config) -> Result<(), ConfigError> {
+    let _writing = writing();
+    write(path, config)
+}
+
+static WRITES: Mutex<()> = Mutex::new(());
+
+fn writing() -> MutexGuard<'static, ()> {
+    // The guarded value is (), so a panic in another writer leaves nothing inconsistent.
+    WRITES.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write(path: &Path, config: &Config) -> Result<(), ConfigError> {
     let text = toml::to_string_pretty(config)?;
     storage::write_atomic(path, text.as_bytes()).map_err(|source| ConfigError::Write {
         path: path.to_path_buf(),
@@ -332,13 +345,14 @@ pub fn save_to(path: &Path, config: &Config) -> Result<(), ConfigError> {
 /// gio::spawn_blocking(|| config::ensure_file(&config::path()));
 /// ```
 pub fn ensure_file(path: &Path) -> Result<bool, ConfigError> {
+    let _writing = writing();
     if path.try_exists().map_err(|source| ConfigError::Read {
         path: path.to_path_buf(),
         source,
     })? {
         return Ok(false);
     }
-    save_to(path, &Config::default())?;
+    write(path, &Config::default())?;
     Ok(true)
 }
 
@@ -384,6 +398,7 @@ pub fn set_shortcut(
     action: ShortcutAction,
     slot: Slot,
 ) -> Result<Shortcuts, ConfigError> {
+    let _writing = writing();
     let mut config = load_from(path)?.unwrap_or_default();
     config.shortcuts.set(action, slot);
     if let Some(source) = config.shortcuts.conflict() {
@@ -392,7 +407,7 @@ pub fn set_shortcut(
             source,
         });
     }
-    save_to(path, &config)?;
+    write(path, &config)?;
     Ok(config.shortcuts)
 }
 
@@ -407,9 +422,10 @@ pub fn set_shortcut(
 /// config::update(&config::path(), |config| config.notifications.sound = false)?;
 /// ```
 pub fn update(path: &Path, change: impl FnOnce(&mut Config)) -> Result<Config, ConfigError> {
+    let _writing = writing();
     let mut config = load_from(path)?.unwrap_or_default();
     change(&mut config);
-    save_to(path, &config)?;
+    write(path, &config)?;
     Ok(config)
 }
 
@@ -468,6 +484,32 @@ mod tests {
         set_shortcut(&path, ShortcutAction::CaptureRegion, Slot::Off).unwrap();
         let config = update(&path, |config| config.notifications.sound = false).unwrap();
         assert!(!config.notifications.sound);
+        let saved = load_from(&path).unwrap().unwrap();
+        assert!(!saved.notifications.sound);
+        assert_eq!(
+            saved.shortcuts.slot(ShortcutAction::CaptureRegion),
+            &Slot::Off
+        );
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn keeps_every_change_from_concurrent_updates() {
+        let path = scratch("concurrent");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+        ensure_file(&path).unwrap();
+        let sound = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                for _ in 0..50 {
+                    update(&path, |config| config.notifications.sound = false).unwrap();
+                }
+            })
+        };
+        for _ in 0..50 {
+            set_shortcut(&path, ShortcutAction::CaptureRegion, Slot::Off).unwrap();
+        }
+        sound.join().unwrap();
         let saved = load_from(&path).unwrap().unwrap();
         assert!(!saved.notifications.sound);
         assert_eq!(

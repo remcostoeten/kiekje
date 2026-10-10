@@ -347,12 +347,20 @@ impl Document {
 
     /// Applies `edit` and makes it the newest step to undo, dropping anything left to redo.
     ///
+    /// An edit aimed at a shape that no longer exists is dropped instead.
+    ///
     /// # Examples
     ///
     /// ```ignore
     /// document.apply(Edit::Add(shape));
     /// ```
     pub fn apply(&mut self, edit: Edit) {
+        if let Edit::Replace { index, .. } | Edit::Remove { index, .. } = edit
+            && index >= self.shapes.len()
+        {
+            eprintln!("kiekje: dropped an edit for shape {index}, which no longer exists");
+            return;
+        }
         if self.saved > self.done.len() {
             self.saved = usize::MAX;
         }
@@ -618,6 +626,19 @@ mod tests {
         assert!(document.shapes().is_empty());
         document.undo();
         assert_eq!(document.shapes(), [step(1)]);
+    }
+
+    #[test]
+    fn drops_an_edit_for_a_shape_that_is_gone() {
+        let mut document = Document::default();
+        document.apply(Edit::Add(step(1)));
+        document.apply(Edit::Remove {
+            index: 1,
+            shape: step(2),
+        });
+        assert!(document.undo());
+        assert!(document.shapes().is_empty());
+        assert!(!document.undo());
     }
 
     #[test]
