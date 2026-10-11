@@ -66,7 +66,7 @@ The release binary links gtk4-layer-shell statically. CI installs and starts it 
 | openSUSE Tumbleweed | yes | not built | full |
 | Debian 13 | yes | yes | full |
 | Ubuntu 25.10 | yes | not built | full |
-| Ubuntu 24.04 | yes | yes | **none**, GTK 4.14, see below |
+| Ubuntu 24.04 | yes | yes | full |
 
 Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in CI. Started in CI means the binary launches and opens its surfaces. It does not mean a desktop was clicked through on that distribution.
 
@@ -85,7 +85,6 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 
 | What | Status | Notes |
 | --- | --- | --- |
-| GTK 4.14 styling | Known limit | Ubuntu 24.04 and Mint 22 ship GTK 4.14, which rejects the stylesheet's CSS variables and `color-mix()`. Kiekje starts and works there but looks unstyled. Full styling needs GTK 4.16 or newer. |
 | X11 capture backend | On hold | Pure X11 sessions other than Plasma have no capture path. `doctor` reports it as unavailable. |
 | Flatpak | Not yet | Native packages come first. A portal-only Flatpak build is planned later. |
 | macOS, Windows | Not planned | Kiekje is Linux only. |
@@ -259,7 +258,7 @@ cargo install --path . --locked
 kiekje install-desktop-file
 ```
 
-Other distributions need GTK 4.16 or newer and gtk4-layer-shell 1.1. [.github/workflows/ci.yml](.github/workflows/ci.yml) shows how to build gtk4-layer-shell from source.
+Other distributions need GTK 4.14 or newer and gtk4-layer-shell 1.1. [.github/workflows/ci.yml](.github/workflows/ci.yml) shows how to build gtk4-layer-shell from source.
 
 ## Getting started
 
@@ -285,7 +284,7 @@ The guarantee stops at your desktop: a copied image sits on the clipboard where 
 
 ## Development
 
-Needs Rust 1.85 or newer (edition 2024), GTK 4.16 and gtk4-layer-shell 1.1.
+Needs Rust 1.85 or newer (edition 2024), GTK 4.14 and gtk4-layer-shell 1.1.
 
 ```bash
 cargo build                                                                     # debug build

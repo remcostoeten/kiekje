@@ -319,7 +319,7 @@ Left click on the tray icon, or `kiekje menu`, opens Kiekje's own popover; a sec
 
 On layer-shell compositors the popover is a transparent `Top` layer surface over the whole monitor with exclusive keyboard focus. The panel sits in the corner nearest the tray click, 8 px from the edges, and a click anywhere outside it closes it, as does Escape. Without click coordinates, or when they are `(0, 0)` or outside every monitor, it uses the first monitor's top right. Elsewhere it is an undecorated window. Captures picked from it start 150 ms later so the popover is gone first.
 
-The styling comes from `resources/style.css`, compiled in with GResource. It needs GTK 4.16 or newer for `var()` and `color-mix()`; older GTK logs the parse error and draws the popover unstyled.
+The styling comes from `resources/style.css`, compiled in with GResource. GTK 4.14 rejects `var()` and `color-mix()`, so `build.rs` resolves the `:root` tokens and every `color-mix(in srgb, ...)` to plain colours (`build/css.rs`) and bundles that flattened sheet instead. On Ubuntu 24.04 (GTK 4.14.5) under headless sway, the settings window, gallery, tray popover and annotate window logged 219 stylesheet parse errors before this and none after, and rendered with the full theme (checked 2026-10-11).
 
 Checked on 2026-10-04 on headless sway 1.9 with GTK 4.16.12 built from source, in a cloud container, using a fullscreen capture taken while the popover was open:
 

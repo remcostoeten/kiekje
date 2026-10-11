@@ -77,7 +77,7 @@ jobs:
             echo
             echo "## Install"
             echo
-            echo "Needs GTK 4.16 or newer. gtk4-layer-shell is built in. On GTK 4.14 (Ubuntu 24.04, Mint 22) it starts but the stylesheet does not load."
+            echo "Needs GTK 4.14 or newer. gtk4-layer-shell is built in."
             echo
             echo '```'
             echo "Ubuntu, Debian, Mint:  sudo apt install ./kiekje_${FILE_VERSION}-1_amd64.deb"

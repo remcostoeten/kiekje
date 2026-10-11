@@ -84,7 +84,7 @@ File and module names are `snake_case`, as Rust requires. Keep modules small and
 Follow proposal section 10, sourced from `~/dev/marktplaats-tweakers-jev-scraper/DESIGN.md`:
 
 - Tokens live once on `:root` in `style.css`. Write `--accent: #fe5101;` with a space after the colon; GTK's parser rejects it without.
-- Derive tints with `color-mix()`. Don't add colours.
+- Derive tints with `color-mix(in srgb, <colour> <n>%, <colour>)`. Don't add colours. `build.rs` flattens tokens and `color-mix()` into plain values for GTK 4.14 and fails the build on any other form.
 - Geist for content, uppercase Geist Mono for labels and buttons. Both fonts are bundled.
 - One primary button per view. Selection is a tint, never an inverted fill.
 - GTK has no `::before`/`::after`. Corner marks are drawn by a widget.
