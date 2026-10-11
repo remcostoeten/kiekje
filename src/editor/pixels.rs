@@ -55,7 +55,7 @@ impl Picture {
     /// # Examples
     ///
     /// ```ignore
-    /// let png = output::encode_png(picture.to_image())?;
+    /// let bytes = output::encode(picture.to_image(), format, quality)?;
     /// ```
     pub fn to_image(&self) -> Image {
         let data = self

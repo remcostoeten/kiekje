@@ -7,6 +7,7 @@ use gtk::{gdk, glib};
 use crate::backends::portal::bounding_box;
 use crate::capture::mapping::{PixelRect, SelectionPlan, density};
 use crate::capture::{Frame, LogicalRect, PixelFormat};
+use crate::storage::{ImageFormat, Quality};
 
 pub struct Image {
     pub width: u32,
@@ -236,15 +237,35 @@ fn compose(frames: &[Frame], bounds: LogicalRect, ratio: f64, size: (u32, u32)) 
     }
 }
 
-/// Encodes an image as an 8-bit RGBA PNG in memory, converting its pixels in place first.
+/// Encodes an image in `format`, converting its pixels in place first.
+///
+/// `quality` only applies to lossy formats. JPEG has no alpha, so transparent pixels keep their
+/// colour channels.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let png = encode_png(image)?;
+/// let jpeg = encode(image, ImageFormat::Jpeg, Quality::default())?;
 /// ```
-pub fn encode_png(image: Image) -> io::Result<Vec<u8>> {
-    let image = into_rgba(image);
+pub fn encode(image: Image, format: ImageFormat, quality: Quality) -> io::Result<Vec<u8>> {
+    encode_rgba(&into_rgba(image), format, quality)
+}
+
+/// Encodes an image that `into_rgba` already converted.
+///
+/// # Examples
+///
+/// ```ignore
+/// let jpeg = encode_rgba(&into_rgba(image), ImageFormat::Jpeg, quality)?;
+/// ```
+pub fn encode_rgba(image: &Image, format: ImageFormat, quality: Quality) -> io::Result<Vec<u8>> {
+    match format {
+        ImageFormat::Png => png_bytes(image),
+        ImageFormat::Jpeg => jpeg_bytes(image, quality),
+    }
+}
+
+fn png_bytes(image: &Image) -> io::Result<Vec<u8>> {
     let mut png = Vec::new();
     let mut encoder = png::Encoder::new(&mut png, image.width, image.height);
     encoder.set_color(png::ColorType::Rgba);
@@ -258,7 +279,34 @@ pub fn encode_png(image: Image) -> io::Result<Vec<u8>> {
     Ok(png)
 }
 
-fn into_rgba(mut image: Image) -> Image {
+fn jpeg_bytes(image: &Image, quality: Quality) -> io::Result<Vec<u8>> {
+    let too_large = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "JPEG holds at most 65535 x 65535 pixels, not {} x {}",
+                image.width, image.height
+            ),
+        )
+    };
+    let width = u16::try_from(image.width).map_err(|_| too_large())?;
+    let height = u16::try_from(image.height).map_err(|_| too_large())?;
+    let mut jpeg = Vec::new();
+    jpeg_encoder::Encoder::new(&mut jpeg, quality.get())
+        .encode(&image.data, width, height, jpeg_encoder::ColorType::Rgba)
+        .map_err(io::Error::other)?;
+    Ok(jpeg)
+}
+
+/// Converts an image to packed 8-bit RGBA in place, ready for `encode_rgba`.
+///
+/// # Examples
+///
+/// ```ignore
+/// let rgba = into_rgba(image);
+/// let png = encode_rgba(&rgba, ImageFormat::Png, quality)?;
+/// ```
+pub fn into_rgba(mut image: Image) -> Image {
     let row_bytes = image.width as usize * 4;
     if image.format != PixelFormat::Rgba {
         for row in image.data.chunks_mut(image.stride) {
@@ -290,6 +338,39 @@ fn convert_row(format: PixelFormat, source: &[u8], target: &mut [u8]) {
 mod tests {
     use super::*;
     use crate::capture::MonitorInfo;
+
+    fn solid(width: u32, height: u32) -> Image {
+        Image {
+            width,
+            height,
+            stride: width as usize * 4,
+            format: PixelFormat::Rgba,
+            data: vec![200; width as usize * height as usize * 4],
+        }
+    }
+
+    #[test]
+    fn encodes_png_and_jpeg_with_their_signatures() {
+        let png = encode(solid(8, 4), ImageFormat::Png, Quality::default()).unwrap();
+        assert!(png.starts_with(b"\x89PNG"));
+        let jpeg = encode(solid(8, 4), ImageFormat::Jpeg, Quality::default()).unwrap();
+        assert!(jpeg.starts_with(&[0xFF, 0xD8]));
+    }
+
+    #[test]
+    fn refuses_a_jpeg_wider_than_the_format_allows() {
+        let image = Image {
+            data: Vec::new(),
+            ..solid(0, 0)
+        };
+        let wide = Image {
+            width: 70_000,
+            height: 1,
+            ..image
+        };
+        let error = encode_rgba(&wide, ImageFormat::Jpeg, Quality::default()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
 
     fn frame(x: i32, width: u32, value: u8) -> Frame {
         Frame {

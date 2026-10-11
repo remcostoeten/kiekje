@@ -27,7 +27,7 @@ use crate::shortcuts::{
     Shortcuts, hyprland, kde,
 };
 use crate::sound;
-use crate::storage::{self, Naming, last_region};
+use crate::storage::{self, ImageFormat, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 use crate::ui::{fonts, gallery, settings};
@@ -1203,10 +1203,13 @@ fn save_as(image: Image, request: Request, session: Rc<Session>) {
                 width,
                 height,
             });
-            (storage.captures_dir(), base)
+            (
+                storage.captures_dir(),
+                format!("{base}.{}", storage.format.extension()),
+            )
         })
         .await;
-        let Ok((folder, base)) = suggested else {
+        let Ok((folder, name)) = suggested else {
             eprintln!("kiekje: the settings worker stopped, nothing saved");
             session.busy.set(false);
             return;
@@ -1214,7 +1217,7 @@ fn save_as(image: Image, request: Request, session: Rc<Session>) {
         let dialog = gtk::FileDialog::builder()
             .title("Save the capture")
             .modal(true)
-            .initial_name(format!("{base}.png"))
+            .initial_name(name)
             .initial_folder(&gio::File::for_path(&folder))
             .build();
         let chosen = dialog.save_future(None::<&gtk::Window>).await;
@@ -1262,20 +1265,22 @@ fn save_as(image: Image, request: Request, session: Rc<Session>) {
 
 fn store_at(image: Image, mode: CaptureMode, path: &std::path::Path) -> Notice {
     let (width, height) = (image.width, image.height);
-    let png = match output::encode_png(image) {
-        Ok(png) => png,
+    let storage = config::load().storage;
+    let format = ImageFormat::from_path(path).unwrap_or(storage.format);
+    let bytes = match output::encode(image, format, storage.quality) {
+        Ok(bytes) => bytes,
         Err(error) => {
-            eprintln!("kiekje: png encode failed: {error}");
+            eprintln!("kiekje: {} encode failed: {error}", format.label());
             return Notice::SaveFailed {
                 reason: format!("could not encode the image: {error}"),
                 copied: false,
             };
         }
     };
-    match storage::save_png_as(&png, path) {
+    match storage::save_as(&bytes, path, format) {
         Ok(path) => {
             println!("kiekje: saved {}", path.display());
-            record(&path, mode, width, height, png.len());
+            record(&path, mode, width, height, bytes.len());
             Notice::Saved {
                 path,
                 width,
@@ -1379,18 +1384,25 @@ fn check_library() {
 
 fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: bool) -> Notice {
     let (width, height) = (image.width, image.height);
-    let png = match output::encode_png(image) {
-        Ok(png) => Arc::new(png),
-        Err(error) => {
-            eprintln!("kiekje: png encode failed: {error}");
-            return Notice::CaptureFailed {
+    let storage = config::load().storage;
+    let format = storage.format;
+    let rgba = output::into_rgba(image);
+    let encoded = |format: ImageFormat| {
+        output::encode_rgba(&rgba, format, storage.quality).map_err(|error| {
+            eprintln!("kiekje: {} encode failed: {error}", format.label());
+            Notice::CaptureFailed {
                 reason: format!("could not encode the image: {error}"),
-            };
-        }
+            }
+        })
     };
     let mut copied = copied;
+    let mut png = None;
     if let Some(clipboard) = clipboard {
-        match clipboard.set_png(png.clone()) {
+        let offered = match encoded(ImageFormat::Png) {
+            Ok(bytes) => Arc::new(bytes),
+            Err(notice) => return notice,
+        };
+        match clipboard.set_png(offered.clone()) {
             Ok(()) => {
                 log_timing(
                     "trigger -> clipboard offered",
@@ -1402,6 +1414,7 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
             }
             Err(error) => eprintln!("kiekje: clipboard not set: {error}"),
         }
+        png = Some(offered);
     }
     if !request.save {
         return if copied {
@@ -1412,7 +1425,13 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
             }
         };
     }
-    let storage = config::load().storage;
+    let bytes = match png.filter(|_| format == ImageFormat::Png) {
+        Some(png) => png,
+        None => match encoded(format) {
+            Ok(bytes) => Arc::new(bytes),
+            Err(notice) => return notice,
+        },
+    };
     let base = storage.filename.render(&Naming {
         mode: request.mode,
         stamp: storage::now(),
@@ -1422,33 +1441,36 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
     let target = Target {
         folder: storage.captures_dir(),
         base,
+        format,
         mode: request.mode,
         width,
         height,
     };
-    write_png(&png, target, copied)
+    write_file(&bytes, target, copied)
 }
 
 struct Target {
     folder: std::path::PathBuf,
     base: String,
+    format: ImageFormat,
     mode: CaptureMode,
     width: u32,
     height: u32,
 }
 
-fn write_png(png: &[u8], target: Target, copied: bool) -> Notice {
+fn write_file(bytes: &[u8], target: Target, copied: bool) -> Notice {
     let Target {
         folder,
         base,
+        format,
         mode,
         width,
         height,
     } = target;
-    match storage::save_png(png, &folder, &base) {
+    match storage::save(bytes, &folder, &base, format) {
         Ok(path) => {
             println!("kiekje: saved {}", path.display());
-            record(&path, mode, width, height, png.len());
+            record(&path, mode, width, height, bytes.len());
             Notice::Saved {
                 path,
                 width,

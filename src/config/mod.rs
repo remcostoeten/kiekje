@@ -12,7 +12,7 @@ use toml::Table;
 
 use crate::editor::{Color, DrawAction, DrawKey, DrawingKeys, KeyConflict};
 use crate::shortcuts::{Conflict, ShortcutAction, Shortcuts, Slot};
-use crate::storage::{self, Template};
+use crate::storage::{self, ImageFormat, Quality, Template};
 pub use migrate::{MigrateError, VERSION};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -108,6 +108,8 @@ pub struct Storage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub folder: Option<Folder>,
     pub filename: Template,
+    pub format: ImageFormat,
+    pub quality: Quality,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -194,7 +196,7 @@ impl Storage {
     /// # Examples
     ///
     /// ```ignore
-    /// let path = storage::save_png(&png, &config.storage.captures_dir(), &base)?;
+    /// let path = storage::save(&bytes, &config.storage.captures_dir(), &base, format)?;
     /// ```
     pub fn captures_dir(&self) -> PathBuf {
         self.folder
@@ -552,6 +554,23 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_jpeg_format_with_quality() {
+        let config = parse(
+            "[storage]\nformat = \"jpg\"\nquality = 75",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(config.storage.format, ImageFormat::Jpeg);
+        assert_eq!(config.storage.quality.get(), 75);
+    }
+
+    #[test]
+    fn rejects_a_quality_above_one_hundred() {
+        let parsed = parse("[storage]\nquality = 101", Path::new("config.toml"));
+        assert!(matches!(parsed, Err(ConfigError::Parse { .. })));
+    }
+
+    #[test]
     fn expands_a_tilde_folder_against_home() {
         let folder = Folder::parse("~/Shots".into(), Path::new("/home/test")).unwrap();
         assert_eq!(folder.path, PathBuf::from("/home/test/Shots"));
@@ -776,6 +795,8 @@ mod tests {
         let mut config = Config::default();
         config.storage.folder = Some(Folder::parse("/srv/shots".into(), Path::new("/")).unwrap());
         config.storage.filename = Template::parse("{date} {time}").unwrap();
+        config.storage.format = ImageFormat::Jpeg;
+        config.storage.quality = Quality::try_from(60).unwrap();
         config.shortcuts.capture_fullscreen = Slot::Off;
         save_to(&path, &config).unwrap();
         save_to(&path, &config).unwrap();

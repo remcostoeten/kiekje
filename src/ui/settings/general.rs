@@ -9,7 +9,9 @@ use crate::capture::CaptureMode;
 use crate::config::{
     self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, SlowPointer, Storage,
 };
-use crate::storage::{self, Naming, Template, autostart, template::DEFAULT_TEMPLATE};
+use crate::storage::{
+    self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
+};
 use crate::ui::widgets::{group, note, problem, row, switch};
 
 type Change = Box<dyn FnOnce(&mut Config) + Send>;
@@ -34,6 +36,9 @@ pub(super) struct General {
     default_filename: gtk::Button,
     preview: gtk::Label,
     saved_filename: RefCell<String>,
+    format: gtk::DropDown,
+    quality: gtk::SpinButton,
+    quality_row: gtk::ListBoxRow,
     enabled: gtk::Switch,
     sound: gtk::Switch,
     edit: gtk::Switch,
@@ -130,8 +135,35 @@ pub(super) fn append(
     saving.footer(&note(
         "Tokens: {mode} {date} {time} {year} {month} {day} {hour} {minute} {second} {width} {height}",
     ));
+
+    let kind = group(&pages.saving, "Format");
+    let labels: Vec<&str> = ImageFormat::ALL
+        .iter()
+        .map(|format| format.label())
+        .collect();
+    let format = gtk::DropDown::from_strings(&labels);
+    format.set_selected(format_index(storage.format));
+    format.update_property(&[gtk::accessible::Property::Label("Image format")]);
+    kind.add(row(
+        "Image format",
+        Some("PNG keeps every pixel. JPEG files are smaller but blur sharp text a little."),
+        Some(&format),
+    ));
+    let quality =
+        gtk::SpinButton::with_range(f64::from(Quality::MIN), f64::from(Quality::MAX), 1.0);
+    quality.set_value(f64::from(storage.quality.get()));
+    quality.update_property(&[gtk::accessible::Property::Label("JPEG quality")]);
+    let quality_row = kind.add(row(
+        "JPEG quality",
+        Some("Higher keeps more detail and makes larger files."),
+        Some(&quality),
+    ));
+    quality_row.set_sensitive(storage.format == ImageFormat::Jpeg);
+    kind.footer(&note(
+        "Copying always puts a PNG on the clipboard. Save as follows the extension you type.",
+    ));
     let saving_problem = problem();
-    saving.footer(&saving_problem);
+    kind.footer(&saving_problem);
 
     let alerts = group(&pages.general, "Notifications");
     let enabled = switch(notifications.enabled);
@@ -166,6 +198,9 @@ pub(super) fn append(
         default_filename,
         preview,
         saved_filename: RefCell::new(storage.filename.to_string()),
+        format,
+        quality,
+        quality_row,
         enabled,
         sound,
         edit,
@@ -344,6 +379,49 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             Box::new(move |config| config.overlay.hints = on),
         );
     });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.format.connect_selected_notify(move |dropdown| {
+        let picked = usize::try_from(dropdown.selected())
+            .ok()
+            .and_then(|index| ImageFormat::ALL.get(index).copied());
+        let Some(format) = picked else {
+            return;
+        };
+        let Some(general) = weak.upgrade() else {
+            return;
+        };
+        general
+            .quality_row
+            .set_sensitive(format == ImageFormat::Jpeg);
+        general.show_preview();
+        if general.quiet.get() {
+            return;
+        }
+        send(
+            &sender,
+            Page::Saving,
+            Box::new(move |config| config.storage.format = format),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.quality.connect_value_changed(move |spin| {
+        let Ok(quality) = u8::try_from(spin.value_as_int())
+            .map_err(|_| ())
+            .and_then(|value| Quality::try_from(value).map_err(|_| ()))
+        else {
+            return;
+        };
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::Saving,
+            Box::new(move |config| config.storage.quality = quality),
+        );
+    });
 }
 
 fn connect_autostart(general: &Rc<General>) {
@@ -468,8 +546,14 @@ impl General {
                     width: PREVIEW_WIDTH,
                     height: PREVIEW_HEIGHT,
                 });
-                self.preview
-                    .set_label(&format!("A region capture now: {name}.png"));
+                let format = usize::try_from(self.format.selected())
+                    .ok()
+                    .and_then(|index| ImageFormat::ALL.get(index).copied())
+                    .unwrap_or_default();
+                self.preview.set_label(&format!(
+                    "A region capture now: {name}.{}",
+                    format.extension()
+                ));
                 self.preview.remove_css_class("problem");
                 self.preview.add_css_class("note");
             }
@@ -513,6 +597,10 @@ impl General {
         self.quiet.set(true);
         self.saved(config);
         self.filename.set_text(&config.storage.filename.to_string());
+        self.format
+            .set_selected(format_index(config.storage.format));
+        self.quality
+            .set_value(f64::from(config.storage.quality.get()));
         self.enabled.set_active(config.notifications.enabled);
         self.sound.set_active(config.notifications.sound);
         self.edit
@@ -557,6 +645,14 @@ fn slow_index(speed: SlowPointer) -> u32 {
     SlowPointer::ALL
         .iter()
         .position(|candidate| *candidate == speed)
+        .and_then(|index| u32::try_from(index).ok())
+        .unwrap_or(0)
+}
+
+fn format_index(format: ImageFormat) -> u32 {
+    ImageFormat::ALL
+        .iter()
+        .position(|candidate| *candidate == format)
         .and_then(|index| u32::try_from(index).ok())
         .unwrap_or(0)
 }

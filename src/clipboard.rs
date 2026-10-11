@@ -105,7 +105,7 @@ impl Clipboard {
     /// # Examples
     ///
     /// ```ignore
-    /// clipboard.set_png(Arc::new(encode_png(&image)?))?;
+    /// clipboard.set_png(Arc::new(output::encode_rgba(&rgba, ImageFormat::Png, quality)?))?;
     /// ```
     pub fn set_png(&self, png: Arc<Vec<u8>>) -> Result<(), ClipboardError> {
         self.images.send(png).map_err(|_| ClipboardError::Stopped)?;

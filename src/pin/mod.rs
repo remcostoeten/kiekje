@@ -10,12 +10,12 @@ use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 use crate::app::{gdk_monitors, monitor_info};
-use crate::capture::{CaptureMode, LogicalRect};
+use crate::capture::{CaptureMode, LogicalRect, PixelFormat};
 use crate::config;
 use crate::library::{self, Library, NewCapture};
-use crate::output::Image;
+use crate::output::{self, Image};
 use crate::overlay;
-use crate::storage::{self, Naming};
+use crate::storage::{self, ImageFormat, Naming};
 use crate::ui;
 
 const ACTIONS: &str = "pin";
@@ -546,17 +546,20 @@ impl Pin {
                     width,
                     height,
                 });
-                (storage.captures_dir(), base)
+                (
+                    storage.captures_dir(),
+                    format!("{base}.{}", storage.format.extension()),
+                )
             })
             .await;
-            let Ok((folder, base)) = suggested else {
+            let Ok((folder, name)) = suggested else {
                 pin.say("Not saved: the settings worker stopped");
                 return;
             };
             let dialog = gtk::FileDialog::builder()
                 .title("Save the pinned capture")
                 .modal(true)
-                .initial_name(format!("{base}.png"))
+                .initial_name(name)
                 .initial_folder(&gio::File::for_path(&folder))
                 .build();
             let parent = (pin.stacking == Stacking::Toplevel).then(|| pin.window.clone());
@@ -610,14 +613,19 @@ impl Pin {
 }
 
 fn write(texture: &gdk::Texture, path: &Path) -> std::io::Result<PathBuf> {
-    let png = texture.save_to_png_bytes();
-    let saved = storage::save_png_as(&png, path)?;
+    let storage = config::load().storage;
+    let format = ImageFormat::from_path(path).unwrap_or(storage.format);
+    let bytes = match format {
+        ImageFormat::Png => texture.save_to_png_bytes().to_vec(),
+        ImageFormat::Jpeg => output::encode_rgba(&rgba(texture), format, storage.quality)?,
+    };
+    let saved = storage::save_as(&bytes, path, format)?;
     let capture = NewCapture {
         path: saved.clone(),
         mode: CaptureMode::Region,
         width: u32::try_from(texture.width()).unwrap_or(0),
         height: u32::try_from(texture.height()).unwrap_or(0),
-        bytes: u64::try_from(png.len()).unwrap_or(u64::MAX),
+        bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         created_us: glib::real_time(),
     };
     if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
@@ -625,4 +633,17 @@ fn write(texture: &gdk::Texture, path: &Path) -> std::io::Result<PathBuf> {
         eprintln!("kiekje: the pin is saved but not in the library: {error}");
     }
     Ok(saved)
+}
+
+fn rgba(texture: &gdk::Texture) -> Image {
+    let mut downloader = gdk::TextureDownloader::new(texture);
+    downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
+    let (bytes, stride) = downloader.download_bytes();
+    Image {
+        width: u32::try_from(texture.width()).unwrap_or(0),
+        height: u32::try_from(texture.height()).unwrap_or(0),
+        stride,
+        format: PixelFormat::Rgba,
+        data: bytes.to_vec(),
+    }
 }
