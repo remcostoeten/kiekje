@@ -33,6 +33,7 @@ pub fn load_stylesheet() {
         eprintln!("kiekje: no display, the stylesheet is not applied");
         return;
     };
+    gtk::IconTheme::for_display(&display).add_resource_path(&format!("{RESOURCE_PREFIX}/icons"));
     let settings = gtk::Settings::for_display(&display);
     settings.set_gtk_theme_name(Some("Default"));
     settings.set_gtk_application_prefer_dark_theme(true);

@@ -9,20 +9,12 @@ use super::keys::{DrawAction, DrawKey};
 const SWATCH: i32 = 14;
 
 pub(super) fn build(editor: &Rc<Editor>) -> gtk::Box {
-    let bar = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .css_classes(["toolbar"])
-        .build();
-
-    let top = row();
-    top.append(&tools(editor));
-    bar.append(&top);
-
-    let bottom = styles(editor);
-    bottom.append(&spacer());
-    history(editor, &bottom);
-    bottom.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    let bar = row();
+    bar.add_css_class("head");
+    let palette = palette(editor);
+    palette.add_css_class("card");
+    bar.append(&palette);
+    bar.append(&spacer());
     for (label, tooltip, primary, run) in [
         (
             "Copy",
@@ -35,15 +27,32 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::Box {
         let button = gtk::Button::builder()
             .label(label)
             .tooltip_text(tooltip)
+            .valign(gtk::Align::Center)
             .build();
         if primary {
             button.add_css_class("primary");
         }
-        bottom.append(&button);
+        bar.append(&button);
         on_click(editor, &button, run);
     }
-    bar.append(&bottom);
     bar
+}
+
+pub(super) fn palette(editor: &Rc<Editor>) -> gtk::Box {
+    let palette = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .halign(gtk::Align::Start)
+        .css_classes(["palette"])
+        .build();
+    let top = row();
+    top.append(&tools(editor));
+    top.append(&divider(gtk::Orientation::Vertical));
+    history(editor, &top);
+    palette.append(&top);
+    palette.append(&divider(gtk::Orientation::Horizontal));
+    palette.append(&styles(editor));
+    palette
 }
 
 pub(super) fn footer(editor: &Editor, width: u32, height: u32) -> gtk::Box {
@@ -60,8 +69,8 @@ pub(super) fn footer(editor: &Editor, width: u32, height: u32) -> gtk::Box {
     footer
 }
 
-pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
-    let top = segmented();
+fn tools(editor: &Rc<Editor>) -> gtk::Box {
+    let top = group();
     let mut group: Option<gtk::ToggleButton> = None;
     let mut tools = Vec::new();
     for tool in Tool::ALL {
@@ -69,7 +78,7 @@ pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
             Tool::Crop if editor.is_inline() => ("Region", DrawKey::Key('s')),
             _ => (tool.label(), editor.keys.get(DrawAction::Tool(tool))),
         };
-        let button = chip(label, &mut group);
+        let button = chip(icon(tool, editor.is_inline()), label, &mut group);
         button.set_tooltip_text(Some(&hinted(label, key)));
         button.set_active(tool == editor.tool.get());
         let target = Rc::downgrade(editor);
@@ -85,7 +94,8 @@ pub(super) fn tools(editor: &Rc<Editor>) -> gtk::Box {
     top
 }
 
-pub(super) fn history(editor: &Rc<Editor>, row: &gtk::Box) {
+fn history(editor: &Rc<Editor>, row: &gtk::Box) {
+    let buttons = group();
     for (button, run) in [
         (&editor.undo, Editor::undo as fn(&Editor)),
         (&editor.redo, Editor::redo),
@@ -97,13 +107,14 @@ pub(super) fn history(editor: &Rc<Editor>, row: &gtk::Box) {
                 run(&editor);
             }
         });
-        row.append(button);
+        buttons.append(button);
     }
+    row.append(&buttons);
 }
 
-pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
+fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
-    let colors = segmented();
+    let colors = group();
     let mut group: Option<gtk::ToggleButton> = None;
     for color in Color::ALL {
         let button = swatch(color, &mut group);
@@ -119,6 +130,7 @@ pub(super) fn styles(editor: &Rc<Editor>) -> gtk::Box {
         colors.append(&button);
     }
     bottom.append(&colors);
+    bottom.append(&divider(gtk::Orientation::Vertical));
     let keys = [DrawAction::Smaller, DrawAction::Larger]
         .map(|action| editor.keys.get(action))
         .into_iter()
@@ -161,13 +173,13 @@ fn slider(
         .adjustment(adjustment)
         .draw_value(false)
         .round_digits(0)
-        .width_request(96)
+        .width_request(88)
         .focusable(true)
         .build();
     scale.update_property(&[gtk::accessible::Property::Label(name)]);
     group.append(&scale);
     let value = gtk::Label::builder()
-        .width_chars(5)
+        .width_chars(4)
         .xalign(1.0)
         .css_classes(["note", "value"])
         .build();
@@ -205,6 +217,16 @@ pub(super) fn action(label: &str, tooltip: &str) -> gtk::Button {
         .build()
 }
 
+pub(super) fn icon_action(icon: &str, label: &str, tooltip: &str) -> gtk::Button {
+    let button = gtk::Button::builder()
+        .icon_name(icon)
+        .tooltip_text(tooltip)
+        .css_classes(["chip", "icon"])
+        .build();
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button
+}
+
 pub(super) fn row() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -212,11 +234,18 @@ pub(super) fn row() -> gtk::Box {
         .build()
 }
 
-fn segmented() -> gtk::Box {
+fn group() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(2)
-        .css_classes(["segmented"])
+        .css_classes(["group"])
+        .build()
+}
+
+fn divider(orientation: gtk::Orientation) -> gtk::Separator {
+    gtk::Separator::builder()
+        .orientation(orientation)
+        .css_classes(["divider"])
         .build()
 }
 
@@ -224,11 +253,29 @@ fn spacer() -> gtk::Box {
     gtk::Box::builder().hexpand(true).build()
 }
 
-fn chip(label: &str, group: &mut Option<gtk::ToggleButton>) -> gtk::ToggleButton {
+fn icon(tool: Tool, inline: bool) -> &'static str {
+    match tool {
+        Tool::Select => "kiekje-select-symbolic",
+        Tool::Rectangle => "kiekje-rectangle-symbolic",
+        Tool::Ellipse => "kiekje-ellipse-symbolic",
+        Tool::Arrow => "kiekje-arrow-symbolic",
+        Tool::Line => "kiekje-line-symbolic",
+        Tool::Pen => "kiekje-pen-symbolic",
+        Tool::Highlight => "kiekje-highlight-symbolic",
+        Tool::Step => "kiekje-step-symbolic",
+        Tool::Text => "kiekje-text-symbolic",
+        Tool::Pixelate => "kiekje-pixelate-symbolic",
+        Tool::Crop if inline => "kiekje-region-symbolic",
+        Tool::Crop => "kiekje-crop-symbolic",
+    }
+}
+
+fn chip(icon: &str, label: &str, group: &mut Option<gtk::ToggleButton>) -> gtk::ToggleButton {
     let button = gtk::ToggleButton::builder()
-        .label(label)
-        .css_classes(["chip"])
+        .icon_name(icon)
+        .css_classes(["chip", "icon"])
         .build();
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
     join(&button, group);
     button
 }
@@ -237,11 +284,20 @@ fn swatch(color: Color, group: &mut Option<gtk::ToggleButton>) -> gtk::ToggleBut
     let dot = gtk::DrawingArea::builder()
         .content_width(SWATCH)
         .content_height(SWATCH)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
         .build();
     dot.set_draw_func(move |_, cr, width, height| {
         let (red, green, blue) = color.rgb();
         cr.set_source_rgb(red, green, blue);
-        cr.rectangle(0.5, 0.5, f64::from(width) - 1.0, f64::from(height) - 1.0);
+        let (width, height) = (f64::from(width), f64::from(height));
+        cr.arc(
+            width / 2.0,
+            height / 2.0,
+            width.min(height) / 2.0 - 0.5,
+            0.0,
+            std::f64::consts::TAU,
+        );
         let filled = cr.fill_preserve();
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.25);
         cr.set_line_width(1.0);
