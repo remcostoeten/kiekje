@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gtk::glib;
+use rustix::fs::{CWD, RenameFlags, renameat_with};
+use rustix::io::Errno;
+use thiserror::Error;
 
 pub use format::{ImageFormat, Quality};
 pub use template::{Naming, Stamp, Template};
@@ -123,6 +126,61 @@ pub fn save_as(bytes: &[u8], path: &Path, format: ImageFormat) -> io::Result<Pat
     save(bytes, folder, &base, format)
 }
 
+#[derive(Debug, Error)]
+pub enum RenameError {
+    #[error("type a name")]
+    Empty,
+    #[error("a name can't contain `/` or be `.` or `..`")]
+    Invalid,
+    #[error("{} already exists", .0.file_name().unwrap_or_default().display())]
+    Taken(PathBuf),
+    #[error("could not rename: {0}")]
+    Io(#[from] io::Error),
+}
+
+/// Renames a file in place to `stem` plus its current extension, never overwriting another file.
+///
+/// Surrounding whitespace is trimmed. Returns the new path, which is `path` itself when the name
+/// did not change.
+///
+/// # Examples
+///
+/// ```ignore
+/// let renamed = rename(Path::new("/shots/kiekje-1.png"), "invoice bug")?;
+/// assert_eq!(renamed, Path::new("/shots/invoice bug.png"));
+/// ```
+pub fn rename(path: &Path, stem: &str) -> Result<PathBuf, RenameError> {
+    let stem = stem.trim();
+    if stem.is_empty() {
+        return Err(RenameError::Empty);
+    }
+    if stem.contains(['/', '\0']) || stem == "." || stem == ".." {
+        return Err(RenameError::Invalid);
+    }
+    let mut name = std::ffi::OsString::from(stem);
+    if let Some(extension) = path.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    let target = path.with_file_name(name);
+    if target == path {
+        return Ok(target);
+    }
+    match renameat_with(CWD, path, CWD, &target, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(target),
+        Err(Errno::EXIST) => Err(RenameError::Taken(target)),
+        // Some file systems lack RENAME_NOREPLACE; fall back to a checked rename.
+        Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {
+            if target.exists() {
+                return Err(RenameError::Taken(target));
+            }
+            fs::rename(path, &target)?;
+            Ok(target)
+        }
+        Err(errno) => Err(RenameError::Io(errno.into())),
+    }
+}
+
 /// Replaces the file at `path` with `bytes` through a temporary file and a rename.
 ///
 /// Readers see the old file or the new one, never half of either. Missing parent folders are
@@ -207,6 +265,28 @@ mod tests {
         let mismatched = save_as(b"jpg", &folder.join("photo.png"), ImageFormat::Jpeg).unwrap();
         assert_eq!(mismatched, folder.join("photo.jpg"));
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn renames_keeping_the_extension_and_never_overwrites() {
+        let directory = scratch("rename");
+        fs::create_dir_all(&directory).unwrap();
+        let shot = directory.join("kiekje-1.jpg");
+        fs::write(&shot, b"shot").unwrap();
+        fs::write(directory.join("taken.jpg"), b"other").unwrap();
+        let renamed = rename(&shot, "  invoice bug ").unwrap();
+        assert_eq!(renamed, directory.join("invoice bug.jpg"));
+        assert_eq!(fs::read(&renamed).unwrap(), b"shot");
+        assert!(matches!(
+            rename(&renamed, "taken"),
+            Err(RenameError::Taken(_))
+        ));
+        assert_eq!(fs::read(directory.join("taken.jpg")).unwrap(), b"other");
+        assert!(matches!(rename(&renamed, " "), Err(RenameError::Empty)));
+        assert!(matches!(rename(&renamed, "a/b"), Err(RenameError::Invalid)));
+        assert!(matches!(rename(&renamed, ".."), Err(RenameError::Invalid)));
+        assert_eq!(rename(&renamed, "invoice bug").unwrap(), renamed);
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
