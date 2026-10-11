@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::rc::Rc;
 
 use gtk::prelude::*;
@@ -5,7 +6,7 @@ use gtk::{gdk, gio, glib};
 
 use super::{Gallery, actions};
 use crate::library::Capture;
-use crate::storage;
+use crate::storage::{self, ImageFormat};
 
 const CARD_WIDTH: i32 = 220;
 const CARD_HEIGHT: i32 = 140;
@@ -231,13 +232,23 @@ fn meta_text(capture: &Capture) -> String {
         .and_then(|date| date.format("%Y-%m-%d %H:%M"))
         .map(String::from)
         .unwrap_or_default();
-    format!(
-        "{} × {}  {}  {}",
-        capture.width,
-        capture.height,
-        size_text(capture.bytes),
-        date
-    )
+    let size = size_text(capture.bytes);
+    match kind_text(&capture.path) {
+        Some(kind) => format!(
+            "{} × {}  {kind} {size}  {date}",
+            capture.width, capture.height
+        ),
+        None => format!("{} × {}  {size}  {date}", capture.width, capture.height),
+    }
+}
+
+fn kind_text(path: &Path) -> Option<String> {
+    match ImageFormat::from_path(path) {
+        Some(format) => Some(format.label().to_owned()),
+        None => path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_uppercase()),
+    }
 }
 
 fn size_text(bytes: u64) -> String {
@@ -269,5 +280,19 @@ mod tests {
         assert_eq!(size_text(245_300), "245 KB");
         assert_eq!(size_text(3_450_000), "3.5 MB");
         assert_eq!(size_text(12_000_000_000_000), "12000 GB");
+    }
+
+    #[test]
+    fn names_the_file_type_from_the_extension() {
+        assert_eq!(kind_text(Path::new("/a/shot.png")).as_deref(), Some("PNG"));
+        assert_eq!(
+            kind_text(Path::new("/a/shot.jpeg")).as_deref(),
+            Some("JPEG")
+        );
+        assert_eq!(
+            kind_text(Path::new("/a/shot.webp")).as_deref(),
+            Some("WEBP")
+        );
+        assert_eq!(kind_text(Path::new("/a/shot")), None);
     }
 }

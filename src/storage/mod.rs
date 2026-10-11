@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod format;
 pub mod last_region;
 pub mod template;
 
@@ -8,7 +9,11 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gtk::glib;
+use rustix::fs::{CWD, RenameFlags, renameat_with};
+use rustix::io::Errno;
+use thiserror::Error;
 
+pub use format::{ImageFormat, Quality};
 pub use template::{Naming, Stamp, Template};
 
 static TEMPORARY: AtomicU64 = AtomicU64::new(0);
@@ -71,20 +76,26 @@ pub fn now() -> Stamp {
     }
 }
 
-/// Writes encoded PNG bytes into a new file in `directory`, never overwriting an existing one.
+/// Writes encoded image bytes into a new file in `directory`, never overwriting an existing one.
 ///
-/// A taken name gets `-2`, `-3` and so on appended before the extension.
+/// The file gets the extension of `format`. A taken name gets `-2`, `-3` and so on appended before
+/// the extension.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let path = save_png(&png, &directory, "kiekje-region-2026-10-04-11-20-00")?;
+/// let path = save(&bytes, &directory, "kiekje-region-2026-10-04-11-20-00", ImageFormat::Png)?;
 /// ```
-pub fn save_png(png: &[u8], directory: &Path, base: &str) -> io::Result<PathBuf> {
+pub fn save(
+    bytes: &[u8],
+    directory: &Path,
+    base: &str,
+    format: ImageFormat,
+) -> io::Result<PathBuf> {
     fs::create_dir_all(directory)?;
-    let (path, mut file) = create_unique(directory, base, "png")?;
+    let (path, mut file) = create_unique(directory, base, format.extension())?;
 
-    if let Err(error) = file.write_all(png) {
+    if let Err(error) = file.write_all(bytes) {
         // Best-effort cleanup of the partial file; the write error is the one to report.
         let _ = fs::remove_file(&path);
         return Err(error);
@@ -92,22 +103,19 @@ pub fn save_png(png: &[u8], directory: &Path, base: &str) -> io::Result<PathBuf>
     Ok(path)
 }
 
-/// Writes encoded PNG bytes to the path a save dialog returned.
+/// Writes encoded image bytes to the path a save dialog returned.
 ///
-/// The dialog already confirmed overwriting, so a `.png` path is replaced in place. Any other
-/// name gets a new `.png` file next to it instead, since the bytes are PNG.
+/// The dialog already confirmed overwriting, so a path whose extension matches `format` is
+/// replaced in place. Any other name gets a new file with the right extension next to it instead.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let path = save_png_as(&png, &chosen)?;
+/// let path = save_as(&bytes, &chosen, ImageFormat::Jpeg)?;
 /// ```
-pub fn save_png_as(png: &[u8], path: &Path) -> io::Result<PathBuf> {
-    let is_png = path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
-    if is_png {
-        write_atomic(path, png)?;
+pub fn save_as(bytes: &[u8], path: &Path, format: ImageFormat) -> io::Result<PathBuf> {
+    if ImageFormat::from_path(path) == Some(format) {
+        write_atomic(path, bytes)?;
         return Ok(path.to_path_buf());
     }
     let folder = path.parent().unwrap_or(Path::new("."));
@@ -115,7 +123,62 @@ pub fn save_png_as(png: &[u8], path: &Path) -> io::Result<PathBuf> {
         || "kiekje".to_owned(),
         |stem| stem.to_string_lossy().into_owned(),
     );
-    save_png(png, folder, &base)
+    save(bytes, folder, &base, format)
+}
+
+#[derive(Debug, Error)]
+pub enum RenameError {
+    #[error("type a name")]
+    Empty,
+    #[error("a name can't contain `/` or be `.` or `..`")]
+    Invalid,
+    #[error("{} already exists", .0.file_name().unwrap_or_default().display())]
+    Taken(PathBuf),
+    #[error("could not rename: {0}")]
+    Io(#[from] io::Error),
+}
+
+/// Renames a file in place to `stem` plus its current extension, never overwriting another file.
+///
+/// Surrounding whitespace is trimmed. Returns the new path, which is `path` itself when the name
+/// did not change.
+///
+/// # Examples
+///
+/// ```ignore
+/// let renamed = rename(Path::new("/shots/kiekje-1.png"), "invoice bug")?;
+/// assert_eq!(renamed, Path::new("/shots/invoice bug.png"));
+/// ```
+pub fn rename(path: &Path, stem: &str) -> Result<PathBuf, RenameError> {
+    let stem = stem.trim();
+    if stem.is_empty() {
+        return Err(RenameError::Empty);
+    }
+    if stem.contains(['/', '\0']) || stem == "." || stem == ".." {
+        return Err(RenameError::Invalid);
+    }
+    let mut name = std::ffi::OsString::from(stem);
+    if let Some(extension) = path.extension() {
+        name.push(".");
+        name.push(extension);
+    }
+    let target = path.with_file_name(name);
+    if target == path {
+        return Ok(target);
+    }
+    match renameat_with(CWD, path, CWD, &target, RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(target),
+        Err(Errno::EXIST) => Err(RenameError::Taken(target)),
+        // Some file systems lack RENAME_NOREPLACE; fall back to a checked rename.
+        Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {
+            if target.exists() {
+                return Err(RenameError::Taken(target));
+            }
+            fs::rename(path, &target)?;
+            Ok(target)
+        }
+        Err(errno) => Err(RenameError::Io(errno.into())),
+    }
 }
 
 /// Replaces the file at `path` with `bytes` through a temporary file and a rename.
@@ -185,18 +248,45 @@ mod tests {
     }
 
     #[test]
-    fn saves_as_the_chosen_png_and_beside_any_other_name() {
+    fn saves_as_the_chosen_name_and_beside_a_mismatched_one() {
         let folder = std::env::temp_dir().join(format!("kiekje-save-as-{}", std::process::id()));
         // A leftover folder from an earlier run may or may not exist.
         let _ = fs::remove_dir_all(&folder);
         fs::create_dir_all(&folder).unwrap();
         let chosen = folder.join("shot.png");
         fs::write(&chosen, b"old").unwrap();
-        assert_eq!(save_png_as(b"new", &chosen).unwrap(), chosen);
+        assert_eq!(save_as(b"new", &chosen, ImageFormat::Png).unwrap(), chosen);
         assert_eq!(fs::read(&chosen).unwrap(), b"new");
-        let other = save_png_as(b"jpg", &folder.join("photo.jpg")).unwrap();
+        let photo = folder.join("photo.JPEG");
+        fs::write(&photo, b"old").unwrap();
+        assert_eq!(save_as(b"jpg", &photo, ImageFormat::Jpeg).unwrap(), photo);
+        let other = save_as(b"png", &folder.join("photo.webp"), ImageFormat::Png).unwrap();
         assert_eq!(other, folder.join("photo.png"));
+        let mismatched = save_as(b"jpg", &folder.join("photo.png"), ImageFormat::Jpeg).unwrap();
+        assert_eq!(mismatched, folder.join("photo.jpg"));
         fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn renames_keeping_the_extension_and_never_overwrites() {
+        let directory = scratch("rename");
+        fs::create_dir_all(&directory).unwrap();
+        let shot = directory.join("kiekje-1.jpg");
+        fs::write(&shot, b"shot").unwrap();
+        fs::write(directory.join("taken.jpg"), b"other").unwrap();
+        let renamed = rename(&shot, "  invoice bug ").unwrap();
+        assert_eq!(renamed, directory.join("invoice bug.jpg"));
+        assert_eq!(fs::read(&renamed).unwrap(), b"shot");
+        assert!(matches!(
+            rename(&renamed, "taken"),
+            Err(RenameError::Taken(_))
+        ));
+        assert_eq!(fs::read(directory.join("taken.jpg")).unwrap(), b"other");
+        assert!(matches!(rename(&renamed, " "), Err(RenameError::Empty)));
+        assert!(matches!(rename(&renamed, "a/b"), Err(RenameError::Invalid)));
+        assert!(matches!(rename(&renamed, ".."), Err(RenameError::Invalid)));
+        assert_eq!(rename(&renamed, "invoice bug").unwrap(), renamed);
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
@@ -245,7 +335,7 @@ mod tests {
     fn saves_twenty_captures_with_the_same_name() {
         let directory = scratch("burst");
         let paths: Vec<PathBuf> = (0..20)
-            .map(|index| save_png(&[index], &directory, "burst").unwrap())
+            .map(|index| save(&[index], &directory, "burst", ImageFormat::Png).unwrap())
             .collect();
         let mut unique = paths.clone();
         unique.sort();

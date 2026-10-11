@@ -656,7 +656,9 @@ fn write(
 ) -> Result<PathBuf, SaveError> {
     let image = render::flatten(picture, shapes, crop)?;
     let (width, height) = (image.width, image.height);
-    let png = output::encode_png(image).map_err(SaveError::Encode)?;
+    let storage = config::load().storage;
+    let bytes =
+        output::encode(image, storage.format, storage.quality).map_err(SaveError::Encode)?;
     let (folder, base) = match original {
         Some(original) => {
             let folder = original
@@ -669,7 +671,6 @@ fn write(
             (folder, edited_base(&stem))
         }
         None => {
-            let storage = config::load().storage;
             let base = storage.filename.render(&Naming {
                 mode,
                 stamp: storage::now(),
@@ -679,16 +680,18 @@ fn write(
             (storage.captures_dir(), base)
         }
     };
-    let path = storage::save_png(&png, &folder, &base).map_err(|source| SaveError::Write {
-        folder: folder.clone(),
-        source,
+    let path = storage::save(&bytes, &folder, &base, storage.format).map_err(|source| {
+        SaveError::Write {
+            folder: folder.clone(),
+            source,
+        }
     })?;
     let capture = NewCapture {
         path: path.clone(),
         mode,
         width,
         height,
-        bytes: u64::try_from(png.len()).unwrap_or(u64::MAX),
+        bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         created_us: glib::real_time(),
     };
     if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))

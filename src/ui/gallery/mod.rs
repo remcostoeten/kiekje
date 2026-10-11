@@ -1,6 +1,7 @@
 mod actions;
 mod cards;
 mod colours;
+mod rename;
 mod toolbar;
 
 use std::cell::{Cell, OnceCell, RefCell};

@@ -20,6 +20,7 @@ pub(super) enum FileAction {
     Reveal,
     CopyImage,
     CopyPath,
+    Rename,
     Trash,
     Forget,
     Locate,
@@ -27,7 +28,7 @@ pub(super) enum FileAction {
 }
 
 impl FileAction {
-    const ALL: [Self; 10] = [
+    const ALL: [Self; 11] = [
         Self::Open,
         Self::Edit,
         Self::Pin,
@@ -35,6 +36,7 @@ impl FileAction {
         Self::Locate,
         Self::CopyImage,
         Self::CopyPath,
+        Self::Rename,
         Self::Trash,
         Self::Forget,
         Self::ForgetMissing,
@@ -48,6 +50,7 @@ impl FileAction {
             Self::Reveal => "reveal",
             Self::CopyImage => "copy-image",
             Self::CopyPath => "copy-path",
+            Self::Rename => "rename",
             Self::Trash => "trash",
             Self::Forget => "forget",
             Self::Locate => "locate",
@@ -63,6 +66,7 @@ impl FileAction {
             Self::Reveal => "Show in folder",
             Self::CopyImage => "Copy image",
             Self::CopyPath => "Copy path",
+            Self::Rename => "Rename",
             Self::Trash => "Move to trash",
             Self::Forget => "Remove from gallery",
             Self::Locate => "Locate file",
@@ -78,6 +82,7 @@ impl FileAction {
             Self::Reveal => Some("<Ctrl>Return"),
             Self::CopyImage => Some("<Ctrl>c"),
             Self::CopyPath => Some("<Ctrl><Alt>c"),
+            Self::Rename => Some("F2"),
             Self::Trash => Some("Delete"),
             Self::Forget | Self::ForgetMissing => None,
             Self::Locate => Some("<Ctrl>l"),
@@ -121,7 +126,10 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
             | FileAction::Reveal
             | FileAction::Locate => &open,
             FileAction::CopyImage | FileAction::CopyPath => &copy,
-            FileAction::Trash | FileAction::Forget | FileAction::ForgetMissing => &remove,
+            FileAction::Rename
+            | FileAction::Trash
+            | FileAction::Forget
+            | FileAction::ForgetMissing => &remove,
         };
         section.append(
             Some(action.label()),
@@ -301,6 +309,7 @@ impl Gallery {
             FileAction::Edit => self.edit(path),
             FileAction::Pin => self.pin(path),
             FileAction::Locate => self.locate(path),
+            FileAction::Rename => self.rename(path),
             FileAction::ForgetMissing => {}
         }
     }

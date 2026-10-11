@@ -11,11 +11,12 @@ async-channel = "2"
 fast_image_resize = "6.1.0"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
 gtk4-layer-shell = { version = "0.8", default-features = false }
+jpeg-encoder = "0.7"
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
 libc = "0.2.189"
 png = "0.18"
 rusqlite = { version = "0.37", features = ["bundled"] }
-rustix = { version = "1", features = ["event"] }
+rustix = { version = "1", features = ["event", "fs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smithay-client-toolkit = { version = "0.21", default-features = false }
