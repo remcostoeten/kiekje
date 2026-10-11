@@ -182,6 +182,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Ctrl+Arrows | Resize the region |
 | Ctrl+Z | Undo |
 | Ctrl+Shift+Z, Ctrl+Y | Redo |
+| Shift while drawing | Straight line at 45 degree steps (line, arrow, pen), square or circle (box, ellipse) |
 
 ### Drawing tools (defaults, rebindable)
 
