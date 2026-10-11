@@ -4,6 +4,10 @@ pub mod gallery;
 pub mod settings;
 pub mod widgets;
 
+#[cfg(test)]
+#[path = "../../build/css.rs"]
+mod build_css;
+
 use std::cell::Cell;
 
 use gtk::{gdk, gio};
