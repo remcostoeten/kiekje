@@ -178,6 +178,11 @@ pub fn run(command: Command) -> glib::ExitCode {
     start_tray(&app, &session);
     write_default_config();
     check_library();
+    thread::spawn(|| {
+        if config::load().notifications.sound {
+            sound::check();
+        }
+    });
     let hold = app.hold();
     let initial = Cell::new(Some(command));
     app.connect_activate(move |app| match initial.take() {
@@ -780,6 +785,9 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         let windows = (request.mode == CaptureMode::Region && config.overlay.window_snap)
             .then(|| thread::spawn(snapshot_windows));
         let notifications = config.notifications;
+        if notifications.sound {
+            sound::check();
+        }
         let inline = config.capture.after_selection == AfterSelection::Edit;
         let overlay = config.overlay;
         let drawing = config.drawing;

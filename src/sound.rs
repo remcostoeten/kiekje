@@ -1,8 +1,11 @@
 use std::cell::RefCell;
+use std::ffi::{CStr, c_char, c_int, c_void};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use gtk::glib;
 use gtk::prelude::*;
+use thiserror::Error;
 
 use crate::ui::RESOURCE_PREFIX;
 
@@ -10,14 +13,97 @@ const NAMES: [&str; 2] = ["screen-capture", "camera-shutter"];
 const FALLBACK_THEME: &str = "freedesktop";
 const EXTENSIONS: [&str; 3] = ["oga", "ogg", "wav"];
 
+const GSTREAMER: &CStr = c"libgstreamer-1.0.so.0";
+const PLAYBIN: &CStr = c"playbin";
+
+static PLAYABLE: OnceLock<bool> = OnceLock::new();
+
 thread_local! {
     static PLAYER: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
+}
+
+#[derive(Debug, Error)]
+enum SoundError {
+    #[error("GStreamer is not installed")]
+    NoGstreamer,
+    #[error("GStreamer is missing {0}")]
+    MissingSymbol(&'static str),
+    #[error("GStreamer did not start")]
+    Init,
+    #[error("GStreamer's playbin is missing, install the GStreamer base plugins")]
+    NoPlaybin,
+}
+
+/// Checks once whether GTK's media backend can play sounds, and logs why not.
+///
+/// GTK's GStreamer backend aborts the process when playbin is missing, so nothing may
+/// open a media file before this returns true. It loads GStreamer, so call it off the
+/// main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// thread::spawn(sound::check);
+/// ```
+pub fn check() -> bool {
+    *PLAYABLE.get_or_init(|| match probe() {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!("kiekje: no capture sound: {error}");
+            false
+        }
+    })
+}
+
+fn probe() -> Result<(), SoundError> {
+    // SAFETY: the symbols are looked up by their documented C names and called with
+    // the signatures from gst/gst.h; the library stays loaded for the process lifetime.
+    unsafe {
+        let library = libc::dlopen(GSTREAMER.as_ptr(), libc::RTLD_NOW | libc::RTLD_GLOBAL);
+        if library.is_null() {
+            return Err(SoundError::NoGstreamer);
+        }
+        let init: unsafe extern "C" fn(
+            *mut c_int,
+            *mut *mut *mut c_char,
+            *mut *mut c_void,
+        ) -> c_int = std::mem::transmute(symbol(library, c"gst_init_check")?);
+        let find: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+            std::mem::transmute(symbol(library, c"gst_element_factory_find")?);
+        let unref: unsafe extern "C" fn(*mut c_void) =
+            std::mem::transmute(symbol(library, c"gst_object_unref")?);
+        if init(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            return Err(SoundError::Init);
+        }
+        let factory = find(PLAYBIN.as_ptr());
+        if factory.is_null() {
+            return Err(SoundError::NoPlaybin);
+        }
+        unref(factory);
+        Ok(())
+    }
+}
+
+unsafe fn symbol(library: *mut c_void, name: &'static CStr) -> Result<*mut c_void, SoundError> {
+    // SAFETY: `library` is a live handle from dlopen and `name` is nul-terminated.
+    let pointer = unsafe { libc::dlsym(library, name.as_ptr()) };
+    if pointer.is_null() {
+        return Err(SoundError::MissingSymbol(
+            name.to_str().unwrap_or("a symbol"),
+        ));
+    }
+    Ok(pointer)
 }
 
 /// Plays the capture sound without waiting for it to finish.
 ///
 /// Uses the sound theme's `screen-capture` or `camera-shutter` sound and falls back to the
-/// bundled one. Playback goes through GTK's media backend, so a missing backend only logs.
+/// bundled one. Stays silent until [`check`] has found a working media backend.
 ///
 /// # Examples
 ///
@@ -25,6 +111,9 @@ thread_local! {
 /// sound::play_capture();
 /// ```
 pub fn play_capture() {
+    if PLAYABLE.get() != Some(&true) {
+        return;
+    }
     PLAYER.with(|player| {
         let mut player = player.borrow_mut();
         let media = player.get_or_insert_with(open);
@@ -43,6 +132,9 @@ pub fn play_capture() {
 /// sound::prepare();
 /// ```
 pub fn prepare() {
+    if PLAYABLE.get() != Some(&true) {
+        return;
+    }
     PLAYER.with(|player| {
         player.borrow_mut().get_or_insert_with(open);
     });
