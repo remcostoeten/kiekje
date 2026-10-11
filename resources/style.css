@@ -488,11 +488,6 @@ window.settings-window {
   font-size: 12px;
 }
 
-.panel .segmented button.chip.swatch:checked {
-  border-color: var(--stroke-hi);
-  box-shadow: var(--specular), inset 0 0 0 1px color-mix(in srgb, var(--fg) 40%, transparent);
-}
-
 .editor .canvas {
   background-color: color-mix(in srgb, var(--fg) 3%, var(--bg));
   border: 1px solid var(--stroke);
@@ -553,10 +548,6 @@ window.settings-window {
   letter-spacing: 1px;
   text-transform: uppercase;
   color: var(--muted);
-}
-
-.panel button.chip.swatch {
-  padding: 5px 6px;
 }
 
 .editor popover contents {
@@ -731,8 +722,82 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
   background-color: var(--accent-wash);
 }
 
+.editor .head {
+  margin-bottom: 2px;
+}
+
+.palette.card {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 6px;
+}
+
+.palette separator.divider {
+  background: none;
+  background-color: var(--stroke);
+  min-width: 1px;
+  min-height: 1px;
+}
+
+.palette separator.divider.vertical {
+  margin: 6px 4px;
+}
+
+.palette separator.divider.horizontal {
+  margin: 0 2px;
+}
+
+.panel .palette button.chip.icon {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border-radius: var(--radius);
+}
+
+.panel .palette button.chip.icon:checked {
+  color: var(--fg);
+  background-color: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  box-shadow: none;
+}
+
+.panel .palette button.chip.icon:checked:hover,
+.panel .palette button.chip.icon:checked:focus-visible {
+  background-color: var(--accent-strong);
+}
+
+.panel .palette button.chip.icon:disabled {
+  color: color-mix(in srgb, var(--muted) 50%, transparent);
+  background-color: transparent;
+}
+
+.panel .palette button.chip.swatch {
+  min-width: 22px;
+  min-height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+.panel .palette button.chip.swatch:checked {
+  background-color: transparent;
+  border-color: color-mix(in srgb, var(--fg) 85%, transparent);
+  box-shadow: none;
+}
+
+.panel .palette button.chip.swatch:checked:hover,
+.panel .palette button.chip.swatch:focus-visible {
+  background-color: var(--wash);
+}
+
 .editor .stroke-option {
-  padding: 0 4px;
+  padding: 0 6px;
+}
+
+.editor .stroke-option .value {
+  margin-left: 6px;
 }
 
 .editor scale {

@@ -271,13 +271,7 @@ impl Editor {
 
 fn tool_bar(editor: &Rc<Editor>) -> gtk::Box {
     let bar = bar();
-    let top = toolbar::row();
-    toolbar::history(editor, &top);
-    top.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-    let tools = toolbar::tools(editor);
-    top.append(&tools);
-    bar.append(&top);
-    bar.append(&toolbar::styles(editor));
+    bar.append(&toolbar::palette(editor));
     bar
 }
 
