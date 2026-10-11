@@ -223,6 +223,14 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 
 ## Install
 
+### One line
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/master/get.sh | bash
+```
+
+It picks the `.deb`, `.rpm` or tarball for your system from the newest release, checks it against `SHA256SUMS` and installs it with sudo. `KIEKJE_VERSION=v0.1.0-alpha.4` pins a release, `KIEKJE_FORMAT=tarball` skips the native package. It needs the repository to be public.
+
 ### Release packages
 
 Download from [Releases](https://github.com/remcostoeten/kiekje/releases). `.deb` and `.rpm` packages ship from 0.1.0-alpha.3 on.
