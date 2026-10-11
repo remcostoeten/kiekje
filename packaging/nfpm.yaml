@@ -24,9 +24,14 @@ overrides:
       - libc6 (>= 2.39)
     recommends:
       - xdg-desktop-portal
+      - libgtk-4-media-gstreamer
+      - gstreamer1.0-plugins-base
+      - gstreamer1.0-plugins-good
   rpm:
     depends:
       - libgtk-4.so.1()(64bit)
       - glibc >= 2.39
     recommends:
       - xdg-desktop-portal
+      - gstreamer1-plugins-base
+      - gstreamer1-plugins-good

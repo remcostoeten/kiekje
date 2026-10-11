@@ -14,6 +14,7 @@ mod output;
 mod overlay;
 mod pin;
 mod shortcuts;
+mod sound;
 mod storage;
 mod style;
 mod tray;

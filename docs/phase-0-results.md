@@ -301,11 +301,11 @@ After every capture the daemon sends one notification through `org.freedesktop.N
 - save failed, at critical urgency, saying whether the image is still on the clipboard.
 - capture failed, at critical urgency, with the reason.
 
-Successful notices ask the daemon for the `screen-capture` sound theme event through `sound-name`. Failures and `sound = false` send `suppress-sound`. A canceled selection sends nothing. `[notifications] enabled` and `sound` in the config switch both, read once per capture.
+Every notice sends `suppress-sound`; Kiekje plays the sound itself, because mako, dunst and swaync ignore `sound-name`. A saved or copied capture plays the sound theme's `screen-capture` or `camera-shutter` sound (the GTK sound theme, then `freedesktop`, as `.oga`, `.ogg` or `.wav`), or the bundled `resources/sounds/capture.oga`, through `GtkMediaFile`. That needs GTK's GStreamer media backend and the GStreamer base plugins; without them the sound logs an error and the capture carries on. Failures and canceled selections stay silent. `[notifications] sound` works on its own, also with notifications off. Both settings are read once per capture.
 
 Checked on 2026-10-04 with mako 1.8 on headless sway 1.9 in a cloud container. Saved, copied, save failed (folder `/proc/kiekje`) and capture failed (`repeat` with no region) each showed one notification with the expected text, urgency and actions. Both actions reached the daemon: with no FileManager1 service and no default apps, they logged the folder fallback and the open error. With `enabled = false`, nothing was sent.
 
-Unverified: sound playback (mako plays no sounds), and notifications on Plasma, GNOME and the Omarchy mako setup.
+Sound checked on 2026-10-11 on headless sway with a PulseAudio null sink, recording its monitor: the freedesktop `screen-capture.oga`, the bundled fallback with no sound theme, three captures in a row in one instance, and silence with `sound = false`. The bundled sound starts with 150 ms of silence, because the first part of a short stream was cut off; a click at 0 ms recorded as nothing. Unverified: notifications and sound on Plasma, GNOME and the Omarchy mako setup on real hardware.
 
 ## Monitor unplugged during selection
 

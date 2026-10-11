@@ -36,7 +36,6 @@ pub(super) struct General {
     saved_filename: RefCell<String>,
     enabled: gtk::Switch,
     sound: gtk::Switch,
-    sound_row: gtk::ListBoxRow,
     edit: gtk::Switch,
     magnifier: gtk::Switch,
     slow_pointer: gtk::DropDown,
@@ -142,8 +141,11 @@ pub(super) fn append(
         Some(&enabled),
     ));
     let sound = switch(notifications.sound);
-    let sound_row = alerts.add(row("Play a sound with it", None, Some(&sound)));
-    sound_row.set_sensitive(notifications.enabled);
+    alerts.add(row(
+        "Play a capture sound",
+        Some("Uses the sound theme's shutter sound, or Kiekje's own."),
+        Some(&sound),
+    ));
 
     let startup = group(&pages.general, "Startup");
     let autostart = switch(false);
@@ -166,7 +168,6 @@ pub(super) fn append(
         saved_filename: RefCell::new(storage.filename.to_string()),
         enabled,
         sound,
-        sound_row,
         edit,
         magnifier,
         slow_pointer,
@@ -245,11 +246,7 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
     let sender = changes.clone();
     general.enabled.connect_active_notify(move |check| {
         let on = check.is_active();
-        let Some(general) = weak.upgrade() else {
-            return;
-        };
-        general.sound_row.set_sensitive(on);
-        if general.quiet.get() {
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
             return;
         }
         send(

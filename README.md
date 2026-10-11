@@ -134,7 +134,8 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Save to disk | PNG in `~/Pictures/Kiekje`, exclusive create, never overwrites | Lab tested |
 | Filename templates | e.g. `kiekje-{mode}-{date}-{time}`, live preview in Settings | Unit and lab tested |
 | Pin on screen | Keep a capture floating above other windows; drag, scroll to zoom | Unverified on desktops |
-| Notifications | With the image, Open and Show in folder actions, optional sound | Lab tested |
+| Notifications | With the image, Open and Show in folder actions | Lab tested |
+| Capture sound | Sound theme shutter or the bundled one, needs the GStreamer base plugins | Lab tested |
 | Gallery | Grid and list views, search, kind and period filters, sorting | Lab tested on sway |
 | File actions | Open, show in folder, copy image, copy path, trash, remove, edit, pin | Lab tested on sway |
 | Missing files | Detects moved or deleted files and lets you relink them | Lab tested on sway |
