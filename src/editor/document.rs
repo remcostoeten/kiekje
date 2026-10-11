@@ -12,6 +12,25 @@ impl Point {
     pub fn distance(self, other: Self) -> f64 {
         (self.x - other.x).hypot(self.y - other.y)
     }
+
+    pub fn snapped(self, start: Self) -> Self {
+        let step = std::f64::consts::FRAC_PI_4;
+        let angle = ((self.y - start.y).atan2(self.x - start.x) / step).round() * step;
+        let length = start.distance(self);
+        Self {
+            x: start.x + length * angle.cos(),
+            y: start.y + length * angle.sin(),
+        }
+    }
+
+    pub fn squared(self, start: Self) -> Self {
+        let (dx, dy) = (self.x - start.x, self.y - start.y);
+        let side = dx.abs().max(dy.abs());
+        Self {
+            x: start.x + side.copysign(dx),
+            y: start.y + side.copysign(dy),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -246,6 +265,14 @@ impl Tool {
     /// ```ignore
     /// let shape = Tool::Arrow.shape(&points, stroke, document.next_step());
     /// ```
+    pub fn constrain(self, start: Point, end: Point) -> Point {
+        match self {
+            Self::Line | Self::Arrow | Self::Pen => end.snapped(start),
+            Self::Rectangle | Self::Ellipse => end.squared(start),
+            _ => end,
+        }
+    }
+
     pub fn shape(self, points: &[Point], stroke: Stroke, step: u32) -> Option<Shape> {
         let (&start, &end) = (points.first()?, points.last()?);
         let area = Area::between(start, end);
@@ -522,6 +549,47 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn near(a: Point, b: Point) -> bool {
+        a.distance(b) < 1e-9
+    }
+
+    #[test]
+    fn snaps_a_shallow_drag_to_a_horizontal_line() {
+        let start = Point { x: 10.0, y: 10.0 };
+        let end = Tool::Line.constrain(start, Point { x: 110.0, y: 14.0 });
+        assert!((end.y - 10.0).abs() < 1e-9);
+        assert!((end.x - 10.0 - 100.0_f64.hypot(4.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn snaps_a_steep_pen_drag_to_a_vertical_line() {
+        let start = Point { x: 0.0, y: 0.0 };
+        let end = Tool::Pen.constrain(start, Point { x: -3.0, y: -50.0 });
+        assert!(end.x.abs() < 1e-9);
+        assert!(end.y < 0.0);
+    }
+
+    #[test]
+    fn snaps_a_near_diagonal_arrow_to_forty_five_degrees() {
+        let start = Point { x: 0.0, y: 0.0 };
+        let end = Tool::Arrow.constrain(start, Point { x: 40.0, y: 46.0 });
+        assert!((end.x - end.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn squares_a_rectangle_in_the_drag_direction() {
+        let start = Point { x: 50.0, y: 50.0 };
+        let end = Tool::Rectangle.constrain(start, Point { x: 20.0, y: 70.0 });
+        assert!(near(end, Point { x: 20.0, y: 80.0 }));
+    }
+
+    #[test]
+    fn leaves_unconstrained_tools_alone() {
+        let start = Point { x: 0.0, y: 0.0 };
+        let end = Point { x: 13.0, y: 7.0 };
+        assert!(near(Tool::Pixelate.constrain(start, end), end));
+    }
 
     const STROKE: Stroke = Stroke {
         color: Color::Accent,

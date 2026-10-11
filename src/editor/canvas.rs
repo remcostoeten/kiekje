@@ -186,11 +186,16 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
         Tool::Text => return,
         _ => {}
     }
+    let straight = gesture
+        .current_event_state()
+        .contains(gdk::ModifierType::SHIFT_MASK);
+    let tool = editor.tool.get();
     let mut draft = editor.draft.borrow_mut();
     let Some(&start) = draft.first() else {
         return;
     };
-    match editor.tool.get() {
+    match tool {
+        _ if straight => *draft = vec![start, tool.constrain(start, point)],
         Tool::Pen => {
             if draft
                 .last()
