@@ -26,6 +26,7 @@ use crate::shortcuts::{
     Binding, PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar,
     Shortcuts, hyprland, kde,
 };
+use crate::sound;
 use crate::storage::{self, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
@@ -821,6 +822,9 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             return;
         };
         session.notifications.set(notifications);
+        if notifications.sound {
+            sound::prepare();
+        }
         log_timing("trigger -> instance", request.trigger_us, received_us);
         log_timing("instance -> frames", received_us, captured_us);
         match result {
@@ -1313,11 +1317,14 @@ fn finish_delivery(session: &Session, notice: Notice) {
 
 fn notify(session: &Session, notice: Notice) {
     let settings = session.notifications.get();
+    if settings.sound && matches!(notice, Notice::Saved { .. } | Notice::Copied { .. }) {
+        sound::play_capture();
+    }
     if !settings.enabled {
         return;
     }
     match &session.notifier {
-        Some(notifier) => notifier.send(&notice, settings.sound),
+        Some(notifier) => notifier.send(&notice),
         None => println!("kiekje: no session bus, notification skipped"),
     }
 }

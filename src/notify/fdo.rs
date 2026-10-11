@@ -84,10 +84,10 @@ impl FdoNotifier {
     /// # Examples
     ///
     /// ```ignore
-    /// notifier.send(&Notice::Copied { width: 640, height: 480 }, true);
+    /// notifier.send(&Notice::Copied { width: 640, height: 480 });
     /// ```
-    pub fn send(&self, notice: &Notice, sound: bool) {
-        let content = notice.content(sound);
+    pub fn send(&self, notice: &Notice) {
+        let content = notice.content();
         let mut hints: HashMap<String, Variant> = HashMap::from([
             ("desktop-entry".to_owned(), APP_ID.to_variant()),
             (
@@ -98,11 +98,8 @@ impl FdoNotifier {
                 }
                 .to_variant(),
             ),
+            ("suppress-sound".to_owned(), true.to_variant()),
         ]);
-        match content.sound {
-            Some(name) => hints.insert("sound-name".to_owned(), name.to_variant()),
-            None => hints.insert("suppress-sound".to_owned(), true.to_variant()),
-        };
         if let Some(image) = &content.image {
             hints.insert(
                 "image-path".to_owned(),

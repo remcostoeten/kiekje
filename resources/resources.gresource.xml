@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/dev/remcostoeten/Kiekje">
     <file>style.css</file>
+    <file>sounds/capture.oga</file>
     <file>icons/scalable/actions/kiekje-arrow-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-clear-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-crop-symbolic.svg</file>

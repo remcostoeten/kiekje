@@ -4,8 +4,6 @@ use std::path::{Path, PathBuf};
 
 pub use fdo::FdoNotifier;
 
-pub const CAPTURE_SOUND: &str = "screen-capture";
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Notice {
     Saved {
@@ -69,7 +67,6 @@ pub struct Content {
     pub image: Option<PathBuf>,
     pub actions: Vec<NoticeAction>,
     pub urgency: Urgency,
-    pub sound: Option<&'static str>,
 }
 
 impl Notice {
@@ -87,19 +84,17 @@ impl Notice {
         }
     }
 
-    /// Turns a capture outcome into notification text, image, actions and sound.
+    /// Turns a capture outcome into notification text, image and actions.
     ///
-    /// The body is escaped, because notification daemons may read it as markup. Only
-    /// successful captures play the capture sound.
+    /// The body is escaped, because notification daemons may read it as markup.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let content = Notice::Copied { width: 640, height: 480 }.content(true);
+    /// let content = Notice::Copied { width: 640, height: 480 }.content();
     /// assert_eq!(content.summary, "Screenshot copied");
     /// ```
-    pub fn content(&self, sound: bool) -> Content {
-        let success_sound = sound.then_some(CAPTURE_SOUND);
+    pub fn content(&self) -> Content {
         match self {
             Self::Saved {
                 path,
@@ -123,7 +118,6 @@ impl Notice {
                     image: Some(path.clone()),
                     actions: NoticeAction::ALL.to_vec(),
                     urgency: Urgency::Normal,
-                    sound: success_sound,
                 }
             }
             Self::Copied { width, height } => Content {
@@ -133,7 +127,6 @@ impl Notice {
                 image: None,
                 actions: Vec::new(),
                 urgency: Urgency::Normal,
-                sound: success_sound,
             },
             Self::SaveFailed { reason, copied } => {
                 let clipboard = if *copied {
@@ -148,7 +141,6 @@ impl Notice {
                     image: None,
                     actions: Vec::new(),
                     urgency: Urgency::Critical,
-                    sound: None,
                 }
             }
             Self::CaptureFailed { reason } => Content {
@@ -158,7 +150,6 @@ impl Notice {
                 image: None,
                 actions: Vec::new(),
                 urgency: Urgency::Critical,
-                sound: None,
             },
         }
     }
@@ -182,7 +173,7 @@ mod tests {
             height: 200,
             copied: true,
         }
-        .content(true);
+        .content();
         assert_eq!(content.summary, "Screenshot saved");
         assert_eq!(
             content.body,
@@ -193,29 +184,26 @@ mod tests {
             Some(PathBuf::from("/shots/kiekje-region.png"))
         );
         assert_eq!(content.actions, NoticeAction::ALL.to_vec());
-        assert_eq!(content.sound, Some(CAPTURE_SOUND));
     }
 
     #[test]
-    fn stays_silent_when_sound_is_off() {
+    fn copies_without_actions() {
         let content = Notice::Copied {
             width: 1,
             height: 1,
         }
-        .content(false);
-        assert_eq!(content.sound, None);
+        .content();
         assert!(content.actions.is_empty());
     }
 
     #[test]
-    fn marks_failures_critical_without_a_sound() {
+    fn marks_failures_critical() {
         let content = Notice::SaveFailed {
             reason: "Read-only file system".into(),
             copied: true,
         }
-        .content(true);
+        .content();
         assert_eq!(content.urgency, Urgency::Critical);
-        assert_eq!(content.sound, None);
         assert!(content.body.ends_with("still on the clipboard."));
     }
 
@@ -224,7 +212,7 @@ mod tests {
         let content = Notice::CaptureFailed {
             reason: "<b>&</b>".into(),
         }
-        .content(true);
+        .content();
         assert_eq!(content.body, "&lt;b&gt;&amp;&lt;/b&gt;");
     }
 

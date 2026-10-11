@@ -11,6 +11,8 @@ depends=('gtk4' 'gtk4-layer-shell' 'wayland' 'glib2' 'cairo' 'pango' 'gcc-libs' 
 makedepends=('cargo')
 optdepends=(
     'xdg-desktop-portal: capture and global shortcuts through the portal'
+    'gst-plugins-base: capture sound'
+    'gst-plugins-good: capture sound through PulseAudio'
 )
 options=('!lto')
 source=("$pkgname-$_tag.tar.gz::$url/archive/refs/tags/v$_tag.tar.gz")

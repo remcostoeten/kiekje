@@ -10,6 +10,8 @@ license=('MIT' 'OFL-1.1')
 depends=('gtk4' 'wayland' 'glib2' 'cairo' 'pango' 'fontconfig' 'gdk-pixbuf2' 'graphene' 'gcc-libs' 'glibc')
 optdepends=(
     'xdg-desktop-portal: capture and global shortcuts through the portal'
+    'gst-plugins-base: capture sound'
+    'gst-plugins-good: capture sound through PulseAudio'
 )
 provides=('kiekje')
 conflicts=('kiekje')
