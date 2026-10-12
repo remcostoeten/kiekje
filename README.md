@@ -232,6 +232,14 @@ curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/master/get.sh |
 
 It picks the `.deb`, `.rpm` or tarball for your system from the newest release, checks it against `SHA256SUMS` and installs it with sudo. `KIEKJE_VERSION=v0.1.0-alpha.4` pins a release, `KIEKJE_FORMAT=tarball` skips the native package. It needs the repository to be public.
 
+### Arch Linux
+
+```bash
+yay -S kiekje-bin
+```
+
+Use `yay -S kiekje` to build the package from source instead.
+
 ### Release packages
 
 Download from [Releases](https://github.com/remcostoeten/kiekje/releases). `.deb` and `.rpm` packages ship from 0.1.0-alpha.3 on.
@@ -248,6 +256,22 @@ The tarball works anywhere else:
 tar -xzf kiekje-VERSION-x86_64-linux.tar.gz
 cd kiekje-VERSION-x86_64-linux
 sudo packaging/install.sh ./kiekje
+```
+
+### Flatpak
+
+Download `kiekje.flatpak` from the [latest release](https://github.com/remcostoeten/kiekje/releases/latest), then run:
+
+```bash
+flatpak install --user ./kiekje.flatpak
+```
+
+Flatpak uses the desktop portals for capture and global shortcuts.
+
+### Nix
+
+```bash
+nix profile install github:remcostoeten/kiekje
 ```
 
 ### From source

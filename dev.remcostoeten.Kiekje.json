@@ -1,0 +1,78 @@
+{
+  "app-id": "dev.remcostoeten.Kiekje",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "47",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "kiekje",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--talk-name=org.freedesktop.portal.Desktop",
+    "--talk-name=org.freedesktop.portal.GlobalShortcuts",
+    "--talk-name=org.kde.KWin",
+    "--talk-name=org.kde.StatusNotifierWatcher",
+    "--filesystem=xdg-pictures:create",
+    "--filesystem=xdg-videos:create",
+    "--filesystem=xdg-config/kiekje:create",
+    "--filesystem=xdg-data/kiekje:create",
+    "--filesystem=xdg-cache/kiekje:create"
+  ],
+  "modules": [
+    {
+      "name": "gtk4-layer-shell",
+      "buildsystem": "meson",
+      "config-opts": [
+        "-Dexamples=false",
+        "-Ddocs=false",
+        "-Dtests=false",
+        "-Dintrospection=false",
+        "-Dvapi=false"
+      ],
+      "sources": [
+        {
+          "type": "git",
+          "url": "https://github.com/wmww/gtk4-layer-shell.git",
+          "tag": "v1.1.1",
+          "commit": "4867d7b85cdf1e829fc1fd6f1d5f04c42cc99389"
+        }
+      ]
+    },
+    {
+      "name": "kiekje",
+      "buildsystem": "simple",
+      "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+          "CARGO_HOME": "/run/build/kiekje/cargo",
+          "CARGO_NET_OFFLINE": "true"
+        }
+      },
+      "build-commands": [
+        "install -Dm0644 cargo/config .cargo/config.toml",
+        "cargo --offline fetch --manifest-path Cargo.toml --verbose",
+        "cargo build --release --locked --offline",
+        "install -Dm755 target/release/kiekje /app/bin/kiekje",
+        "install -Dm644 packaging/dev.remcostoeten.Kiekje.desktop /app/share/applications/dev.remcostoeten.Kiekje.desktop",
+        "sed -i 's|^Exec=.*|Exec=kiekje capture region|' /app/share/applications/dev.remcostoeten.Kiekje.desktop",
+        "install -Dm644 packaging/flatpak/dev.remcostoeten.Kiekje.metainfo.xml /app/share/metainfo/dev.remcostoeten.Kiekje.metainfo.xml",
+        "for icon in resources/icons/hicolor/*/apps/*; do install -Dm644 \"$icon\" \"/app/share/icons/hicolor/${icon#resources/icons/hicolor/}\"; done",
+        "install -Dm644 resources/fonts/Geist-Variable.ttf /app/share/kiekje/fonts/Geist-Variable.ttf",
+        "install -Dm644 resources/fonts/GeistMono-Variable.ttf /app/share/kiekje/fonts/GeistMono-Variable.ttf",
+        "install -Dm644 LICENSE /app/share/licenses/kiekje/LICENSE",
+        "install -Dm644 resources/fonts/OFL.txt /app/share/licenses/kiekje/OFL-fonts.txt"
+      ],
+      "sources": [
+        {
+          "type": "dir",
+          "path": "."
+        },
+        "packaging/flatpak/cargo-sources.json"
+      ]
+    }
+  ]
+}

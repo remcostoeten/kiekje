@@ -117,3 +117,74 @@ jobs:
           cp /tmp/aur/kiekje/PKGBUILD dist/PKGBUILD-kiekje
           cp /tmp/aur/kiekje-bin/PKGBUILD dist/PKGBUILD-kiekje-bin
           gh release upload "$TAG" dist/PKGBUILD-kiekje dist/PKGBUILD-kiekje-bin --clobber
+
+  aur:
+    name: Publish packages to AUR
+    needs: release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    container: archlinux:base-devel
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install release tools
+        run: pacman -Syu --noconfirm curl git openssh
+
+      - name: Publish kiekje and kiekje-bin
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$AUR_SSH_PRIVATE_KEY" || {
+            echo "AUR_SSH_PRIVATE_KEY is not configured" >&2
+            exit 1
+          }
+          useradd --create-home builder
+          install -d -m 700 -o builder -g builder /home/builder/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > /home/builder/.ssh/id_ed25519
+          chmod 600 /home/builder/.ssh/id_ed25519
+          ssh-keyscan -H aur.archlinux.org > /home/builder/.ssh/known_hosts
+          chown builder:builder /home/builder/.ssh/known_hosts
+          runuser -u builder -- git config --global user.name "kiekje release bot"
+          runuser -u builder -- git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          tag="v$version"
+          test "$tag" = "$GITHUB_REF_NAME"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          mkdir -p /tmp/release
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+            -o /tmp/source.tar.gz \
+            "https://github.com/$GITHUB_REPOSITORY/archive/refs/tags/$tag.tar.gz"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+            -o "/tmp/release/kiekje-$version-x86_64-linux.tar.gz" \
+            "$base/kiekje-$version-x86_64-linux.tar.gz"
+          curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+            -o "/tmp/release/kiekje-$version-aarch64-linux.tar.gz" \
+            "$base/kiekje-$version-aarch64-linux.tar.gz"
+          runuser -u builder -- env \
+            HOME=/home/builder \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            bash packaging/aur/publish.sh "$version" /tmp/source.tar.gz \
+              "/tmp/release/kiekje-$version-x86_64-linux.tar.gz" \
+              "/tmp/release/kiekje-$version-aarch64-linux.tar.gz"
+
+  flatpak:
+    name: Build Flatpak bundle
+    needs: release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: dev.remcostoeten.Kiekje.json
+          bundle: kiekje.flatpak
+          cache: true
+
+      - name: Upload bundle to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: kiekje.flatpak
