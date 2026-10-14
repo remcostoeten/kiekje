@@ -27,6 +27,7 @@ pub enum Notice {
         version: String,
         url: String,
     },
+    MonitorLost,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,7 +92,10 @@ impl Notice {
         match self {
             Self::Saved { path, .. } => Some(Target::File(path.clone())),
             Self::UpdateAvailable { url, .. } => Some(Target::Link(url.clone())),
-            Self::Copied { .. } | Self::SaveFailed { .. } | Self::CaptureFailed { .. } => None,
+            Self::Copied { .. }
+            | Self::SaveFailed { .. }
+            | Self::CaptureFailed { .. }
+            | Self::MonitorLost => None,
         }
     }
 
@@ -171,6 +175,14 @@ impl Notice {
                 icon: "software-update-available",
                 image: None,
                 actions: vec![NoticeAction::Open],
+                urgency: Urgency::Normal,
+            },
+            Self::MonitorLost => Content {
+                summary: "Screenshot cancelled",
+                body: "A monitor was disconnected. The capture was cancelled.".to_owned(),
+                icon: "dialog-warning",
+                image: None,
+                actions: Vec::new(),
                 urgency: Urgency::Normal,
             },
         }
@@ -254,6 +266,17 @@ mod tests {
                 "https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.6".into()
             ))
         );
+    }
+
+    #[test]
+    fn says_a_disconnected_monitor_cancelled_the_capture() {
+        let content = Notice::MonitorLost.content();
+        assert_eq!(
+            content.body,
+            "A monitor was disconnected. The capture was cancelled."
+        );
+        assert!(content.actions.is_empty());
+        assert_eq!(Notice::MonitorLost.target(), None);
     }
 
     #[test]

@@ -19,10 +19,12 @@ type Results = HashMap<String, Variant>;
 pub struct PortalShortcuts {
     connection: gio::DBusConnection,
     shortcuts: Shortcuts,
+    actions: Vec<ShortcutAction>,
 }
 
 pub struct PortalGuard {
     connection: gio::DBusConnection,
+    actions: Vec<ShortcutAction>,
     session: String,
     version: u32,
     _activated: SignalSubscription,
@@ -30,10 +32,15 @@ pub struct PortalGuard {
 }
 
 impl PortalShortcuts {
-    pub fn new(connection: gio::DBusConnection, shortcuts: Shortcuts) -> Self {
+    pub fn new(
+        connection: gio::DBusConnection,
+        shortcuts: Shortcuts,
+        actions: Vec<ShortcutAction>,
+    ) -> Self {
         Self {
             connection,
             shortcuts,
+            actions,
         }
     }
 
@@ -147,8 +154,10 @@ impl PortalShortcuts {
     async fn bind_shortcuts(&self, session: &str) -> Result<Vec<Binding>, ShortcutError> {
         let session_path = ObjectPath::try_from(session.to_owned())
             .map_err(|_| ShortcutError::Reply(format!("{session} is not an object path")))?;
-        let shortcuts: Vec<(String, Results)> = ShortcutAction::ALL
-            .into_iter()
+        let shortcuts: Vec<(String, Results)> = self
+            .actions
+            .iter()
+            .copied()
             .map(|action| {
                 let mut options =
                     HashMap::from([("description".to_owned(), action.description().to_variant())]);
@@ -175,13 +184,14 @@ impl PortalShortcuts {
             .get("shortcuts")
             .and_then(|shortcuts| shortcuts.get::<Vec<(String, Results)>>())
             .unwrap_or_default();
-        Ok(bindings_from(&bound))
+        Ok(bindings_from(&self.actions, &bound))
     }
 }
 
-fn bindings_from(bound: &[(String, Results)]) -> Vec<Binding> {
-    ShortcutAction::ALL
-        .into_iter()
+fn bindings_from(actions: &[ShortcutAction], bound: &[(String, Results)]) -> Vec<Binding> {
+    actions
+        .iter()
+        .copied()
         .map(|action| Binding {
             action,
             trigger: bound
@@ -258,6 +268,7 @@ impl PortalGuard {
     /// ```
     pub fn watch_changes(&mut self, on_changed: impl Fn(Vec<Binding>) + 'static) {
         let session = self.session.clone();
+        let actions = self.actions.clone();
         self.changed = Some(self.connection.subscribe_to_signal(
             Some(DESTINATION),
             Some(INTERFACE),
@@ -274,7 +285,7 @@ impl PortalGuard {
                     return;
                 };
                 if handle.as_str() == session {
-                    on_changed(bindings_from(&bound));
+                    on_changed(bindings_from(&actions, &bound));
                 }
             },
         ));
@@ -298,6 +309,7 @@ impl ShortcutRegistrar for PortalShortcuts {
         }
         let session = self.create_session().await?;
         let activated_session = session.clone();
+        let actions = self.actions.clone();
         let activated = self.connection.subscribe_to_signal(
             Some(DESTINATION),
             Some(INTERFACE),
@@ -316,7 +328,7 @@ impl ShortcutRegistrar for PortalShortcuts {
                 if handle.as_str() != activated_session {
                     return;
                 }
-                match ShortcutAction::parse(&id) {
+                match ShortcutAction::parse(&id).filter(|action| actions.contains(action)) {
                     Some(action) => on_activated(action),
                     None => eprintln!("kiekje: ignored unknown shortcut {id}"),
                 }
@@ -326,6 +338,7 @@ impl ShortcutRegistrar for PortalShortcuts {
         Ok((
             PortalGuard {
                 connection: self.connection.clone(),
+                actions: self.actions.clone(),
                 session,
                 version,
                 _activated: activated,
@@ -351,19 +364,39 @@ mod tests {
             ("capture-fullscreen".to_owned(), details("")),
             ("capture-window".to_owned(), details("Alt+W")),
         ];
-        let bindings = bindings_from(&bound);
+        let bindings = bindings_from(&ShortcutAction::ALL, &bound);
         assert_eq!(
             bindings,
             vec![
                 Binding {
-                    action: ShortcutAction::CaptureRegion,
+                    action: ShortcutAction::Region,
                     trigger: Some("Ctrl+Alt+P".into()),
                 },
                 Binding {
-                    action: ShortcutAction::CaptureFullscreen,
+                    action: ShortcutAction::Fullscreen,
                     trigger: None,
                 },
+                Binding {
+                    action: ShortcutAction::Window,
+                    trigger: Some("Alt+W".into()),
+                },
             ]
+        );
+    }
+
+    #[test]
+    fn leaves_out_actions_this_session_does_not_offer() {
+        let bound = vec![
+            ("capture-region".to_owned(), details("Print")),
+            ("capture-window".to_owned(), details("Alt+W")),
+        ];
+        let actions = [ShortcutAction::Region];
+        assert_eq!(
+            bindings_from(&actions, &bound),
+            vec![Binding {
+                action: ShortcutAction::Region,
+                trigger: Some("Print".into()),
+            }]
         );
     }
 }

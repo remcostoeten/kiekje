@@ -402,7 +402,7 @@ pub fn set_drawing_key(
 /// # Examples
 ///
 /// ```ignore
-/// let shortcuts = config::set_shortcut(&config::path(), ShortcutAction::CaptureRegion, Slot::Off)?;
+/// let shortcuts = config::set_shortcut(&config::path(), ShortcutAction::Region, Slot::Off)?;
 /// ```
 pub fn set_shortcut(
     path: &Path,
@@ -492,15 +492,12 @@ mod tests {
     fn updates_one_setting_and_keeps_the_rest() {
         let path = scratch("update");
         let _ = fs::remove_dir_all(path.parent().unwrap());
-        set_shortcut(&path, ShortcutAction::CaptureRegion, Slot::Off).unwrap();
+        set_shortcut(&path, ShortcutAction::Region, Slot::Off).unwrap();
         let config = update(&path, |config| config.notifications.sound = false).unwrap();
         assert!(!config.notifications.sound);
         let saved = load_from(&path).unwrap().unwrap();
         assert!(!saved.notifications.sound);
-        assert_eq!(
-            saved.shortcuts.slot(ShortcutAction::CaptureRegion),
-            &Slot::Off
-        );
+        assert_eq!(saved.shortcuts.slot(ShortcutAction::Region), &Slot::Off);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
@@ -518,15 +515,12 @@ mod tests {
             })
         };
         for _ in 0..50 {
-            set_shortcut(&path, ShortcutAction::CaptureRegion, Slot::Off).unwrap();
+            set_shortcut(&path, ShortcutAction::Region, Slot::Off).unwrap();
         }
         sound.join().unwrap();
         let saved = load_from(&path).unwrap().unwrap();
         assert!(!saved.notifications.sound);
-        assert_eq!(
-            saved.shortcuts.slot(ShortcutAction::CaptureRegion),
-            &Slot::Off
-        );
+        assert_eq!(saved.shortcuts.slot(ShortcutAction::Region), &Slot::Off);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
@@ -761,6 +755,58 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_config_from_before_window_capture_with_the_window_shortcut_off() {
+        let config = parse(
+            "version = 1\n[shortcuts]\ncapture-region = \"Print\"\ncapture-fullscreen = \"SHIFT+Print\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(config.shortcuts.capture_window, Slot::Off);
+        assert_eq!(config.shortcuts, Shortcuts::default());
+    }
+
+    #[test]
+    fn reads_a_window_shortcut() {
+        let config = parse(
+            "[shortcuts]\ncapture-window = \"alt+Print\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.shortcuts.capture_window,
+            Slot::Key(Trigger::parse("ALT+Print").unwrap())
+        );
+    }
+
+    #[test]
+    fn rejects_a_window_shortcut_another_action_uses() {
+        let error = parse(
+            "[shortcuts]\ncapture-window = \"Print\"",
+            Path::new("config.toml"),
+        )
+        .unwrap_err();
+        assert!(matches!(error, ConfigError::Shortcuts { .. }));
+    }
+
+    #[test]
+    fn leaves_an_unset_window_shortcut_out_of_the_saved_file() {
+        let path = scratch("window-off");
+        save_to(&path, &Config::default()).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("capture-window"), "{text}");
+        let mut config = Config::default();
+        config.shortcuts.capture_window = Slot::Key(Trigger::parse("ALT+Print").unwrap());
+        save_to(&path, &config).unwrap();
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("capture-window = \"ALT+Print\"")
+        );
+        assert_eq!(load_from(&path).unwrap(), Some(config));
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn rejects_a_shortcut_that_breaks_the_rules() {
         let error = parse(
             "[shortcuts]\ncapture-region = \"s\"",
@@ -839,12 +885,8 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "[storage]\nfilename = \"mine\"").unwrap();
         let trigger = Trigger::parse("CTRL+ALT+s").unwrap();
-        let shortcuts = set_shortcut(
-            &path,
-            ShortcutAction::CaptureRegion,
-            Slot::Key(trigger.clone()),
-        )
-        .unwrap();
+        let shortcuts =
+            set_shortcut(&path, ShortcutAction::Region, Slot::Key(trigger.clone())).unwrap();
         assert_eq!(shortcuts.capture_region, Slot::Key(trigger));
         let saved = load_from(&path).unwrap().unwrap();
         assert_eq!(saved.shortcuts, shortcuts);
@@ -856,7 +898,7 @@ mod tests {
     fn refuses_a_shortcut_another_action_uses() {
         let path = scratch("set-conflict");
         let taken = Shortcuts::default().capture_fullscreen;
-        let error = set_shortcut(&path, ShortcutAction::CaptureRegion, taken).unwrap_err();
+        let error = set_shortcut(&path, ShortcutAction::Region, taken).unwrap_err();
         assert!(matches!(error, ConfigError::Shortcuts { .. }));
         assert!(!path.exists());
     }

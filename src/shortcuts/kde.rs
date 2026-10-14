@@ -91,7 +91,7 @@ pub fn check(app_id: &str, trigger: &Trigger) -> Result<(), KdeError> {
 /// # Examples
 ///
 /// ```ignore
-/// kde::set(APP_ID, ShortcutAction::CaptureRegion, Some(&Trigger::parse("LOGO+s")?))?;
+/// kde::set(APP_ID, ShortcutAction::Region, Some(&Trigger::parse("LOGO+s")?))?;
 /// ```
 pub fn set(
     app_id: &str,

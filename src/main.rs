@@ -27,7 +27,8 @@ use std::time::Duration;
 use gtk::glib;
 
 use app::{Command, Request};
-use capture::{BackendChoice, CaptureMode};
+use backends::windows;
+use capture::{Availability, BackendChoice, CaptureMode};
 use help::Topic;
 
 fn main() -> glib::ExitCode {
@@ -41,7 +42,15 @@ fn main() -> glib::ExitCode {
             glib::ExitCode::SUCCESS
         }
         Some("capture") => match parse_capture(&arguments[1..], trigger_us) {
-            Ok(request) => app::run(Command::Capture(request)),
+            Ok(request) => {
+                match check_available(request.mode, || windows::availability(windows::detect())) {
+                    Ok(()) => app::run(Command::Capture(request)),
+                    Err(message) => {
+                        eprintln!("kiekje: {message}");
+                        glib::ExitCode::FAILURE
+                    }
+                }
+            }
             Err(message) => {
                 help::print_error(&message, Topic::Capture);
                 glib::ExitCode::FAILURE
@@ -137,6 +146,18 @@ fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, Strin
     Ok(request)
 }
 
+fn check_available(mode: CaptureMode, window: impl FnOnce() -> Availability) -> Result<(), String> {
+    if mode != CaptureMode::Window {
+        return Ok(());
+    }
+    match window() {
+        Availability::Available => Ok(()),
+        Availability::Unavailable(reason) => {
+            Err(format!("window capture is unavailable: {reason}"))
+        }
+    }
+}
+
 fn parse_delay(value: &str) -> Result<Duration, String> {
     value
         .parse::<u64>()
@@ -192,6 +213,45 @@ mod tests {
         assert_eq!(request.mode, CaptureMode::Repeat);
         assert_eq!(request.delay, Duration::from_secs(5));
         assert!(!request.save);
+    }
+
+    #[test]
+    fn parses_window_capture_with_its_flags() {
+        let request = parse(&["window", "--edit", "--no-save"]).unwrap();
+        assert_eq!(request.mode, CaptureMode::Window);
+        assert!(request.edit);
+        assert!(!request.save);
+        assert_eq!(
+            parse(&["--delay", "2", "window"]).unwrap().mode,
+            CaptureMode::Window
+        );
+        assert_eq!(
+            parse(&["windows"]).err().as_deref(),
+            Some("unknown mode `windows`")
+        );
+    }
+
+    #[test]
+    fn refuses_window_capture_where_the_session_reports_no_windows() {
+        let unavailable = || Availability::Unavailable("no window source");
+        assert_eq!(
+            check_available(CaptureMode::Window, unavailable)
+                .err()
+                .as_deref(),
+            Some("window capture is unavailable: no window source")
+        );
+        assert!(check_available(CaptureMode::Window, || Availability::Available).is_ok());
+    }
+
+    #[test]
+    fn checks_window_support_only_for_window_capture() {
+        for mode in [
+            CaptureMode::Region,
+            CaptureMode::Fullscreen,
+            CaptureMode::Repeat,
+        ] {
+            assert!(check_available(mode, || panic!("probed for {mode:?}")).is_ok());
+        }
     }
 
     #[test]

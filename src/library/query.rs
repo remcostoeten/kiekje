@@ -33,16 +33,18 @@ pub enum Kind {
     Any,
     Region,
     Fullscreen,
+    Window,
 }
 
 impl Kind {
-    pub const ALL: [Self; 3] = [Self::Any, Self::Region, Self::Fullscreen];
+    pub const ALL: [Self; 4] = [Self::Any, Self::Region, Self::Fullscreen, Self::Window];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Any => "All",
             Self::Region => "Region",
             Self::Fullscreen => "Screen",
+            Self::Window => "Window",
         }
     }
 
@@ -51,6 +53,7 @@ impl Kind {
             Self::Any => true,
             Self::Region => matches!(mode, CaptureMode::Region | CaptureMode::Repeat),
             Self::Fullscreen => mode == CaptureMode::Fullscreen,
+            Self::Window => mode == CaptureMode::Window,
         }
     }
 }
@@ -217,6 +220,24 @@ mod tests {
         };
         assert_eq!(kind(Kind::Region), [3, 1]);
         assert_eq!(kind(Kind::Fullscreen), [4, 2]);
+        assert_eq!(kind(Kind::Window), [0; 0]);
+    }
+
+    #[test]
+    fn filters_window_captures_on_their_own() {
+        let mut captures = sample();
+        captures.push(capture(
+            5,
+            "editor.png",
+            CaptureMode::Window,
+            200,
+            36 * DAY_US,
+        ));
+        let query = Query {
+            kind: Kind::Window,
+            ..Query::default()
+        };
+        assert_eq!(ids(&apply(&captures, &query, 0)), [5]);
     }
 
     #[test]

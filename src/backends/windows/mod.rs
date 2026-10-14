@@ -7,7 +7,9 @@ use std::io;
 use thiserror::Error;
 
 use super::detect::{self, Environment};
-use crate::capture::LogicalRect;
+use crate::capture::{Availability, LogicalRect};
+
+pub const UNAVAILABLE: &str = "this desktop does not report where its windows are; window capture works on Plasma 6 and Hyprland";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowSourceKind {
@@ -81,6 +83,38 @@ pub fn choose(hyprland_socket: bool, environment: &Environment) -> Option<Window
     environment.has_kwin().then_some(WindowSourceKind::Kwin)
 }
 
+/// Finds the window geometry source this session supports, or `None` when it has none.
+///
+/// Blocks on the Wayland registry and D-Bus, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let kind = windows::detect();
+/// ```
+pub fn detect() -> Option<WindowSourceKind> {
+    match hyprland::socket_path() {
+        Some(_) => Some(WindowSourceKind::Hyprland),
+        None => choose(false, &detect::probe_compositor()),
+    }
+}
+
+/// Whether window capture works in this session, with the reason when it does not.
+///
+/// Window capture crops the frozen frame to a window, so it needs a window geometry source.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_eq!(availability(None), Availability::Unavailable(UNAVAILABLE));
+/// ```
+pub fn availability(source: Option<WindowSourceKind>) -> Availability {
+    match source {
+        Some(_) => Availability::Available,
+        None => Availability::Unavailable(UNAVAILABLE),
+    }
+}
+
 /// Lists the visible windows with the source this session supports.
 ///
 /// Blocks on IPC or D-Bus, so call it off the GTK main thread, at trigger time next to the
@@ -92,10 +126,7 @@ pub fn choose(hyprland_socket: bool, environment: &Environment) -> Option<Window
 /// let (kind, windows) = windows::snapshot()?;
 /// ```
 pub fn snapshot() -> Result<(WindowSourceKind, Vec<LogicalRect>), WindowError> {
-    let kind = match hyprland::socket_path() {
-        Some(_) => WindowSourceKind::Hyprland,
-        None => choose(false, &detect::probe()).ok_or(WindowError::Unavailable)?,
-    };
+    let kind = detect().ok_or(WindowError::Unavailable)?;
     source(kind).windows().map(|windows| (kind, windows))
 }
 
@@ -126,6 +157,15 @@ mod tests {
             choose(false, &environment(&[LAYER_SHELL, PLASMA_SHELL], true)),
             Some(WindowSourceKind::Kwin)
         );
+    }
+
+    #[test]
+    fn reports_window_capture_unavailable_without_a_source() {
+        assert_eq!(
+            availability(Some(WindowSourceKind::Kwin)),
+            Availability::Available
+        );
+        assert_eq!(availability(None), Availability::Unavailable(UNAVAILABLE));
     }
 
     #[test]

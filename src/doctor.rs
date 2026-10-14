@@ -408,6 +408,11 @@ fn render(report: &Report, style: &Style) -> String {
         None => style.dim("unavailable, drag to select"),
     };
     text.push_str(&field(style, "window snap", &snap));
+    let window = match report.window_snap {
+        Some(source) => style.good(&source.to_string()),
+        None => style.warn(&format!("unavailable, {}", windows::UNAVAILABLE)),
+    };
+    text.push_str(&field(style, "window capture", &window));
     if let Ok(bus) = &report.bus {
         let daemon = if bus.daemon_running {
             style.good("running")
@@ -691,6 +696,18 @@ mod tests {
             render(&bare, &PLAIN)
                 .contains("clipboard         none found, copies are lost when Kiekje quits")
         );
+    }
+
+    #[test]
+    fn lists_window_capture_with_its_source_or_as_unavailable() {
+        assert!(render(&report(), &PLAIN).contains("window capture    kwin-scripting"));
+        let mut gnome = report();
+        gnome.window_snap = None;
+        let text = render(&gnome, &PLAIN);
+        assert!(text.contains(&format!(
+            "window capture    unavailable, {}",
+            windows::UNAVAILABLE
+        )));
     }
 
     #[test]
