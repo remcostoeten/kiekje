@@ -171,11 +171,22 @@ impl Editor {
         let Some(before) = self.document.borrow().shapes().get(index).cloned() else {
             return;
         };
-        let after = before.restyled(self.stroke());
-        if after != before {
-            self.document.borrow_mut().restyle(index, after);
-            self.edited();
+        let stroke = self.stroke();
+        let after = before.restyled(stroke);
+        if after == before {
+            return;
         }
+        if let Some(moving) = self
+            .moving
+            .borrow_mut()
+            .as_mut()
+            .filter(|moving| moving.index == index)
+        {
+            moving.original = after.clone();
+            moving.preview = moving.preview.restyled(stroke);
+        }
+        self.document.borrow_mut().restyle(index, after);
+        self.edited();
     }
 
     pub(super) fn delete_selected(&self) -> bool {
