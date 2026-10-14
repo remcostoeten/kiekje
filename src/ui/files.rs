@@ -1,7 +1,7 @@
 use std::path::Path;
 
+use gtk::gio;
 use gtk::prelude::*;
-use gtk::{gio, glib};
 
 const FILE_MANAGER: &str = "org.freedesktop.FileManager1";
 const FILE_MANAGER_PATH: &str = "/org/freedesktop/FileManager1";
@@ -18,6 +18,17 @@ const CALL_TIMEOUT_MS: i32 = 2000;
 /// ```
 pub async fn open(path: impl AsRef<Path>) {
     launch(&gio::File::for_path(path).uri()).await;
+}
+
+/// Opens a web link in the default browser; failures are logged.
+///
+/// # Examples
+///
+/// ```ignore
+/// glib::spawn_future_local(files::open_link(release.url));
+/// ```
+pub async fn open_link(url: String) {
+    launch(&url).await;
 }
 
 /// Shows `path` selected in the file manager, or opens its folder when no file manager answers.
@@ -59,7 +70,7 @@ pub async fn reveal(path: impl AsRef<Path>) {
     }
 }
 
-async fn launch(uri: &glib::GString) {
+async fn launch(uri: &str) {
     if let Err(error) =
         gio::AppInfo::launch_default_for_uri_future(uri, gio::AppLaunchContext::NONE).await
     {

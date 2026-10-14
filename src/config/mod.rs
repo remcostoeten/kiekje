@@ -20,6 +20,8 @@ pub use migrate::{MigrateError, VERSION};
 pub struct Config {
     pub version: i64,
     #[serde(default)]
+    pub general: General,
+    #[serde(default)]
     pub storage: Storage,
     #[serde(default)]
     pub capture: Capture,
@@ -31,6 +33,12 @@ pub struct Config {
     pub drawing: Drawing,
     #[serde(default)]
     pub shortcuts: Shortcuts,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct General {
+    pub check_for_updates: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -148,6 +156,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             version: VERSION,
+            general: General::default(),
             storage: Storage::default(),
             capture: Capture::default(),
             overlay: Overlay::default(),
@@ -687,6 +696,24 @@ mod tests {
         assert!(!config.overlay.window_snap);
         assert!(config.overlay.magnifier);
         assert!(Config::default().overlay.window_snap);
+    }
+
+    #[test]
+    fn leaves_the_update_check_off_unless_turned_on() {
+        assert!(!Config::default().general.check_for_updates);
+        let older = parse(
+            "version = 1\n[notifications]\nsound = false",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert!(!older.general.check_for_updates);
+        let on = parse(
+            "[general]\ncheck_for_updates = true",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert!(on.general.check_for_updates);
+        assert!(parse("[general]\nupdates = true", Path::new("config.toml")).is_err());
     }
 
     #[test]
