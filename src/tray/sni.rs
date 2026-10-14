@@ -9,9 +9,11 @@ use ksni::menu::{MenuItem, StandardItem};
 use ksni::{Category, ToolTip, Tray};
 
 use super::{TrayCommand, TrayError, TrayGuard, TrayHost, icon};
-use crate::capture::CaptureMode;
+use crate::capture::{Availability, CaptureMode};
 
-pub struct SniTray;
+pub struct SniTray {
+    pub window: Availability,
+}
 
 const FRAME_TIME: Duration = Duration::from_millis(40);
 const BLINK_TIME: Duration = Duration::from_millis(130);
@@ -32,6 +34,7 @@ pub struct SniGuard {
 pub struct Item {
     commands: async_channel::Sender<TrayCommand>,
     pose: Option<Pose>,
+    window: Availability,
 }
 
 impl Item {
@@ -53,6 +56,7 @@ impl TrayHost for SniTray {
         Item {
             commands,
             pose: None,
+            window: self.window,
         }
         .spawn()
         .map(|handle| {
@@ -151,6 +155,7 @@ impl Tray for Item {
                     mode: CaptureMode::Fullscreen,
                 },
             ),
+            window_item(self.window),
             command_item("Annotate region", TrayCommand::Annotate),
             command_item(
                 "Repeat last region",
@@ -198,6 +203,21 @@ fn set_pose_when(handle: &Handle<Item>, current: Option<Pose>, next: Option<Pose
 
 fn random_in(range: std::ops::Range<u64>) -> u64 {
     range.start + RandomState::new().hash_one(()) % (range.end - range.start)
+}
+
+fn window_item(window: Availability) -> MenuItem<Item> {
+    let command = TrayCommand::Capture {
+        mode: CaptureMode::Window,
+    };
+    match window {
+        Availability::Available => command_item("Capture window", command),
+        Availability::Unavailable(_) => StandardItem {
+            label: "Capture window (not on this desktop)".into(),
+            enabled: false,
+            ..Default::default()
+        }
+        .into(),
+    }
 }
 
 fn command_item(label: &str, command: TrayCommand) -> MenuItem<Item> {

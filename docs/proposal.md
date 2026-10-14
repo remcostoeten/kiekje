@@ -108,10 +108,10 @@ Runtime detection reads `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, the Wayland regis
 3. **Hide own UI**: close any open Kiekje windows. If the trigger came from the tray menu, wait for the menu to unmap, using a fixed short delay (?). That delay is measured in the prototype.
 4. **Acquire**: grab every monitor (or the active one) in a single backend call, record the trigger and frame timestamps, and keep frames as raw buffers. Nothing is encoded yet.
 5. **Fullscreen mode**: skip to step 8.
-6. **Overlay**: one layer-shell surface per monitor, each showing its own frozen frame scaled for that monitor's logical size. Keyboard focus goes to the overlay. Esc cancels and drops all buffers.
+6. **Overlay**: one layer-shell surface per monitor, each showing its own frozen frame scaled for that monitor's logical size. Keyboard focus goes to the overlay. Esc cancels and drops all buffers. Window mode opens the same overlay in a window-pick state: the window geometry listed at trigger time highlights under the pointer, and a click or Enter selects its rectangle.
 7. **Select**: the selection rect is kept in global logical coordinates. On confirm it is converted per monitor: `(logical - monitor_origin) * monitor_scale`, rounded outward to whole pixels. This handles negative origins, rotation (via the output transform) and fractional scale (via `wp_fractional_scale_v1` or the output size versus the buffer size).
 8. **Post-capture** on a worker thread: crop, set the clipboard (GDK, on the main thread with a ready texture), encode, save with exclusive create, insert the gallery record, then notification and sound.
-9. **Cleanup**: frame buffers are freed when the overlay closes. A monitor disconnect during selection cancels that monitor's surface; if the selection was on it, the capture is canceled with a message.
+9. **Cleanup**: frame buffers are freed when the overlay closes. Disconnecting a monitor that shows a frame during selection closes every overlay surface and cancels the capture with one notification, no file and no gallery record (decided 2026-10-14).
 
 Timing per backend:
 
@@ -213,7 +213,7 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 
 **Phase 3: V1 release**
 
-- About and update check. About is done in settings; the update check waits for a release feed.
+- About and update check. Done: About in settings, an opt-in daily check against the GitHub releases API and a Check now button.
 - Danger zone. Done: reset settings, clear gallery, clear thumbnails.
 - AUR, deb, rpm, tarball, Flatpak and Nix packages.
 - CI with clippy, tests and fmt.

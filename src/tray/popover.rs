@@ -6,7 +6,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-use crate::capture::{CaptureMode, LogicalRect};
+use crate::capture::{Availability, CaptureMode, LogicalRect};
 use crate::library::{self, Library, thumbs};
 use crate::overlay;
 use crate::ui;
@@ -48,6 +48,7 @@ pub struct Placement {
 
 pub struct Content {
     pub shortcuts: Vec<(CaptureMode, String)>,
+    pub window: Availability,
 }
 
 type PickCallback = Rc<dyn Fn(Pick)>;
@@ -235,6 +236,7 @@ fn panel(
     let actions = [
         (CaptureMode::Region, "Capture region", "primary"),
         (CaptureMode::Fullscreen, "Capture every screen", "outline"),
+        (CaptureMode::Window, "Capture window", "outline"),
         (CaptureMode::Repeat, "Repeat last region", "outline"),
     ];
     for (mode, label, kind) in actions {
@@ -245,6 +247,10 @@ fn panel(
             .map(|(_, trigger)| trigger.as_str());
         let button = action_button(label, shortcut, kind);
         connect_pick(&button, window, picked, Pick::Capture(mode));
+        if let (CaptureMode::Window, Availability::Unavailable(reason)) = (mode, content.window) {
+            button.set_sensitive(false);
+            button.set_tooltip_text(Some(reason));
+        }
         panel.append(&button);
         if mode == CaptureMode::Region {
             let annotate = action_button("Annotate region", None, "outline");

@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -9,10 +9,11 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::backends;
-use crate::backends::windows::WindowError;
+use crate::backends::windows::{self, WindowError};
 use crate::capture::mapping::{self, SelectionPlan};
 use crate::capture::{
-    BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo, PixelFormat,
+    Availability, BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect,
+    MonitorInfo, PixelFormat,
 };
 use crate::clipboard::Clipboard;
 use crate::config::{self, AfterSelection, Notifications};
@@ -31,9 +32,12 @@ use crate::storage::{self, ImageFormat, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 use crate::ui::{fonts, gallery, settings};
+use crate::update;
 
 pub const APP_ID: &str = "dev.remcostoeten.Kiekje";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
+const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
+const UPDATE_CHECK_TICK: Duration = Duration::from_secs(60 * 60);
 
 struct Session {
     busy: Cell<bool>,
@@ -50,6 +54,7 @@ struct Session {
     settings_handle: RefCell<Option<settings::Handle>>,
     shortcut_host: RefCell<ShortcutHost>,
     shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
+    window_capture: Cell<Option<Availability>>,
 }
 
 pub enum Command {
@@ -172,12 +177,13 @@ pub fn run(command: Command) -> glib::ExitCode {
         settings_handle: RefCell::new(None),
         shortcut_host: RefCell::new(ShortcutHost::Starting),
         shortcut_labels: RefCell::new(Vec::new()),
+        window_capture: Cell::new(None),
     });
     install_actions(&app, &session);
-    register_shortcuts(&app, &session);
-    start_tray(&app, &session);
+    start_session_services(&app, &session);
     write_default_config();
     check_library();
+    schedule_update_checks(&session);
     thread::spawn(|| {
         if config::load().notifications.sound {
             sound::check();
@@ -235,7 +241,41 @@ fn exit_without_running(app: &gtk::Application, code: glib::ExitCode) -> glib::E
     app.run_with_args(&[env!("CARGO_PKG_NAME")])
 }
 
-fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
+fn start_session_services(app: &gtk::Application, session: &Rc<Session>) {
+    let app = app.clone();
+    let session = session.clone();
+    glib::spawn_future_local(async move {
+        let window = match gio::spawn_blocking(|| windows::availability(windows::detect())).await {
+            Ok(window) => window,
+            Err(_) => {
+                eprintln!("kiekje: the window detection worker stopped");
+                Availability::Unavailable(windows::UNAVAILABLE)
+            }
+        };
+        if let Availability::Unavailable(reason) = window {
+            println!("kiekje: window capture is off: {reason}");
+        }
+        session.window_capture.set(Some(window));
+        register_shortcuts(&app, &session, window);
+        start_tray(&app, &session, window);
+    });
+}
+
+fn window_capture(session: &Session) -> Availability {
+    session
+        .window_capture
+        .get()
+        .unwrap_or(Availability::Available)
+}
+
+fn offered_actions(window: Availability) -> Vec<ShortcutAction> {
+    ShortcutAction::ALL
+        .into_iter()
+        .filter(|action| *action != ShortcutAction::Window || window.is_available())
+        .collect()
+}
+
+fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>, window: Availability) {
     let Some(connection) = app.dbus_connection() else {
         eprintln!("kiekje: no session bus, global shortcuts are off");
         session
@@ -257,7 +297,11 @@ fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>) {
         let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
             .await
             .unwrap_or_default();
-        let registrar = PortalShortcuts::new(connection.clone(), shortcuts.clone());
+        let registrar = PortalShortcuts::new(
+            connection.clone(),
+            shortcuts.clone(),
+            offered_actions(window),
+        );
         match registrar.bind(on_activated).await {
             Ok((mut guard, bindings)) => {
                 let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
@@ -399,8 +443,8 @@ fn install_hyprland_binds(shortcuts: Shortcuts) {
     });
 }
 
-fn start_tray(app: &gtk::Application, session: &Rc<Session>) {
-    let host = SniTray;
+fn start_tray(app: &gtk::Application, session: &Rc<Session>, window: Availability) {
+    let host = SniTray { window };
     let name = host.name();
     let (commands, received) = async_channel::unbounded();
     let (started_sender, started) = async_channel::bounded(1);
@@ -439,8 +483,9 @@ fn start_tray(app: &gtk::Application, session: &Rc<Session>) {
 
 fn action_mode(action: ShortcutAction) -> CaptureMode {
     match action {
-        ShortcutAction::CaptureRegion => CaptureMode::Region,
-        ShortcutAction::CaptureFullscreen => CaptureMode::Fullscreen,
+        ShortcutAction::Region => CaptureMode::Region,
+        ShortcutAction::Fullscreen => CaptureMode::Fullscreen,
+        ShortcutAction::Window => CaptureMode::Window,
     }
 }
 
@@ -484,6 +529,7 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
     glib::spawn_future_local(async move {
         let content = popover::Content {
             shortcuts: session.shortcut_labels.borrow().clone(),
+            window: window_capture(&session),
         };
         let pick_app = app.downgrade();
         let pick_session = Rc::downgrade(&session);
@@ -517,6 +563,46 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
             glib::Propagation::Proceed
         });
         session.popover.replace(Some(window));
+    });
+}
+
+fn schedule_update_checks(session: &Rc<Session>) {
+    let session = Rc::downgrade(session);
+    glib::timeout_add_local_once(FIRST_UPDATE_CHECK, move || {
+        check_for_updates(session.clone());
+        glib::timeout_add_local(UPDATE_CHECK_TICK, move || {
+            check_for_updates(session.clone());
+            glib::ControlFlow::Continue
+        });
+    });
+}
+
+fn check_for_updates(session: Weak<Session>) {
+    glib::spawn_future_local(async move {
+        let checked =
+            gio::spawn_blocking(|| update::automatic(&config::path(), &update::state::path()))
+                .await;
+        match checked {
+            Ok(update::Automatic::Newer {
+                available,
+                notify: true,
+            }) => {
+                println!("kiekje: version {} is available", available.version);
+                let Some(session) = session.upgrade() else {
+                    return;
+                };
+                let notice = Notice::UpdateAvailable {
+                    version: available.version,
+                    url: available.url,
+                };
+                match &session.notifier {
+                    Some(notifier) => notifier.send(&notice),
+                    None => println!("kiekje: no session bus, update notification skipped"),
+                }
+            }
+            Ok(_) => {}
+            Err(_) => eprintln!("kiekje: the update check worker stopped"),
+        }
     });
 }
 
@@ -700,9 +786,11 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             notifications: config.notifications,
             capture: config.capture,
             overlay: config.overlay,
+            general: config.general,
             drawing_keys: config.drawing.keys,
             host: session.shortcut_host.borrow().clone(),
             bound,
+            window_capture: window_capture(&session),
         };
         let saved_session = Rc::downgrade(&session);
         let configure_session = Rc::downgrade(&session);
@@ -783,8 +871,13 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
     let (sender, receiver) = async_channel::bounded(1);
     thread::spawn(move || {
         let config = config::load();
-        let windows = (request.mode == CaptureMode::Region && config.overlay.window_snap)
-            .then(|| thread::spawn(snapshot_windows));
+        let windows = match request.mode {
+            CaptureMode::Window => Some(thread::spawn(list_windows)),
+            CaptureMode::Region if config.overlay.window_snap => {
+                Some(thread::spawn(|| Ok(snapshot_windows())))
+            }
+            CaptureMode::Region | CaptureMode::Fullscreen | CaptureMode::Repeat => None,
+        };
         let notifications = config.notifications;
         if notifications.sound {
             sound::check();
@@ -801,14 +894,20 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
                     .map(|capture| (capture, Some(region))),
                 None => Err(CaptureError::NoLastRegion),
             },
-            CaptureMode::Region | CaptureMode::Fullscreen => {
+            CaptureMode::Region | CaptureMode::Fullscreen | CaptureMode::Window => {
                 backends::capture(request.backend, &infos, false).map(|capture| (capture, None))
             }
         };
-        let windows = windows
-            .and_then(|handle| handle.join().ok())
-            .unwrap_or_default();
-        let result = result.map(|(capture, region)| (Capture { windows, ..capture }, region));
+        let windows = match windows.map(|handle| handle.join()) {
+            Some(Ok(listed)) => listed,
+            Some(Err(_)) => Err(CaptureError::WindowList(
+                "the window list worker stopped".into(),
+            )),
+            None => Ok(Vec::new()),
+        };
+        let result = result.and_then(|(capture, region)| {
+            windows.map(|windows| (Capture { windows, ..capture }, region))
+        });
         // The receiver only disappears when the app is quitting.
         let _ = sender.send_blocking((
             result,
@@ -839,6 +938,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         match result {
             Ok((capture, region)) => {
                 let options = overlay::Options {
+                    mode: request.mode,
                     edit: request.edit || inline,
                     overlay,
                     drawing,
@@ -914,7 +1014,7 @@ fn handle_capture(
             );
             session.busy.set(false);
         }
-        (CaptureMode::Region, _) => {
+        (CaptureMode::Region | CaptureMode::Window, _) => {
             let frames = Arc::new(capture.frames);
             let selection_frames = frames.clone();
             let trigger_us = request.trigger_us;
@@ -958,11 +1058,10 @@ fn handle_capture(
                         session.busy.set(false);
                     }
                     Outcome::MonitorLost(connector) => {
-                        let reason = format!(
-                            "monitor {connector} was disconnected during the selection, nothing was saved"
+                        eprintln!(
+                            "kiekje: monitor {connector} was disconnected during the selection, nothing saved"
                         );
-                        eprintln!("kiekje: {reason}");
-                        notify(&session, Notice::CaptureFailed { reason });
+                        notify(&session, Notice::MonitorLost);
                         session.busy.set(false);
                     }
                 },
@@ -975,6 +1074,17 @@ fn handle_capture(
                 },
             );
         }
+    }
+}
+
+fn list_windows() -> Result<Vec<LogicalRect>, CaptureError> {
+    match backends::windows::snapshot() {
+        Ok((source, windows)) => {
+            println!("kiekje: {} windows from {source}", windows.len());
+            Ok(windows)
+        }
+        Err(WindowError::Unavailable) => Err(CaptureError::NoWindowSource(windows::UNAVAILABLE)),
+        Err(error) => Err(CaptureError::WindowList(error.to_string())),
     }
 }
 
@@ -1723,6 +1833,25 @@ mod tests {
         };
         assert_eq!((pixels.width, pixels.height, pixels.stride), (3, 2, 12));
         assert_eq!(pixels.bytes.as_ref().as_ptr(), source);
+    }
+
+    #[test]
+    fn carries_a_window_capture_through_its_variant() {
+        let request = Request::saved(CaptureMode::Window);
+        let decoded = Request::from_variant(&request.to_variant()).unwrap();
+        assert_eq!(decoded.mode, CaptureMode::Window);
+    }
+
+    #[test]
+    fn offers_the_window_shortcut_only_where_window_capture_works() {
+        assert_eq!(
+            offered_actions(Availability::Available),
+            ShortcutAction::ALL.to_vec()
+        );
+        let offered = offered_actions(Availability::Unavailable(windows::UNAVAILABLE));
+        assert!(!offered.contains(&ShortcutAction::Window));
+        assert!(offered.contains(&ShortcutAction::Region));
+        assert!(offered.contains(&ShortcutAction::Fullscreen));
     }
 
     #[test]

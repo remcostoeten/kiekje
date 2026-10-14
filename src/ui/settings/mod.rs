@@ -1,4 +1,5 @@
 mod about;
+mod clipboard;
 mod danger;
 mod drawing;
 mod general;
@@ -11,7 +12,10 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
-use crate::config::{self, Capture, Config, ConfigError, Notifications, Overlay, Saving, Storage};
+use crate::capture::Availability;
+use crate::config::{
+    self, Capture, Config, ConfigError, General, Notifications, Overlay, Saving, Storage,
+};
 use crate::editor::DrawingKeys;
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
@@ -25,11 +29,13 @@ pub struct Model {
     pub shortcuts: Shortcuts,
     pub host: ShortcutHost,
     pub bound: Vec<(ShortcutAction, String)>,
+    pub window_capture: Availability,
     pub storage: Storage,
     pub saving: Saving,
     pub notifications: Notifications,
     pub capture: Capture,
     pub overlay: Overlay,
+    pub general: General,
     pub drawing_keys: DrawingKeys,
 }
 
@@ -135,14 +141,11 @@ fn sidebar(stack: &gtk::Stack) -> gtk::Box {
     sidebar
 }
 
-fn default_slot(action: ShortcutAction) -> Slot {
-    Trigger::parse(action.default_trigger()).map_or(Slot::Off, Slot::Key)
-}
-
 struct Editor {
     host: ShortcutHost,
     shortcuts: RefCell<Shortcuts>,
     bound: RefCell<Vec<(ShortcutAction, String)>>,
+    unavailable: Vec<ShortcutAction>,
     recording: Cell<Option<ShortcutAction>>,
     saving: Cell<bool>,
     buttons: HashMap<&'static str, gtk::Button>,
@@ -201,35 +204,44 @@ pub fn show(
         model.notifications,
         model.capture,
         model.overlay,
+        model.general,
     );
+    clipboard::append(&pages.general);
 
     let keys_group = group(&pages.shortcuts, "Keys");
     let editable = model.host.editable();
     let mut buttons = HashMap::new();
     let mut resets = Vec::new();
+    let mut unavailable = Vec::new();
     for action in ShortcutAction::ALL {
+        let reason = match (action, model.window_capture) {
+            (ShortcutAction::Window, Availability::Unavailable(reason)) => Some(reason),
+            _ => None,
+        };
+        let label = match reason {
+            Some(_) => "Unavailable".to_owned(),
+            None => trigger_text(&model.host, &model.shortcuts, &model.bound, action),
+        };
         let trigger = gtk::Button::builder()
-            .label(trigger_text(
-                &model.host,
-                &model.shortcuts,
-                &model.bound,
-                action,
-            ))
-            .sensitive(editable)
+            .label(label)
+            .sensitive(editable && reason.is_none())
             .css_classes(["trigger"])
             .build();
         let reset = gtk::Button::builder()
             .label("Reset")
-            .visible(editable)
+            .visible(editable && reason.is_none())
             .css_classes(["ghost", "optional"])
             .build();
+        if reason.is_some() {
+            unavailable.push(action);
+        }
         let controls = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(8)
             .build();
         controls.append(&trigger);
         controls.append(&reset);
-        keys_group.add(row(action.description(), None, Some(&controls)));
+        keys_group.add(row(action.description(), reason, Some(&controls)));
         buttons.insert(action.id(), trigger);
         resets.push((action, reset));
     }
@@ -258,6 +270,7 @@ pub fn show(
         host: model.host,
         shortcuts: RefCell::new(model.shortcuts),
         bound: RefCell::new(model.bound),
+        unavailable,
         recording: Cell::new(None),
         saving: Cell::new(false),
         buttons,
@@ -283,7 +296,7 @@ pub fn show(
         let weak = Rc::downgrade(&editor);
         reset.connect_clicked(move |_| {
             if let Some(editor) = weak.upgrade() {
-                editor.save(action, default_slot(action));
+                editor.save(action, action.default_slot());
             }
         });
     }
@@ -342,7 +355,7 @@ impl Handle {
     /// # Examples
     ///
     /// ```ignore
-    /// handle.show_bound(&[(ShortcutAction::CaptureRegion, "Print".into())]);
+    /// handle.show_bound(&[(ShortcutAction::Region, "Print".into())]);
     /// ```
     pub fn show_bound(&self, bound: &[(ShortcutAction, String)]) {
         let Some(editor) = self.0.upgrade() else {
@@ -355,7 +368,7 @@ impl Handle {
 
 impl Editor {
     fn start(&self, action: ShortcutAction) {
-        if self.saving.get() {
+        if self.saving.get() || self.unavailable.contains(&action) {
             return;
         }
         self.stop();
@@ -379,14 +392,14 @@ impl Editor {
         let shortcuts = self.shortcuts.borrow();
         let bound = self.bound.borrow();
         for action in ShortcutAction::ALL {
-            if self.recording.get() == Some(action) {
+            if self.recording.get() == Some(action) || self.unavailable.contains(&action) {
                 continue;
             }
             if let Some(button) = self.buttons.get(action.id()) {
                 button.set_label(&trigger_text(&self.host, &shortcuts, &bound, action));
             }
             if let Some(reset) = self.resets.get(action.id()) {
-                let changed = *shortcuts.slot(action) != default_slot(action);
+                let changed = *shortcuts.slot(action) != action.default_slot();
                 reset.set_sensitive(changed);
                 reset.set_can_target(changed);
             }

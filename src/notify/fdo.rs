@@ -1,13 +1,12 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gtk::gio::{self, DBusCallFlags, DBusSignalFlags, SignalSubscription};
 use gtk::glib::{self, Variant};
 use gtk::prelude::*;
 
-use super::{Notice, NoticeAction, Urgency};
+use super::{Notice, NoticeAction, Target, Urgency};
 use crate::app::APP_ID;
 use crate::ui::files;
 
@@ -16,7 +15,7 @@ const PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
 const CALL_TIMEOUT_MS: i32 = 2000;
 
-type Targets = Rc<RefCell<HashMap<u32, PathBuf>>>;
+type Targets = Rc<RefCell<HashMap<u32, Target>>>;
 
 pub struct FdoNotifier {
     connection: gio::DBusConnection,
@@ -48,11 +47,11 @@ impl FdoNotifier {
                     eprintln!("kiekje: ignored a malformed notification action");
                     return;
                 };
-                let Some(path) = invoked_targets.borrow().get(&id).cloned() else {
+                let Some(target) = invoked_targets.borrow().get(&id).cloned() else {
                     return;
                 };
                 match NoticeAction::parse(&action) {
-                    Some(action) => run_action(action, path),
+                    Some(action) => run_action(action, target),
                     None => eprintln!("kiekje: ignored unknown notification action {action}"),
                 }
             },
@@ -125,7 +124,7 @@ impl FdoNotifier {
 
         let connection = self.connection.clone();
         let targets = self.targets.clone();
-        let target = notice.file().map(Path::to_path_buf);
+        let target = notice.target();
         glib::spawn_future_local(async move {
             let reply = connection
                 .call_future(
@@ -152,9 +151,12 @@ impl FdoNotifier {
     }
 }
 
-fn run_action(action: NoticeAction, path: PathBuf) {
-    match action {
-        NoticeAction::Open => glib::spawn_future_local(files::open(path)),
-        NoticeAction::ShowInFolder => glib::spawn_future_local(files::reveal(path)),
+fn run_action(action: NoticeAction, target: Target) {
+    match (action, target) {
+        (NoticeAction::Open, Target::File(path)) => glib::spawn_future_local(files::open(path)),
+        (NoticeAction::ShowInFolder, Target::File(path)) => {
+            glib::spawn_future_local(files::reveal(path))
+        }
+        (_, Target::Link(url)) => glib::spawn_future_local(files::open_link(url)),
     };
 }

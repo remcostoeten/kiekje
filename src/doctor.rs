@@ -1,3 +1,5 @@
+pub mod clipboard;
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -16,6 +18,7 @@ use crate::shortcuts::hyprland;
 use crate::storage;
 use crate::style::{Style, pad};
 use crate::ui::fonts::{self, FontError};
+use clipboard::ClipboardManager;
 
 const BINARY: &str = env!("CARGO_PKG_NAME");
 const LABEL_WIDTH: usize = 18;
@@ -89,6 +92,7 @@ struct Report {
     config: Result<Option<Config>, String>,
     hyprland: Option<HyprlandBinds>,
     fonts: Vec<Result<PathBuf, FontError>>,
+    clipboard_manager: Option<ClipboardManager>,
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -165,6 +169,7 @@ fn collect() -> Report {
         config_path,
         hyprland: std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").map(|_| hyprland_binds()),
         fonts: fonts::locate(&fonts::search_dirs()),
+        clipboard_manager: clipboard::detect(),
     }
 }
 
@@ -403,6 +408,11 @@ fn render(report: &Report, style: &Style) -> String {
         None => style.dim("unavailable, drag to select"),
     };
     text.push_str(&field(style, "window snap", &snap));
+    let window = match report.window_snap {
+        Some(source) => style.good(&source.to_string()),
+        None => style.warn(&format!("unavailable, {}", windows::UNAVAILABLE)),
+    };
+    text.push_str(&field(style, "window capture", &window));
     if let Ok(bus) = &report.bus {
         let daemon = if bus.daemon_running {
             style.good("running")
@@ -417,6 +427,11 @@ fn render(report: &Report, style: &Style) -> String {
         };
         text.push_str(&field(style, "tray", &tray));
     }
+    let keeper = match report.clipboard_manager {
+        Some(manager) => style.good(manager.name()),
+        None => style.warn("none found, copies are lost when Kiekje quits"),
+    };
+    text.push_str(&field(style, "clipboard", &keeper));
     if report.kwin_present {
         let access = match report.kwin_access {
             Some(KwinAccess::Ready) => style.good("desktop file installed"),
@@ -580,6 +595,7 @@ mod tests {
                 .iter()
                 .map(|file| Ok(PathBuf::from(file)))
                 .collect(),
+            clipboard_manager: Some(ClipboardManager::Klipper),
         }
     }
 
@@ -669,6 +685,29 @@ mod tests {
         gnome.overlay = Some(Overlay::Fullscreen);
         gnome.pins = Some(Stacking::Toplevel);
         assert!(render(&gnome, &PLAIN).contains("pins              on top not guaranteed"));
+    }
+
+    #[test]
+    fn says_when_no_clipboard_manager_keeps_copies() {
+        assert!(render(&report(), &PLAIN).contains("clipboard         Klipper"));
+        let mut bare = report();
+        bare.clipboard_manager = None;
+        assert!(
+            render(&bare, &PLAIN)
+                .contains("clipboard         none found, copies are lost when Kiekje quits")
+        );
+    }
+
+    #[test]
+    fn lists_window_capture_with_its_source_or_as_unavailable() {
+        assert!(render(&report(), &PLAIN).contains("window capture    kwin-scripting"));
+        let mut gnome = report();
+        gnome.window_snap = None;
+        let text = render(&gnome, &PLAIN);
+        assert!(text.contains(&format!(
+            "window capture    unavailable, {}",
+            windows::UNAVAILABLE
+        )));
     }
 
     #[test]

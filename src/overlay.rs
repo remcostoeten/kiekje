@@ -23,6 +23,7 @@ use crate::output::{self, Image};
 use crate::ui;
 
 mod snap;
+mod unplug;
 
 use snap::Snap;
 
@@ -34,6 +35,7 @@ const MIN_SELECTION: i32 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Options {
+    pub mode: CaptureMode,
     pub edit: bool,
     pub overlay: config::Overlay,
     pub drawing: config::Drawing,
@@ -124,6 +126,7 @@ struct Area {
 struct Shared {
     frames: Arc<Vec<Frame>>,
     geometry: Vec<(LogicalRect, (u32, u32))>,
+    mode: CaptureMode,
     edit: bool,
     snap: Snap,
     drag: RefCell<Option<Drag>>,
@@ -135,7 +138,7 @@ struct Shared {
     surfaces: RefCell<Vec<(usize, gtk::Overlay)>>,
     finished: Cell<bool>,
     on_done: RefCell<Option<DoneCallback>>,
-    watched: RefCell<Vec<(gdk::Monitor, glib::SignalHandlerId)>>,
+    watched: RefCell<Vec<(glib::Object, glib::SignalHandlerId)>>,
     on_first_paint: RefCell<Option<PaintCallback>>,
     magnifier: Magnifier,
     precision: Precision,
@@ -152,12 +155,13 @@ struct Shared {
 /// otherwise. A drag may cross monitor edges. With `edit`, a selection inside one monitor stays
 /// on screen with the annotation tools until the user accepts or cancels. With the magnifier on, a
 /// loupe follows the pointer until a selection is made. Escape cancels, and
-/// unplugging a monitor that shows a frame ends the selection. `on_done` runs once with the
-/// outcome. `windows` are the visible window frames at trigger time, topmost first; hovering
-/// one highlights it and a click without a drag selects it. Before a selection, F takes the
-/// monitor under the pointer, W the window under it, Shift+R the last region, and D or a tool
-/// letter starts annotating the frame, after which a region can still be chosen. A hint bar
-/// lists these keys; ? hides it.
+/// unplugging a monitor that shows a frame ends the selection with `Outcome::MonitorLost`.
+/// `on_done` runs once with the outcome. `windows` are the visible window frames at trigger
+/// time, topmost first; hovering one highlights it and a click without a drag selects it. Before
+/// a selection, F takes the monitor under the pointer, W the window under it, Shift+R the last
+/// region, and D or a tool letter starts annotating the frame, after which a region can still be
+/// chosen. In `CaptureMode::Window` the overlay only picks windows: a click or Enter takes the
+/// hovered one and dragging selects nothing. A hint bar lists the keys; ? hides it.
 ///
 /// # Examples
 ///
@@ -182,6 +186,7 @@ pub fn show(
     let shared = Rc::new(Shared {
         frames: frames.clone(),
         geometry,
+        mode: options.mode,
         edit: options.edit,
         snap: Snap::new(windows, &logical),
         drag: RefCell::new(None),
@@ -204,11 +209,21 @@ pub fn show(
         drawing: options.drawing,
     });
 
+    let shown: Vec<String> = frames
+        .iter()
+        .map(|frame| frame.monitor.connector.clone())
+        .collect();
+    if let Some(lost) = unplug::lost_monitor(&shown, &connected_monitors()) {
+        finish(&shared, Outcome::MonitorLost(lost.to_owned()));
+        return;
+    }
+
     for (frame_index, frame) in frames.iter().enumerate() {
         let Some(monitor) = monitors.iter().find(|monitor| {
-            monitor
-                .connector()
-                .is_some_and(|name| name == frame.monitor.connector)
+            monitor.is_valid()
+                && monitor
+                    .connector()
+                    .is_some_and(|name| name == frame.monitor.connector)
         }) else {
             eprintln!("kiekje: no GDK monitor for {}", frame.monitor.connector);
             continue;
@@ -216,6 +231,7 @@ pub fn show(
         build_surface(app, &shared, frame_index, monitor);
         watch_monitor(&shared, monitor, &frame.monitor.connector);
     }
+    watch_unplug(&shared, shown);
 
     if shared.windows.borrow().is_empty() {
         finish(&shared, Outcome::Canceled);
@@ -366,7 +382,9 @@ fn build_surface(
             (drag.pointer.0 + dx, drag.pointer.1 + dy),
             gesture.current_event_state(),
         );
-        let rect = if snap::is_click(drag.start, end) {
+        let rect = if picks_windows(&end_shared) {
+            end_shared.snap.at(end)
+        } else if snap::is_click(drag.start, end) {
             end_shared.snap.at(drag.start)
         } else {
             Some(rect_from_drag(drag.start, end))
@@ -503,7 +521,9 @@ fn paint_selection(
 ) {
     let (width, height) = (widget.width() as f32, widget.height() as f32);
     let drag = shared.drag.borrow();
-    let moved = drag.as_ref().filter(|drag| drag.moved());
+    let moved = drag
+        .as_ref()
+        .filter(|drag| drag.moved() && !picks_windows(shared));
     let (rect, dragged_on) = match (moved, shared.chosen.get().or(shared.snap.hovered())) {
         (Some(drag), _) => (
             rect_from_drag(drag.start, drag.current),
@@ -624,15 +644,16 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
             show_hints(shared, on);
             true
         }
+        gdk::Key::w | gdk::Key::Return | gdk::Key::KP_Enter if !shift => shared
+            .snap
+            .hovered()
+            .is_some_and(|window| choose(shared, window)),
+        _ if picks_windows(shared) => false,
         gdk::Key::r if shift => shared
             .last_region
             .is_some_and(|region| choose(shared, region)),
         _ if shift => false,
         gdk::Key::f => choose(shared, shared.geometry[pointer_frame(shared)].0),
-        gdk::Key::w | gdk::Key::Return | gdk::Key::KP_Enter => shared
-            .snap
-            .hovered()
-            .is_some_and(|window| choose(shared, window)),
         gdk::Key::d => {
             begin_edit(shared, pointer_frame(shared), None, Some(gdk::Key::p));
             true
@@ -656,6 +677,10 @@ fn choose(shared: &Rc<Shared>, rect: LogicalRect) -> bool {
         _ => finish(shared, Outcome::Selected(Selection { rect, plan })),
     }
     true
+}
+
+fn picks_windows(shared: &Shared) -> bool {
+    shared.mode == CaptureMode::Window
 }
 
 fn pointer_frame(shared: &Shared) -> usize {
@@ -683,12 +708,20 @@ fn hint_bar(shared: &Shared) -> gtk::Box {
         .build();
     let windows = shared.snap.has_windows();
     let magnifier = shared.magnifier.enabled();
+    let region = !picks_windows(shared);
     for (keys, label, shown) in [
-        ("Drag", "select", true),
-        ("F", "screen", true),
-        ("W", "window", windows),
-        ("Shift R", "last region", shared.last_region.is_some()),
-        ("D", "draw", true),
+        ("", "no windows to pick", !region && !windows),
+        ("Click", "window", !region && windows),
+        ("Drag", "select", region),
+        ("F", "screen", region),
+        ("W", "window", region && windows),
+        ("Enter", "hovered window", !region && windows),
+        (
+            "Shift R",
+            "last region",
+            region && shared.last_region.is_some(),
+        ),
+        ("D", "draw", region),
         ("Z", "loupe", magnifier),
         ("C", "colour", magnifier),
         ("?", "hide", true),
@@ -701,12 +734,14 @@ fn hint_bar(shared: &Shared) -> gtk::Box {
             .orientation(gtk::Orientation::Horizontal)
             .spacing(6)
             .build();
-        hint.append(
-            &gtk::Label::builder()
-                .label(keys)
-                .css_classes(["keycap"])
-                .build(),
-        );
+        if !keys.is_empty() {
+            hint.append(
+                &gtk::Label::builder()
+                    .label(keys)
+                    .css_classes(["keycap"])
+                    .build(),
+            );
+        }
         hint.append(
             &gtk::Label::builder()
                 .label(label)
@@ -762,7 +797,7 @@ fn begin_edit(
             return;
         };
         let ending = Rc::downgrade(&shared);
-        let opened = Inline::open(image, CaptureMode::Region, shared.drawing, move |end| {
+        let opened = Inline::open(image, shared.mode, shared.drawing, move |end| {
             let Some(shared) = ending.upgrade() else {
                 return;
             };
@@ -882,7 +917,7 @@ fn redraw(shared: &Shared) {
         .drag
         .borrow()
         .as_ref()
-        .filter(|drag| drag.moved())
+        .filter(|drag| drag.moved() && !picks_windows(shared))
         .map(|drag| rect_from_drag(drag.start, drag.current))
         .or(shared.chosen.get())
         .or(shared.snap.hovered());
@@ -942,7 +977,42 @@ fn watch_monitor(shared: &Rc<Shared>, monitor: &gdk::Monitor, connector: &str) {
             finish(&shared, Outcome::MonitorLost(connector.clone()));
         }
     });
-    shared.watched.borrow_mut().push((monitor.clone(), handler));
+    shared
+        .watched
+        .borrow_mut()
+        .push((monitor.clone().upcast(), handler));
+}
+
+fn watch_unplug(shared: &Rc<Shared>, shown: Vec<String>) {
+    let Some(display) = gdk::Display::default() else {
+        return;
+    };
+    let model = display.monitors();
+    let weak = Rc::downgrade(shared);
+    let handler = model.connect_items_changed(move |_, _, removed, _| {
+        if removed == 0 {
+            return;
+        }
+        let Some(shared) = weak.upgrade() else {
+            return;
+        };
+        if let Some(lost) = unplug::lost_monitor(&shown, &connected_monitors()) {
+            finish(&shared, Outcome::MonitorLost(lost.to_owned()));
+        }
+    });
+    shared.watched.borrow_mut().push((model.upcast(), handler));
+}
+
+fn connected_monitors() -> Vec<String> {
+    let Some(display) = gdk::Display::default() else {
+        return Vec::new();
+    };
+    let model = display.monitors();
+    (0..model.n_items())
+        .filter_map(|index| model.item(index).and_downcast::<gdk::Monitor>())
+        .filter(|monitor| monitor.is_valid())
+        .filter_map(|monitor| monitor.connector().map(|name| name.to_string()))
+        .collect()
 }
 
 fn finish(shared: &Shared, outcome: Outcome) {
@@ -950,8 +1020,8 @@ fn finish(shared: &Shared, outcome: Outcome) {
         return;
     }
     shared.magnifier.remember_zoom();
-    for (monitor, handler) in shared.watched.borrow_mut().drain(..) {
-        monitor.disconnect(handler);
+    for (source, handler) in shared.watched.borrow_mut().drain(..) {
+        source.disconnect(handler);
     }
     // Wayland only accepts a clipboard change from a focused client, so deliver before closing.
     if let Some(callback) = shared.on_done.borrow_mut().take() {

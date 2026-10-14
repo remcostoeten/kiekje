@@ -10,6 +10,7 @@ mod select;
 mod shapes;
 mod text;
 mod toolbar;
+mod wheel;
 
 use std::cell::{Cell, RefCell};
 use std::io;
@@ -104,6 +105,10 @@ struct Editor {
     redo: gtk::Button,
     clear: gtk::Button,
     tools: RefCell<Vec<(Tool, gtk::ToggleButton)>>,
+    swatches: RefCell<Vec<(Color, gtk::ToggleButton)>>,
+    adopting: Cell<bool>,
+    pointer: Cell<Option<(f64, f64)>>,
+    hud: RefCell<Option<wheel::Hud>>,
     selected: Cell<Option<usize>>,
     moving: RefCell<Option<select::Moving>>,
     writer: gtk::Popover,
@@ -260,7 +265,7 @@ impl Editor {
         let status = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
-            .label("Drag on the image to annotate. Letters pick a tool, Ctrl+Z undoes.")
+            .label("Drag on the image to annotate. Letters pick a tool, digits a colour, Ctrl+scroll sizes.")
             .css_classes(["note"])
             .build();
         let editor = Rc::new(Self {
@@ -304,6 +309,10 @@ impl Editor {
                 "Remove every annotation",
             ),
             tools: RefCell::new(Vec::new()),
+            swatches: RefCell::new(Vec::new()),
+            adopting: Cell::new(false),
+            pointer: Cell::new(None),
+            hud: RefCell::new(None),
             selected: Cell::new(None),
             moving: RefCell::new(None),
             writer: gtk::Popover::new(),
@@ -321,6 +330,7 @@ impl Editor {
         canvas::attach(&editor);
         text::attach(&editor);
         menu::attach(&editor);
+        wheel::attach(&editor);
         for adjustment in [&editor.size, &editor.opacity] {
             let target = Rc::downgrade(&editor);
             adjustment.connect_value_changed(move |_| {
@@ -343,6 +353,9 @@ impl Editor {
     }
 
     fn remember(self: &Rc<Self>) {
+        if self.adopting.get() {
+            return;
+        }
         let drawing = self.drawing();
         if drawing == self.remembered.replace(drawing) {
             return;
@@ -381,6 +394,19 @@ impl Editor {
             DrawAction::Tool(tool) => self.pick(tool),
             DrawAction::Smaller => self.size.set_value(self.size.value() - 1.0),
             DrawAction::Larger => self.size.set_value(self.size.value() + 1.0),
+        }
+    }
+
+    fn set_color(&self, color: Color) {
+        let button = self
+            .swatches
+            .borrow()
+            .iter()
+            .find(|(each, _)| *each == color)
+            .map(|(_, button)| button.clone());
+        match button {
+            Some(button) => button.set_active(true),
+            None => self.color.set(color),
         }
     }
 
@@ -517,10 +543,14 @@ impl Editor {
             }
             (false, "s") if self.is_inline() => self.pick(Tool::Crop),
             (false, _) if !alt => {
-                let Some(action) = self.key_action(key, shift) else {
+                if let Some(action) = self.key_action(key, shift) {
+                    self.run(action);
+                } else if let Some(color) = self.color_key(key, shift) {
+                    self.set_color(color);
+                    self.show_hud(wheel::Dial::Color);
+                } else {
                     return glib::Propagation::Proceed;
-                };
-                self.run(action);
+                }
             }
             _ => return glib::Propagation::Proceed,
         }
