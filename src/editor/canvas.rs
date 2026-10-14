@@ -163,7 +163,15 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     motion.connect_motion(move |_, x, y| {
         if let Some(editor) = hovered.upgrade() {
             let point = editor.view.get().to_image(x, y, editor.size());
+            editor.pointer.set(Some((x, y)));
             editor.hover_region(point);
+        }
+    });
+    let left = Rc::downgrade(editor);
+    motion.connect_leave(move |_| {
+        if let Some(editor) = left.upgrade() {
+            editor.pointer.set(None);
+            editor.canvas.queue_draw();
         }
     });
     editor.canvas.add_controller(motion);
@@ -245,7 +253,8 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
     cr.restore()?;
     drawn?;
     editor.paint_crop(cr, view)?;
-    editor.paint_selection(cr, view)
+    editor.paint_selection(cr, view)?;
+    editor.paint_hud(cr, view)
 }
 
 #[cfg(test)]

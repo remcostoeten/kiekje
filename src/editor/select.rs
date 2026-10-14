@@ -90,10 +90,31 @@ impl Editor {
                     })
                 })
         };
-        self.selected
-            .set(target.as_ref().map(|moving| moving.index));
+        let picked = target.as_ref().map(|moving| moving.index);
+        let previous = self.selected.replace(picked);
         self.moving.replace(target);
+        if let Some(index) = picked.filter(|index| previous != Some(*index)) {
+            self.adopt(index);
+        }
         self.canvas.queue_draw();
+    }
+
+    fn adopt(&self, index: usize) {
+        let Some(shape) = self.document.borrow().shapes().get(index).cloned() else {
+            return;
+        };
+        self.adopting.set(true);
+        match (shape.stroke(), &shape) {
+            (Some(stroke), _) => {
+                let (size, opacity) = stroke.settings((self.picture.width, self.picture.height));
+                self.set_color(stroke.color);
+                self.size.set_value(f64::from(size));
+                self.opacity.set_value(f64::from(opacity));
+            }
+            (None, Shape::Highlight { color, .. }) => self.set_color(*color),
+            (None, _) => {}
+        }
+        self.adopting.set(false);
     }
 
     pub(super) fn drag_to(&self, point: Point) {
@@ -141,6 +162,9 @@ impl Editor {
     }
 
     pub(super) fn restyle(&self) {
+        if self.adopting.get() {
+            return;
+        }
         let Some(index) = self.selected.get() else {
             return;
         };
