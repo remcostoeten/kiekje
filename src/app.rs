@@ -1213,7 +1213,10 @@ fn finish_edit(
         ),
         Finish::Save => save_only(
             image,
-            request,
+            Request {
+                save: true,
+                ..request
+            },
             Filing {
                 placement: Placement::Captures,
                 annotated,
@@ -1392,7 +1395,7 @@ fn record(
     bytes: usize,
     unsaved: bool,
     annotated: bool,
-) {
+) -> bool {
     let capture = NewCapture {
         path: path.to_path_buf(),
         mode,
@@ -1403,9 +1406,12 @@ fn record(
         unsaved,
         annotated,
     };
-    if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
-    {
-        eprintln!("kiekje: the capture is saved but not in the library: {error}");
+    match Library::open(&library::path()).and_then(|library| library.insert(&capture)) {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("kiekje: the capture is saved but not in the library: {error}");
+            false
+        }
     }
 }
 
@@ -1555,7 +1561,14 @@ fn write_file(bytes: &[u8], target: Target, copied: bool) -> Notice {
         match saved {
             Ok(path) => {
                 println!("kiekje: kept {} as unsaved", path.display());
-                record(&path, mode, (width, height), bytes.len(), true, annotated);
+                if !record(&path, mode, (width, height), bytes.len(), true, annotated)
+                    && let Err(error) = std::fs::remove_file(&path)
+                {
+                    eprintln!(
+                        "kiekje: could not remove the untracked {}: {error}",
+                        path.display()
+                    );
+                }
             }
             Err(error) => eprintln!("kiekje: the unsaved capture was not kept: {error}"),
         }

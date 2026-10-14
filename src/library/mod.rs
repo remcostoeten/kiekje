@@ -354,9 +354,10 @@ impl Library {
                     continue;
                 }
             }
-            pruned += self
-                .connection
-                .execute("DELETE FROM captures WHERE id = ?1", params![id])?;
+            pruned += self.connection.execute(
+                "DELETE FROM captures WHERE id = ?1 AND path = ?2 AND unsaved = 1",
+                params![id, path],
+            )?;
         }
         Ok(pruned)
     }
@@ -503,8 +504,8 @@ impl Library {
             let gone = !Path::new(&path).is_file();
             if gone != missing {
                 transaction.execute(
-                    "UPDATE captures SET missing = ?1 WHERE id = ?2",
-                    params![gone, id],
+                    "UPDATE captures SET missing = ?1 WHERE id = ?2 AND path = ?3",
+                    params![gone, id, path],
                 )?;
                 changed += 1;
             }
