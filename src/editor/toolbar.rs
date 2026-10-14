@@ -116,8 +116,14 @@ fn styles(editor: &Rc<Editor>) -> gtk::Box {
     let bottom = row();
     let colors = group();
     let mut group: Option<gtk::ToggleButton> = None;
-    for color in Color::ALL {
+    let mut swatches = Vec::new();
+    for (digit, color) in ('1'..).zip(Color::ALL) {
+        let key = match editor.keys.action(digit) {
+            None => DrawKey::Key(digit),
+            Some(_) => DrawKey::Off,
+        };
         let button = swatch(color, &mut group);
+        button.set_tooltip_text(Some(&hinted(color.label(), key)));
         button.set_active(color == editor.color.get());
         let target = Rc::downgrade(editor);
         button.connect_toggled(move |button| {
@@ -128,7 +134,10 @@ fn styles(editor: &Rc<Editor>) -> gtk::Box {
             }
         });
         colors.append(&button);
+        swatches.push((color, button));
     }
+    editor.swatches.replace(swatches);
+    colors.set_tooltip_text(Some("Alt+scroll on the image cycles the colour"));
     bottom.append(&colors);
     bottom.append(&divider(gtk::Orientation::Vertical));
     let keys = [DrawAction::Smaller, DrawAction::Larger]
@@ -138,15 +147,15 @@ fn styles(editor: &Rc<Editor>) -> gtk::Box {
         .map(DrawKey::label)
         .collect::<Vec<_>>();
     let size_tip = match keys.as_slice() {
-        [] => "Line and text size".to_owned(),
-        keys => format!("Line and text size ({})", keys.join(" and ")),
+        [] => "Line and text size (Ctrl+scroll)".to_owned(),
+        keys => format!("Line and text size ({} or Ctrl+scroll)", keys.join(" and ")),
     };
     bottom.append(&slider("Size", &size_tip, &editor.size, |value| {
         format!("{value} px")
     }));
     bottom.append(&slider(
         "Opacity",
-        "Opacity of lines, shapes and text",
+        "Opacity of lines, shapes and text (Shift+scroll)",
         &editor.opacity,
         |value| format!("{value}%"),
     ));

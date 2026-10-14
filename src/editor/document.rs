@@ -98,6 +98,34 @@ impl Color {
         )
     }
 
+    /// Returns the palette colour `steps` places further along, wrapping at both ends.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(Color::Accent.shifted(-1), Color::Black);
+    /// ```
+    pub fn shifted(self, steps: i32) -> Self {
+        let count = Self::ALL.len() as i32;
+        let at = Self::ALL
+            .iter()
+            .position(|color| *color == self)
+            .unwrap_or(0) as i32;
+        Self::ALL[(at + steps).rem_euclid(count) as usize]
+    }
+
+    /// Returns the palette colour that digit key `digit` picks, counting from 1.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(Color::numbered('5'), Some(Color::Blue));
+    /// ```
+    pub fn numbered(digit: char) -> Option<Self> {
+        let index = digit.to_digit(10)?.checked_sub(1)?;
+        Self::ALL.get(usize::try_from(index).ok()?).copied()
+    }
+
     pub fn is_light(self) -> bool {
         matches!(self, Self::Yellow | Self::White)
     }
@@ -139,8 +167,7 @@ impl Stroke {
     /// assert_eq!(stroke.width, 6.0);
     /// ```
     pub fn scaled(color: Color, size: u32, opacity: u32, image: (u32, u32)) -> Self {
-        let short = f64::from(image.0.min(image.1));
-        let unit = (short / 1080.0).clamp(1.0, 2.0);
+        let unit = unit(image);
         let size = size.clamp(MIN_SIZE_PX, MAX_SIZE_PX);
         Self {
             color,
@@ -148,6 +175,27 @@ impl Stroke {
             opacity: f64::from(opacity.clamp(MIN_OPACITY, 100)) / 100.0,
         }
     }
+
+    /// Turns the line back into the size and opacity the toolbar shows, the reverse of `scaled`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let (size, opacity) = shape_stroke.settings((3840, 2160));
+    /// ```
+    pub fn settings(self, image: (u32, u32)) -> (u32, u32) {
+        let size = (self.width / unit(image))
+            .round()
+            .clamp(f64::from(MIN_SIZE_PX), f64::from(MAX_SIZE_PX));
+        let opacity = (self.opacity * 100.0)
+            .round()
+            .clamp(f64::from(MIN_OPACITY), 100.0);
+        (size as u32, opacity as u32)
+    }
+}
+
+fn unit(image: (u32, u32)) -> f64 {
+    (f64::from(image.0.min(image.1)) / 1080.0).clamp(1.0, 2.0)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -856,5 +904,37 @@ mod tests {
         let heavy = Stroke::scaled(Color::Red, 99, 400, (1920, 1080));
         assert_eq!(heavy.width, f64::from(MAX_SIZE_PX));
         assert_eq!(heavy.opacity, 1.0);
+    }
+
+    #[test]
+    fn reads_the_toolbar_settings_back_from_a_stroke() {
+        for image in [(1920, 1080), (2560, 1620), (3840, 2160)] {
+            for size in [MIN_SIZE_PX, 3, 7, MAX_SIZE_PX] {
+                let stroke = Stroke::scaled(Color::Red, size, 40, image);
+                let (back, opacity) = stroke.settings(image);
+                assert_eq!(opacity, 40);
+                assert!(
+                    back.abs_diff(size) <= 1,
+                    "{size} came back as {back} on {image:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cycles_through_the_palette_both_ways() {
+        assert_eq!(Color::Accent.shifted(1), Color::Red);
+        assert_eq!(Color::Accent.shifted(-1), Color::Black);
+        assert_eq!(Color::Black.shifted(1), Color::Accent);
+        assert_eq!(Color::Red.shifted(Color::ALL.len() as i32), Color::Red);
+    }
+
+    #[test]
+    fn numbers_the_palette_from_one() {
+        assert_eq!(Color::numbered('1'), Some(Color::Accent));
+        assert_eq!(Color::numbered('7'), Some(Color::Black));
+        assert_eq!(Color::numbered('0'), None);
+        assert_eq!(Color::numbered('8'), None);
+        assert_eq!(Color::numbered('x'), None);
     }
 }
