@@ -90,11 +90,78 @@ impl Period {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dimensions {
+    #[default]
+    Any,
+    Small,
+    Medium,
+    Large,
+}
+
+impl Dimensions {
+    pub const ALL: [Self; 4] = [Self::Any, Self::Small, Self::Medium, Self::Large];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "Any dimensions",
+            Self::Small => "Under 1280 px",
+            Self::Medium => "1280 to 2559 px",
+            Self::Large => "2560 px and up",
+        }
+    }
+
+    fn matches(self, width: u32, height: u32) -> bool {
+        let longest = width.max(height);
+        match self {
+            Self::Any => true,
+            Self::Small => longest < 1280,
+            Self::Medium => (1280..2560).contains(&longest),
+            Self::Large => longest >= 2560,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileSize {
+    #[default]
+    Any,
+    Small,
+    Medium,
+    Large,
+}
+
+impl FileSize {
+    pub const ALL: [Self; 4] = [Self::Any, Self::Small, Self::Medium, Self::Large];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Any => "Any file size",
+            Self::Small => "Under 200 KB",
+            Self::Medium => "200 KB to 1 MB",
+            Self::Large => "Over 1 MB",
+        }
+    }
+
+    fn matches(self, bytes: u64) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Small => bytes < 200_000,
+            Self::Medium => (200_000..=1_000_000).contains(&bytes),
+            Self::Large => bytes > 1_000_000,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Query {
     pub text: String,
     pub kind: Kind,
     pub period: Period,
+    pub dimensions: Dimensions,
+    pub file_size: FileSize,
+    pub annotated: bool,
+    pub unsaved: bool,
     pub sort: Sort,
     pub missing: bool,
 }
@@ -102,8 +169,9 @@ pub struct Query {
 /// Returns the captures that match `query`, in its sort order.
 ///
 /// Text matches any part of the file name, ignoring case. A repeated region counts as a region.
-/// Periods are rolling windows ending at `now_us`. Only missing captures show when
-/// `query.missing` is set, and only present ones otherwise.
+/// Periods are rolling windows ending at `now_us`. Dimensions bucket by the longer side, file
+/// sizes use decimal units, and the annotated and unsaved switches keep only captures with that
+/// flag. Only missing captures show when `query.missing` is set, and only present ones otherwise.
 ///
 /// # Examples
 ///
@@ -118,6 +186,10 @@ pub fn apply<'a>(captures: &'a [Capture], query: &Query, now_us: i64) -> Vec<&'a
         .filter(|capture| capture.missing == query.missing)
         .filter(|capture| query.kind.matches(capture.mode))
         .filter(|capture| since.is_none_or(|since| capture.created_us >= since))
+        .filter(|capture| query.dimensions.matches(capture.width, capture.height))
+        .filter(|capture| query.file_size.matches(capture.bytes))
+        .filter(|capture| !query.annotated || capture.annotated)
+        .filter(|capture| !query.unsaved || capture.unsaved)
         .filter(|capture| needle.is_empty() || name(capture).contains(&needle))
         .collect();
     match query.sort {
@@ -155,7 +227,87 @@ mod tests {
             bytes,
             created_us,
             missing: false,
+            unsaved: false,
+            annotated: false,
         }
+    }
+
+    fn sized(id: i64, width: u32, height: u32, bytes: u64) -> Capture {
+        Capture {
+            width,
+            height,
+            ..capture(id, "shot.png", CaptureMode::Region, bytes, id)
+        }
+    }
+
+    #[test]
+    fn buckets_dimensions_by_the_longer_side() {
+        let captures = vec![
+            sized(1, 1279, 400, 1),
+            sized(2, 300, 1280, 1),
+            sized(3, 2559, 2559, 1),
+            sized(4, 1000, 2560, 1),
+            sized(5, 3840, 2160, 1),
+        ];
+        let dimensions = |dimensions| {
+            let query = Query {
+                dimensions,
+                sort: Sort::Oldest,
+                ..Query::default()
+            };
+            ids(&apply(&captures, &query, 0))
+        };
+        assert_eq!(dimensions(Dimensions::Small), [1]);
+        assert_eq!(dimensions(Dimensions::Medium), [2, 3]);
+        assert_eq!(dimensions(Dimensions::Large), [4, 5]);
+        assert_eq!(dimensions(Dimensions::Any), [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn buckets_file_sizes_in_decimal_units() {
+        let captures = vec![
+            sized(1, 10, 10, 199_999),
+            sized(2, 10, 10, 200_000),
+            sized(3, 10, 10, 1_000_000),
+            sized(4, 10, 10, 1_000_001),
+        ];
+        let file_size = |file_size| {
+            let query = Query {
+                file_size,
+                sort: Sort::Oldest,
+                ..Query::default()
+            };
+            ids(&apply(&captures, &query, 0))
+        };
+        assert_eq!(file_size(FileSize::Small), [1]);
+        assert_eq!(file_size(FileSize::Medium), [2, 3]);
+        assert_eq!(file_size(FileSize::Large), [4]);
+        assert_eq!(file_size(FileSize::Any), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn keeps_only_annotated_captures_when_asked() {
+        let mut captures = sample();
+        captures[0].annotated = true;
+        captures[2].annotated = true;
+        let query = Query {
+            annotated: true,
+            ..Query::default()
+        };
+        assert_eq!(ids(&apply(&captures, &query, 0)), [3, 1]);
+        assert_eq!(ids(&apply(&captures, &Query::default(), 0)), [4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn keeps_only_unsaved_captures_when_asked() {
+        let mut captures = sample();
+        captures[1].unsaved = true;
+        let query = Query {
+            unsaved: true,
+            ..Query::default()
+        };
+        assert_eq!(ids(&apply(&captures, &query, 0)), [2]);
+        assert_eq!(ids(&apply(&captures, &Query::default(), 0)), [4, 3, 2, 1]);
     }
 
     fn sample() -> Vec<Capture> {
@@ -270,14 +422,25 @@ mod tests {
 
     #[test]
     fn combines_every_filter() {
-        let captures = sample();
+        let mut captures = sample();
+        captures[3].annotated = true;
+        captures[3].unsaved = true;
         let query = Query {
             text: "invoice".into(),
             kind: Kind::Fullscreen,
             period: Period::Week,
+            dimensions: Dimensions::Small,
+            file_size: FileSize::Small,
+            annotated: true,
+            unsaved: true,
             sort: Sort::Oldest,
             missing: false,
         };
         assert_eq!(ids(&apply(&captures, &query, 35 * DAY_US)), [4]);
+        let larger = Query {
+            dimensions: Dimensions::Large,
+            ..query
+        };
+        assert!(apply(&captures, &larger, 35 * DAY_US).is_empty());
     }
 }

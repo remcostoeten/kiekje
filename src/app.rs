@@ -782,6 +782,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
         let model = settings::Model {
             shortcuts: config.shortcuts,
             storage: config.storage,
+            saving: config.saving,
             notifications: config.notifications,
             capture: config.capture,
             overlay: config.overlay,
@@ -993,7 +994,12 @@ fn handle_capture(
     match (request.mode, region) {
         (CaptureMode::Fullscreen, _) => {
             let frames = capture.frames;
-            deliver(Box::new(move || output::stitch(&frames)), request, session);
+            deliver(
+                Box::new(move || output::stitch(&frames)),
+                request,
+                Filing::default(),
+                session,
+            );
         }
         (CaptureMode::Repeat, Some(region)) => {
             repeat_region(request, capture.frames, region, session)
@@ -1028,6 +1034,7 @@ fn handle_capture(
                                 Some(output::render_selection(&selection_frames, plan))
                             }),
                             request,
+                            Filing::default(),
                             session,
                         )
                     }
@@ -1035,6 +1042,7 @@ fn handle_capture(
                         selection: Selection { rect, plan },
                         image,
                         finish,
+                        annotated,
                     } => {
                         remember_region(&session, rect);
                         log_selection(&selection_frames, plan);
@@ -1043,7 +1051,7 @@ fn handle_capture(
                             session.busy.set(false);
                             return;
                         }
-                        finish_edit(image, finish, request, session);
+                        finish_edit(image, finish, annotated, request, session);
                     }
                     Outcome::Canceled => {
                         println!("kiekje: selection canceled, nothing saved");
@@ -1113,6 +1121,7 @@ fn repeat_region(request: Request, frames: Vec<Frame>, region: LogicalRect, sess
     deliver(
         Box::new(move || Some(output::render_selection(&frames, plan))),
         request,
+        Filing::default(),
         session,
     );
 }
@@ -1133,7 +1142,20 @@ fn remember_region(session: &Session, region: LogicalRect) {
 
 type Render = Box<dyn FnOnce() -> Option<Image> + Send>;
 
-fn deliver(render: Render, request: Request, session: Rc<Session>) {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Placement {
+    #[default]
+    Configured,
+    Captures,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct Filing {
+    placement: Placement,
+    annotated: bool,
+}
+
+fn deliver(render: Render, request: Request, filing: Filing, session: Rc<Session>) {
     if request.edit {
         annotate(render, request, session);
         return;
@@ -1159,8 +1181,8 @@ fn deliver(render: Render, request: Request, session: Rc<Session>) {
             return;
         };
         let notice = match clipboard {
-            Some(clipboard) => store(image, request, Some(&clipboard), false),
-            None => copy_off_thread(image, request, display, &sender),
+            Some(clipboard) => store(image, request, filing, Some(&clipboard), false),
+            None => copy_off_thread(image, request, filing, display, &sender),
         };
         // The receiver only disappears when the app is quitting.
         let _ = sender.send_blocking(Delivery::Done(notice));
@@ -1221,16 +1243,17 @@ impl Pixels {
 fn copy_off_thread(
     image: Image,
     request: Request,
+    filing: Filing,
     display: bool,
     sender: &async_channel::Sender<Delivery>,
 ) -> Notice {
     if !display {
-        return store(image, request, None, false);
+        return store(image, request, filing, None, false);
     }
     if request.save {
         // The receiver only disappears when the app is quitting.
         let _ = sender.send_blocking(Delivery::Pixels(Pixels::copied(&image)));
-        return store(image, request, None, true);
+        return store(image, request, filing, None, true);
     }
     let (width, height) = (image.width, image.height);
     // The receiver only disappears when the app is quitting.
@@ -1272,23 +1295,45 @@ fn annotate(render: Render, request: Request, session: Rc<Session>) {
     });
 }
 
-fn finish_edit(image: Image, finish: Finish, request: Request, session: Rc<Session>) {
+fn finish_edit(
+    image: Image,
+    finish: Finish,
+    annotated: bool,
+    request: Request,
+    session: Rc<Session>,
+) {
     let request = Request {
         edit: false,
         ..request
     };
+    let filing = Filing {
+        placement: Placement::Configured,
+        annotated,
+    };
     match finish {
-        Finish::Accept => deliver(Box::new(move || Some(image)), request, session),
+        Finish::Accept => deliver(Box::new(move || Some(image)), request, filing, session),
         Finish::Copy => deliver(
             Box::new(move || Some(image)),
             Request {
                 save: false,
                 ..request
             },
+            filing,
             session,
         ),
-        Finish::Save => save_only(image, request, session),
-        Finish::SaveAs => save_as(image, request, session),
+        Finish::Save => save_only(
+            image,
+            Request {
+                save: true,
+                ..request
+            },
+            Filing {
+                placement: Placement::Captures,
+                annotated,
+            },
+            session,
+        ),
+        Finish::SaveAs => save_as(image, request, annotated, session),
         Finish::Pin => {
             if let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() {
                 pin::open_image(&app, image, None);
@@ -1298,9 +1343,9 @@ fn finish_edit(image: Image, finish: Finish, request: Request, session: Rc<Sessi
     }
 }
 
-fn save_only(image: Image, request: Request, session: Rc<Session>) {
+fn save_only(image: Image, request: Request, filing: Filing, session: Rc<Session>) {
     glib::spawn_future_local(async move {
-        match gio::spawn_blocking(move || store(image, request, None, false)).await {
+        match gio::spawn_blocking(move || store(image, request, filing, None, false)).await {
             Ok(notice) => finish_delivery(&session, notice),
             Err(_) => {
                 eprintln!("kiekje: the save worker stopped");
@@ -1310,7 +1355,7 @@ fn save_only(image: Image, request: Request, session: Rc<Session>) {
     });
 }
 
-fn save_as(image: Image, request: Request, session: Rc<Session>) {
+fn save_as(image: Image, request: Request, annotated: bool, session: Rc<Session>) {
     let (width, height) = (image.width, image.height);
     glib::spawn_future_local(async move {
         let suggested = gio::spawn_blocking(move || {
@@ -1370,7 +1415,8 @@ fn save_as(image: Image, request: Request, session: Rc<Session>) {
             session.busy.set(false);
             return;
         };
-        let stored = gio::spawn_blocking(move || store_at(image, request.mode, &path)).await;
+        let stored =
+            gio::spawn_blocking(move || store_at(image, request.mode, annotated, &path)).await;
         match stored {
             Ok(notice) => finish_delivery(&session, notice),
             Err(_) => {
@@ -1381,7 +1427,7 @@ fn save_as(image: Image, request: Request, session: Rc<Session>) {
     });
 }
 
-fn store_at(image: Image, mode: CaptureMode, path: &std::path::Path) -> Notice {
+fn store_at(image: Image, mode: CaptureMode, annotated: bool, path: &std::path::Path) -> Notice {
     let (width, height) = (image.width, image.height);
     let storage = config::load().storage;
     let format = ImageFormat::from_path(path).unwrap_or(storage.format);
@@ -1398,7 +1444,7 @@ fn store_at(image: Image, mode: CaptureMode, path: &std::path::Path) -> Notice {
     match storage::save_as(&bytes, path, format) {
         Ok(path) => {
             println!("kiekje: saved {}", path.display());
-            record(&path, mode, width, height, bytes.len());
+            record(&path, mode, (width, height), bytes.len(), false, annotated);
             Notice::Saved {
                 path,
                 width,
@@ -1424,7 +1470,7 @@ fn empty_notice() -> Notice {
 }
 
 fn finish_delivery(session: &Session, notice: Notice) {
-    if let (Notice::Saved { .. }, Some(gallery)) =
+    if let (Notice::Saved { .. } | Notice::Copied { .. }, Some(gallery)) =
         (&notice, session.gallery_handle.borrow().as_ref())
     {
         gallery.reload();
@@ -1452,7 +1498,14 @@ fn notify(session: &Session, notice: Notice) {
     }
 }
 
-fn record(path: &std::path::Path, mode: CaptureMode, width: u32, height: u32, bytes: usize) {
+fn record(
+    path: &std::path::Path,
+    mode: CaptureMode,
+    (width, height): (u32, u32),
+    bytes: usize,
+    unsaved: bool,
+    annotated: bool,
+) -> bool {
     let capture = NewCapture {
         path: path.to_path_buf(),
         mode,
@@ -1460,10 +1513,15 @@ fn record(path: &std::path::Path, mode: CaptureMode, width: u32, height: u32, by
         height,
         bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
         created_us: glib::real_time(),
+        unsaved,
+        annotated,
     };
-    if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
-    {
-        eprintln!("kiekje: the capture is saved but not in the library: {error}");
+    match Library::open(&library::path()).and_then(|library| library.insert(&capture)) {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("kiekje: the capture is saved but not in the library: {error}");
+            false
+        }
     }
 }
 
@@ -1471,6 +1529,11 @@ fn check_library() {
     glib::spawn_future_local(async {
         let checked = gio::spawn_blocking(|| {
             let mut library = Library::open(&library::path())?;
+            let keep_days = config::load().saving.keep_unsaved_days;
+            let pruned = library.prune_unsaved(glib::real_time(), keep_days)?;
+            if pruned > 0 {
+                println!("kiekje: deleted {pruned} unsaved captures older than {keep_days} days");
+            }
             let changed = library.check_missing()?;
             Ok::<_, library::LibraryError>((changed, library.present()?))
         })
@@ -1500,9 +1563,17 @@ fn check_library() {
     });
 }
 
-fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: bool) -> Notice {
+fn store(
+    image: Image,
+    request: Request,
+    filing: Filing,
+    clipboard: Option<&Clipboard>,
+    copied: bool,
+) -> Notice {
     let (width, height) = (image.width, image.height);
-    let storage = config::load().storage;
+    let config = config::load();
+    let unsaved = filing.placement == Placement::Configured && !config.saving.enabled;
+    let storage = config.storage;
     let format = storage.format;
     let rgba = output::into_rgba(image);
     let encoded = |format: ImageFormat| {
@@ -1557,12 +1628,18 @@ fn store(image: Image, request: Request, clipboard: Option<&Clipboard>, copied: 
         height,
     });
     let target = Target {
-        folder: storage.captures_dir(),
+        folder: if unsaved {
+            storage::unsaved_dir()
+        } else {
+            storage.captures_dir()
+        },
         base,
         format,
         mode: request.mode,
         width,
         height,
+        unsaved,
+        annotated: filing.annotated,
     };
     write_file(&bytes, target, copied)
 }
@@ -1574,6 +1651,8 @@ struct Target {
     mode: CaptureMode,
     width: u32,
     height: u32,
+    unsaved: bool,
+    annotated: bool,
 }
 
 fn write_file(bytes: &[u8], target: Target, copied: bool) -> Notice {
@@ -1584,11 +1663,37 @@ fn write_file(bytes: &[u8], target: Target, copied: bool) -> Notice {
         mode,
         width,
         height,
+        unsaved,
+        annotated,
     } = target;
-    match storage::save(bytes, &folder, &base, format) {
+    let saved = storage::save(bytes, &folder, &base, format);
+    if unsaved {
+        match saved {
+            Ok(path) => {
+                println!("kiekje: kept {} as unsaved", path.display());
+                if !record(&path, mode, (width, height), bytes.len(), true, annotated)
+                    && let Err(error) = std::fs::remove_file(&path)
+                {
+                    eprintln!(
+                        "kiekje: could not remove the untracked {}: {error}",
+                        path.display()
+                    );
+                }
+            }
+            Err(error) => eprintln!("kiekje: the unsaved capture was not kept: {error}"),
+        }
+        return if copied {
+            Notice::Copied { width, height }
+        } else {
+            Notice::CaptureFailed {
+                reason: "could not put the image on the clipboard, and saving is off".into(),
+            }
+        };
+    }
+    match saved {
         Ok(path) => {
             println!("kiekje: saved {}", path.display());
-            record(&path, mode, width, height, bytes.len());
+            record(&path, mode, (width, height), bytes.len(), false, annotated);
             Notice::Saved {
                 path,
                 width,
@@ -1715,7 +1820,7 @@ mod tests {
             ..Request::saved(CaptureMode::Region)
         };
         let (sender, receiver) = async_channel::bounded(2);
-        let notice = copy_off_thread(image, request, true, &sender);
+        let notice = copy_off_thread(image, request, Filing::default(), true, &sender);
         assert!(matches!(
             notice,
             Notice::Copied {

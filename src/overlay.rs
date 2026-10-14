@@ -54,6 +54,7 @@ pub enum Outcome {
         selection: Selection,
         image: Image,
         finish: Finish,
+        annotated: bool,
     },
     Canceled,
     MonitorLost(String),
@@ -806,6 +807,7 @@ fn begin_edit(
                     image,
                     finish: how,
                     region,
+                    annotated,
                 } => match edited_selection(&shared, frame_index, region) {
                     Some(selection) => finish(
                         &shared,
@@ -813,6 +815,7 @@ fn begin_edit(
                             selection,
                             image,
                             finish: how,
+                            annotated,
                         },
                     ),
                     None => {

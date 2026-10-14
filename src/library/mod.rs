@@ -5,6 +5,7 @@ use rusqlite::{Connection, TransactionBehavior, params};
 use thiserror::Error;
 
 use crate::capture::CaptureMode;
+use crate::storage;
 
 pub mod query;
 pub mod thumbs;
@@ -29,7 +30,14 @@ const SCHEMA: &[&str] = &[
         picked_us INTEGER NOT NULL
     );
     CREATE INDEX colours_picked ON colours (picked_us DESC);",
+    "ALTER TABLE captures ADD COLUMN unsaved INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE captures ADD COLUMN annotated INTEGER NOT NULL DEFAULT 0;",
 ];
+
+const DAY_US: i64 = 24 * 60 * 60 * 1_000_000;
+
+const COLUMNS: &str =
+    "id, path, mode, width, height, bytes, created_us, missing, unsaved, annotated";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capture {
@@ -41,6 +49,8 @@ pub struct Capture {
     pub bytes: u64,
     pub created_us: i64,
     pub missing: bool,
+    pub unsaved: bool,
+    pub annotated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +61,8 @@ pub struct NewCapture {
     pub height: u32,
     pub bytes: u64,
     pub created_us: i64,
+    pub unsaved: bool,
+    pub annotated: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +115,25 @@ pub enum LibraryError {
     Taken(PathBuf),
     #[error("{} does not exist", .0.display())]
     Absent(PathBuf),
+    #[error("could not move {}: {source}", path.display())]
+    Move {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+/// Reports whether an unsaved capture made at `created_us` is past its `keep_days` at `now_us`.
+///
+/// A capture exactly `keep_days` old is kept; with `keep_days` at 0 every unsaved capture is due.
+///
+/// # Examples
+///
+/// ```ignore
+/// let due = expired(capture.created_us, glib::real_time(), config.saving.keep_unsaved_days);
+/// ```
+pub fn expired(created_us: i64, now_us: i64, keep_days: u32) -> bool {
+    let keep_us = i64::from(keep_days).saturating_mul(DAY_US);
+    keep_days == 0 || now_us.saturating_sub(created_us) > keep_us
 }
 
 pub struct Library {
@@ -202,11 +233,13 @@ impl Library {
     pub fn insert(&self, capture: &NewCapture) -> Result<i64, LibraryError> {
         let path = text(&capture.path)?;
         let id = self.connection.query_row(
-            "INSERT INTO captures (path, mode, width, height, bytes, created_us, missing)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)
+            "INSERT INTO captures
+                (path, mode, width, height, bytes, created_us, missing, unsaved, annotated)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8)
              ON CONFLICT (path) DO UPDATE SET
                 mode = excluded.mode, width = excluded.width, height = excluded.height,
-                bytes = excluded.bytes, created_us = excluded.created_us, missing = 0
+                bytes = excluded.bytes, created_us = excluded.created_us, missing = 0,
+                unsaved = excluded.unsaved, annotated = excluded.annotated
              RETURNING id",
             params![
                 path,
@@ -215,6 +248,8 @@ impl Library {
                 capture.height,
                 i64::try_from(capture.bytes).unwrap_or(i64::MAX),
                 capture.created_us,
+                capture.unsaved,
+                capture.annotated,
             ],
             |row| row.get(0),
         )?;
@@ -230,8 +265,10 @@ impl Library {
     /// ```
     pub fn recent(&self, limit: usize) -> Result<Vec<Capture>, LibraryError> {
         self.select(
-            "SELECT id, path, mode, width, height, bytes, created_us, missing FROM captures
-             WHERE missing = 0 ORDER BY created_us DESC, id DESC LIMIT ?1",
+            &format!(
+                "SELECT {COLUMNS} FROM captures
+                 WHERE missing = 0 ORDER BY created_us DESC, id DESC LIMIT ?1"
+            ),
             params![i64::try_from(limit).unwrap_or(i64::MAX)],
         )
     }
@@ -245,10 +282,84 @@ impl Library {
     /// ```
     pub fn all(&self) -> Result<Vec<Capture>, LibraryError> {
         self.select(
-            "SELECT id, path, mode, width, height, bytes, created_us, missing FROM captures
-             ORDER BY created_us DESC, id DESC",
+            &format!("SELECT {COLUMNS} FROM captures ORDER BY created_us DESC, id DESC"),
             [],
         )
+    }
+
+    /// Moves the unsaved capture `id` into `folder` and records it as saved there.
+    ///
+    /// The file keeps its name unless one in `folder` is taken, then it gets `-2`, `-3` and so on.
+    /// Touches the disk, so call it off the GTK main thread.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let kept = library.keep(capture.id, &config.storage.captures_dir())?;
+    /// ```
+    pub fn keep(&self, id: i64, folder: &Path) -> Result<PathBuf, LibraryError> {
+        let path: String = self.connection.query_row(
+            "SELECT path FROM captures WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?;
+        let path = PathBuf::from(path);
+        let kept = storage::move_into(&path, folder).map_err(|source| LibraryError::Move {
+            path: path.clone(),
+            source,
+        })?;
+        let updated = text(&kept).and_then(|target| {
+            Ok(self.connection.execute(
+                "UPDATE captures SET path = ?1, unsaved = 0, missing = 0 WHERE id = ?2",
+                params![target, id],
+            )?)
+        });
+        if let Err(error) = updated {
+            // Best-effort move back so the record still points at its file; the update error is the one to report.
+            let _ = std::fs::rename(&kept, &path);
+            return Err(error);
+        }
+        Ok(kept)
+    }
+
+    /// Deletes unsaved captures older than `keep_days`, file and record, and returns how many went.
+    ///
+    /// A file that is already gone still has its record removed. Touches the disk, so call it off
+    /// the GTK main thread.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let pruned = library.prune_unsaved(glib::real_time(), config.saving.keep_unsaved_days)?;
+    /// ```
+    pub fn prune_unsaved(&self, now_us: i64, keep_days: u32) -> Result<usize, LibraryError> {
+        let unsaved: Vec<(i64, String, i64)> = {
+            let mut statement = self
+                .connection
+                .prepare("SELECT id, path, created_us FROM captures WHERE unsaved = 1")?;
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<Result<_, _>>()?
+        };
+        let mut pruned = 0;
+        for (id, path, created_us) in unsaved {
+            if !expired(created_us, now_us, keep_days) {
+                continue;
+            }
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    eprintln!("kiekje: kept the unsaved capture {path}: {error}");
+                    continue;
+                }
+            }
+            pruned += self.connection.execute(
+                "DELETE FROM captures WHERE id = ?1 AND path = ?2 AND unsaved = 1",
+                params![id, path],
+            )?;
+        }
+        Ok(pruned)
     }
 
     fn select(
@@ -308,6 +419,22 @@ impl Library {
         Ok(self
             .connection
             .execute("DELETE FROM captures WHERE missing = 1", [])?)
+    }
+
+    /// Reports whether the capture at `path` is recorded as annotated; an unknown path is not.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let annotated = library.is_annotated(&original)?;
+    /// ```
+    pub fn is_annotated(&self, path: &Path) -> Result<bool, LibraryError> {
+        let annotated = self.connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM captures WHERE path = ?1 AND annotated = 1)",
+            params![text(path)?],
+            |row| row.get(0),
+        )?;
+        Ok(annotated)
     }
 
     /// Removes every record and returns how many there were. Files on disk are not touched.
@@ -377,8 +504,8 @@ impl Library {
             let gone = !Path::new(&path).is_file();
             if gone != missing {
                 transaction.execute(
-                    "UPDATE captures SET missing = ?1 WHERE id = ?2",
-                    params![gone, id],
+                    "UPDATE captures SET missing = ?1 WHERE id = ?2 AND path = ?3",
+                    params![gone, id, path],
                 )?;
                 changed += 1;
             }
@@ -493,6 +620,8 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Capture>> {
         bytes: u64::try_from(bytes).unwrap_or(0),
         created_us: row.get(6)?,
         missing: row.get(7)?,
+        unsaved: row.get(8)?,
+        annotated: row.get(9)?,
     }))
 }
 
@@ -516,6 +645,8 @@ mod tests {
             height: 400,
             bytes: 1234,
             created_us,
+            unsaved: false,
+            annotated: false,
         }
     }
 
@@ -707,6 +838,149 @@ mod tests {
         assert_eq!(colours.len(), usize::from(limit));
         assert_eq!(colours[0].rgb, [limit, 0, 0]);
         assert!(colours.iter().all(|colour| colour.rgb != [0, 0, 0]));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn adds_the_unsaved_and_annotated_columns_to_an_older_library() {
+        let folder = scratch("migrate-flags");
+        let path = folder.join("library.db");
+        std::fs::create_dir_all(&folder).unwrap();
+        let old = Connection::open(&path).unwrap();
+        for step in &SCHEMA[..2] {
+            old.execute_batch(step).unwrap();
+        }
+        old.pragma_update(None, "user_version", 2).unwrap();
+        old.execute(
+            "INSERT INTO captures (path, mode, width, height, bytes, created_us)
+             VALUES ('/shots/old.png', 'region', 1, 1, 1, 1)",
+            [],
+        )
+        .unwrap();
+        drop(old);
+        let library = Library::open(&path).unwrap();
+        let all = library.all().unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(!all[0].unsaved);
+        assert!(!all[0].annotated);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn records_the_unsaved_and_annotated_flags() {
+        let folder = scratch("flags");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let mut new = capture(&folder.join("a.png"), 1);
+        new.unsaved = true;
+        new.annotated = true;
+        library.insert(&new).unwrap();
+        let stored = &library.all().unwrap()[0];
+        assert!(stored.unsaved && stored.annotated);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn reports_whether_a_path_is_annotated() {
+        let folder = scratch("is-annotated");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let mut drawn = capture(&folder.join("drawn.png"), 1);
+        drawn.annotated = true;
+        library.insert(&drawn).unwrap();
+        library
+            .insert(&capture(&folder.join("plain.png"), 2))
+            .unwrap();
+        assert!(library.is_annotated(&folder.join("drawn.png")).unwrap());
+        assert!(!library.is_annotated(&folder.join("plain.png")).unwrap());
+        assert!(!library.is_annotated(&folder.join("unknown.png")).unwrap());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn keeps_an_unsaved_capture_by_moving_it_into_the_folder() {
+        let folder = scratch("keep");
+        let (cache, shots) = (folder.join("unsaved"), folder.join("shots"));
+        std::fs::create_dir_all(&cache).unwrap();
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let source = cache.join("shot.png");
+        std::fs::write(&source, b"png").unwrap();
+        let mut new = capture(&source, 1);
+        new.unsaved = true;
+        let id = library.insert(&new).unwrap();
+        let kept = library.keep(id, &shots).unwrap();
+        assert_eq!(kept, shots.join("shot.png"));
+        assert!(!source.exists());
+        let stored = &library.all().unwrap()[0];
+        assert_eq!(stored.path, kept);
+        assert!(!stored.unsaved);
+        std::fs::write(&source, b"again").unwrap();
+        let mut again = capture(&source, 2);
+        again.unsaved = true;
+        let second = library.insert(&again).unwrap();
+        assert_eq!(
+            library.keep(second, &shots).unwrap(),
+            shots.join("shot-2.png")
+        );
+        assert_eq!(std::fs::read(&kept).unwrap(), b"png");
+        std::fs::remove_file(shots.join("shot-2.png")).unwrap();
+        assert!(matches!(
+            library.keep(second, &folder.join("elsewhere")),
+            Err(LibraryError::Move { .. })
+        ));
+        assert!(!folder.join("elsewhere").join("shot-2.png").exists());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn expires_unsaved_captures_only_after_the_kept_days() {
+        let now = 30 * DAY_US;
+        assert!(!expired(now - DAY_US, now, 7));
+        assert!(!expired(now - 7 * DAY_US, now, 7));
+        assert!(expired(now - 7 * DAY_US - 1, now, 7));
+        assert!(expired(now, now, 0));
+        assert!(!expired(now + DAY_US, now, 1));
+        assert!(!expired(i64::MIN, i64::MAX, u32::MAX));
+    }
+
+    #[test]
+    fn prunes_old_unsaved_captures_and_leaves_the_rest() {
+        let folder = scratch("prune");
+        std::fs::create_dir_all(&folder).unwrap();
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        let now = 30 * DAY_US;
+        let entries = [
+            ("old-unsaved.png", now - 8 * DAY_US, true),
+            ("new-unsaved.png", now - DAY_US, true),
+            ("old-saved.png", now - 20 * DAY_US, false),
+            ("gone-unsaved.png", now - 9 * DAY_US, true),
+        ];
+        for (name, created, unsaved) in entries {
+            let path = folder.join(name);
+            if name != "gone-unsaved.png" {
+                std::fs::write(&path, b"png").unwrap();
+            }
+            let mut new = capture(&path, created);
+            new.unsaved = unsaved;
+            library.insert(&new).unwrap();
+        }
+        assert_eq!(library.prune_unsaved(now, 7).unwrap(), 2);
+        assert!(!folder.join("old-unsaved.png").exists());
+        assert!(folder.join("new-unsaved.png").is_file());
+        assert!(folder.join("old-saved.png").is_file());
+        let mut left: Vec<String> = library
+            .all()
+            .unwrap()
+            .into_iter()
+            .map(|capture| {
+                capture
+                    .path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        left.sort();
+        assert_eq!(left, ["new-unsaved.png", "old-saved.png"]);
         std::fs::remove_dir_all(folder).unwrap();
     }
 

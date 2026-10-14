@@ -30,13 +30,15 @@ pub enum Finish {
 
 /// How inline editing ended.
 ///
-/// A finished edit carries the region it kept, in frame pixels, or `None` for the whole frame.
+/// A finished edit carries the region it kept, in frame pixels, or `None` for the whole frame,
+/// and whether anything was drawn on it.
 pub enum Ending {
     Canceled,
     Finished {
         image: Image,
         finish: Finish,
         region: Option<PixelRect>,
+        annotated: bool,
     },
 }
 
@@ -180,6 +182,7 @@ impl Editor {
                 width: region.width,
                 height: region.height,
             });
+        let annotated = !shapes.is_empty();
         let editor = self.clone();
         glib::spawn_future_local(async move {
             let flattened =
@@ -194,6 +197,7 @@ impl Editor {
                             image,
                             finish,
                             region,
+                            annotated,
                         });
                     }
                 }

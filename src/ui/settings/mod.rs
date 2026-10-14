@@ -13,7 +13,9 @@ use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
 use crate::capture::Availability;
-use crate::config::{self, Capture, Config, ConfigError, General, Notifications, Overlay, Storage};
+use crate::config::{
+    self, Capture, Config, ConfigError, General, Notifications, Overlay, Saving, Storage,
+};
 use crate::editor::DrawingKeys;
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
@@ -29,6 +31,7 @@ pub struct Model {
     pub bound: Vec<(ShortcutAction, String)>,
     pub window_capture: Availability,
     pub storage: Storage,
+    pub saving: Saving,
     pub notifications: Notifications,
     pub capture: Capture,
     pub overlay: Overlay,
@@ -197,6 +200,7 @@ pub fn show(
     let general = general::append(
         &pages,
         &model.storage,
+        model.saving,
         model.notifications,
         model.capture,
         model.overlay,

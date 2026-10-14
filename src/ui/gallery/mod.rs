@@ -67,7 +67,8 @@ impl Textures {
 /// Opens the gallery window with every saved capture that is still on disk, newest first.
 ///
 /// A sidebar switches between all captures, missing ones and the copied colours, tabs filter by kind, and the search
-/// row filters by name and age, sorts, and switches between a grid and a list. Thumbnails load off the main thread as items scroll into view. The library is read again
+/// row filters by name and age, sorts, and switches between a grid and a list. A filter row narrows by dimensions,
+/// file size, annotated captures and unsaved ones. Thumbnails load off the main thread as items scroll into view. The library is read again
 /// whenever the window becomes active.
 ///
 /// # Examples
@@ -191,6 +192,7 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         .build();
     captures.append(&parts.tabs);
     captures.append(&parts.bar);
+    captures.append(&parts.filters);
     captures.append(&gallery.stack);
     gallery.pages.add_named(&captures, Some("captures"));
     gallery
@@ -307,6 +309,10 @@ impl Gallery {
                 Change::Text(text) => query.text = text,
                 Change::Kind(kind) => query.kind = kind,
                 Change::Period(period) => query.period = period,
+                Change::Dimensions(dimensions) => query.dimensions = dimensions,
+                Change::FileSize(file_size) => query.file_size = file_size,
+                Change::Annotated(annotated) => query.annotated = annotated,
+                Change::Unsaved(unsaved) => query.unsaved = unsaved,
                 Change::Sort(sort) => query.sort = sort,
                 Change::Missing(missing) => query.missing = missing,
                 Change::View(view) => {
