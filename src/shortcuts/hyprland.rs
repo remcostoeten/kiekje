@@ -146,14 +146,15 @@ mod tests {
         let mut shortcuts = Shortcuts::default();
         let text = include_text("dev.example.App", &shortcuts);
         for action in ShortcutAction::ALL {
-            let trigger = shortcuts.slot(action).trigger().unwrap();
-            assert!(text.contains(&hyprland_bind(action, trigger, "dev.example.App")));
+            match shortcuts.slot(action).trigger() {
+                Some(trigger) => {
+                    assert!(text.contains(&hyprland_bind(action, trigger, "dev.example.App")))
+                }
+                None => assert!(!text.contains(action.id())),
+            }
         }
         assert!(text.starts_with('#'));
-        shortcuts.set(
-            ShortcutAction::CaptureFullscreen,
-            crate::shortcuts::Slot::Off,
-        );
+        shortcuts.set(ShortcutAction::Fullscreen, crate::shortcuts::Slot::Off);
         let text = include_text("dev.example.App", &shortcuts);
         assert!(!text.contains("capture-fullscreen"));
         assert!(text.contains("capture-region"));

@@ -79,7 +79,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Screen recording | Post-V1 | Planned with GStreamer. |
 | Text recognition (OCR) | Post-V1 | Planned with Tesseract. |
 | Update check | Not built | There is no release feed to check against yet. |
-| Window capture as its own mode | Partial | On Plasma 6 and Hyprland a click selects the window under the pointer inside the region overlay. There is no separate window command. |
+| Window capture on GNOME, Sway and X11 | Not built | Window capture needs the compositor to report where its windows are, which only Plasma 6 and Hyprland do. Elsewhere the tray item and shortcut are disabled, `kiekje capture window` exits with an error and `doctor` lists it as unavailable. |
 | Real hardware | Unverified | No run on physical machines with Omarchy, Plasma or GNOME yet. See [issue #41](https://github.com/remcostoeten/kiekje/issues/41). |
 
 ## Features
@@ -91,6 +91,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Frozen-frame selection | The screen is grabbed at trigger time; you select on that still image | Lab tested |
 | Region capture | Drag to select, release to copy and save | Lab tested |
 | Full screen | Every monitor, stitched into one image | Lab tested |
+| Window capture | `kiekje capture window`, the tray or its own shortcut opens the overlay in window mode: the window under the pointer lights up and a click or Enter takes it. It crops the frozen frame, so anything on top of the window is in the capture | Plasma 6 and Hyprland, unverified |
 | Repeat last region | Crops the last selected area again without the overlay | Lab tested on sway |
 | Delay | `--delay` up to 60 seconds | Lab tested on sway |
 | Multi-monitor | Selections can cross monitors and mixed scales, cropped at native resolution | Lab tested on Plasma, sway, Hyprland |
@@ -99,6 +100,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Pixel loupe | Magnifier with position and hex colour under the pointer | Unverified on desktops |
 | Colour picker | C copies the hex colour; picked colours are listed in the gallery | Unverified on desktops |
 | Hint bar | Lists the overlay keys; `?` hides it | Lab tested on sway |
+| Monitor unplug | Disconnecting a monitor during a selection closes the overlay and cancels the capture with one notification; nothing is saved | Unit tested, unverified on desktops |
 
 ### Annotation
 
@@ -134,7 +136,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Feature | Details | Status |
 | --- | --- | --- |
 | Tray | Styled popover on left click, native menu on right click | Lab tested on Plasma. Waybar and GNOME unverified |
-| Global shortcuts | Print for a region, Shift+Print for every screen, rebindable with a recorder | Lab tested on Plasma and Hyprland |
+| Global shortcuts | Print for a region, Shift+Print for every screen, a window shortcut without a default key, rebindable with a recorder | Lab tested on Plasma and Hyprland. The window shortcut is unverified |
 | Settings | Capture, Shortcuts, Saving, General and About pages | Lab tested on sway |
 | Start at login | Toggle in Settings | Unverified |
 | Doctor | Reports what the session supports and how to fix the rest | Lab tested |
@@ -155,6 +157,15 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | D, or a tool key | Start drawing first, pick the region afterwards with S |
 | Z | Show or hide the loupe |
 | C | Copy the colour under the pointer |
+| ? | Show or hide the hint bar |
+| Esc | Cancel |
+
+### Overlay, window capture
+
+| Key | Action |
+| --- | --- |
+| Click | Take the window under the pointer |
+| Enter, W | Take the hovered window |
 | ? | Show or hide the hint bar |
 | Esc | Cancel |
 
@@ -197,6 +208,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | `kiekje daemon` | Start the background instance with the tray |
 | `kiekje capture [region]` | Freeze the screen and select an area (default) |
 | `kiekje capture fullscreen` | Capture every screen |
+| `kiekje capture window` | Freeze the screen and pick a window (Plasma 6, Hyprland) |
 | `kiekje capture repeat` | Capture the last region again |
 | `kiekje capture ... --delay <s>` | Wait before grabbing the frame |
 | `kiekje capture ... --edit` | Annotate before copying and saving |

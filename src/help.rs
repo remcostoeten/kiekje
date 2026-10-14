@@ -49,6 +49,12 @@ const CAPTURE: &[Entry] = &[
     },
     Entry {
         name: "capture",
+        argument: "window",
+        description: "Freeze the screen and pick a window",
+        note: "",
+    },
+    Entry {
+        name: "capture",
         argument: "repeat",
         description: "Capture the last selected region again",
         note: "",
@@ -132,6 +138,12 @@ const MODES: &[Entry] = &[
         name: "fullscreen",
         argument: "",
         description: "Freeze the screen and keep all of it",
+        note: "",
+    },
+    Entry {
+        name: "window",
+        argument: "",
+        description: "Freeze the screen and pick a window",
         note: "",
     },
     Entry {
@@ -316,7 +328,7 @@ fn animate_intro(style: &Style) -> std::io::Result<()> {
 fn usage(style: &Style, topic: Topic) -> String {
     let (command, arguments) = match topic {
         Topic::Overview => ("<command>", "[...flags]"),
-        Topic::Capture => ("capture", "[region|fullscreen|repeat] [...flags]"),
+        Topic::Capture => ("capture", "[region|fullscreen|window|repeat] [...flags]"),
     };
     format!(
         "{} {} {} {}\n",

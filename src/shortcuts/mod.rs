@@ -12,17 +12,19 @@ pub use trigger::{Modifiers, Recorded, Slot, Trigger, record};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShortcutAction {
-    CaptureRegion,
-    CaptureFullscreen,
+    Region,
+    Fullscreen,
+    Window,
 }
 
 impl ShortcutAction {
-    pub const ALL: [Self; 2] = [Self::CaptureRegion, Self::CaptureFullscreen];
+    pub const ALL: [Self; 3] = [Self::Region, Self::Fullscreen, Self::Window];
 
     pub fn id(self) -> &'static str {
         match self {
-            Self::CaptureRegion => "capture-region",
-            Self::CaptureFullscreen => "capture-fullscreen",
+            Self::Region => "capture-region",
+            Self::Fullscreen => "capture-fullscreen",
+            Self::Window => "capture-window",
         }
     }
 
@@ -32,23 +34,40 @@ impl ShortcutAction {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::CaptureRegion => "Capture a region",
-            Self::CaptureFullscreen => "Capture every screen",
+            Self::Region => "Capture a region",
+            Self::Fullscreen => "Capture every screen",
+            Self::Window => "Capture a window",
         }
     }
 
     /// The trigger an action gets until the user picks another, in the XDG shortcuts format.
     ///
+    /// `None` leaves the action without a key until the user records one.
+    ///
     /// # Examples
     ///
     /// ```ignore
-    /// assert_eq!(ShortcutAction::CaptureRegion.default_trigger(), "Print");
+    /// assert_eq!(ShortcutAction::Region.default_trigger(), Some("Print"));
     /// ```
-    pub fn default_trigger(self) -> &'static str {
+    pub fn default_trigger(self) -> Option<&'static str> {
         match self {
-            Self::CaptureRegion => "Print",
-            Self::CaptureFullscreen => "SHIFT+Print",
+            Self::Region => Some("Print"),
+            Self::Fullscreen => Some("SHIFT+Print"),
+            Self::Window => None,
         }
+    }
+
+    /// The slot an action gets until the user picks another.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert_eq!(ShortcutAction::Window.default_slot(), Slot::Off);
+    /// ```
+    pub fn default_slot(self) -> Slot {
+        self.default_trigger()
+            .and_then(|trigger| Trigger::parse(trigger).ok())
+            .map_or(Slot::Off, Slot::Key)
     }
 }
 
@@ -75,6 +94,8 @@ impl ShortcutHost {
 pub struct Shortcuts {
     pub capture_region: Slot,
     pub capture_fullscreen: Slot,
+    #[serde(skip_serializing_if = "Slot::is_off")]
+    pub capture_window: Slot,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -87,12 +108,10 @@ pub struct Conflict {
 
 impl Default for Shortcuts {
     fn default() -> Self {
-        let slot = |action: ShortcutAction| {
-            Trigger::parse(action.default_trigger()).map_or(Slot::Off, Slot::Key)
-        };
         Self {
-            capture_region: slot(ShortcutAction::CaptureRegion),
-            capture_fullscreen: slot(ShortcutAction::CaptureFullscreen),
+            capture_region: ShortcutAction::Region.default_slot(),
+            capture_fullscreen: ShortcutAction::Fullscreen.default_slot(),
+            capture_window: ShortcutAction::Window.default_slot(),
         }
     }
 }
@@ -100,15 +119,17 @@ impl Default for Shortcuts {
 impl Shortcuts {
     pub fn slot(&self, action: ShortcutAction) -> &Slot {
         match action {
-            ShortcutAction::CaptureRegion => &self.capture_region,
-            ShortcutAction::CaptureFullscreen => &self.capture_fullscreen,
+            ShortcutAction::Region => &self.capture_region,
+            ShortcutAction::Fullscreen => &self.capture_fullscreen,
+            ShortcutAction::Window => &self.capture_window,
         }
     }
 
     pub fn set(&mut self, action: ShortcutAction, slot: Slot) {
         match action {
-            ShortcutAction::CaptureRegion => self.capture_region = slot,
-            ShortcutAction::CaptureFullscreen => self.capture_fullscreen = slot,
+            ShortcutAction::Region => self.capture_region = slot,
+            ShortcutAction::Fullscreen => self.capture_fullscreen = slot,
+            ShortcutAction::Window => self.capture_window = slot,
         }
     }
 
@@ -150,7 +171,7 @@ impl Shortcuts {
 ///
 /// ```ignore
 /// assert_eq!(
-///     hyprland_bind(ShortcutAction::CaptureFullscreen, &Trigger::parse("SHIFT+Print")?, "dev.example.App"),
+///     hyprland_bind(ShortcutAction::Fullscreen, &Trigger::parse("SHIFT+Print")?, "dev.example.App"),
 ///     "bind = SHIFT, Print, global, dev.example.App:capture-fullscreen"
 /// );
 /// ```
@@ -211,7 +232,42 @@ mod tests {
         for action in ShortcutAction::ALL {
             assert_eq!(ShortcutAction::parse(action.id()), Some(action));
         }
-        assert_eq!(ShortcutAction::parse("capture-window"), None);
+        assert_eq!(ShortcutAction::parse("capture-active-window"), None);
+    }
+
+    #[test]
+    fn leaves_window_capture_without_a_default_key() {
+        let shortcuts = Shortcuts::default();
+        assert_eq!(ShortcutAction::Window.default_trigger(), None);
+        assert_eq!(shortcuts.capture_window, Slot::Off);
+        assert_eq!(
+            shortcuts.capture_region,
+            ShortcutAction::Region.default_slot()
+        );
+        assert_eq!(shortcuts.conflict(), None);
+    }
+
+    #[test]
+    fn refuses_a_window_key_that_another_action_uses() {
+        let mut shortcuts = Shortcuts::default();
+        shortcuts.set(ShortcutAction::Window, shortcuts.capture_fullscreen.clone());
+        let conflict = shortcuts.conflict().unwrap();
+        assert_eq!(conflict.first, ShortcutAction::Fullscreen);
+        assert_eq!(conflict.second, ShortcutAction::Window);
+        shortcuts.set(
+            ShortcutAction::Window,
+            Slot::Key(Trigger::parse("ALT+Print").unwrap()),
+        );
+        assert_eq!(shortcuts.conflict(), None);
+    }
+
+    #[test]
+    fn writes_a_hyprland_bind_for_the_window_action_once_it_has_a_key() {
+        let trigger = Trigger::parse("ALT+Print").unwrap();
+        assert_eq!(
+            hyprland_bind(ShortcutAction::Window, &trigger, "dev.example.App"),
+            "bind = ALT, Print, global, dev.example.App:capture-window"
+        );
     }
 
     #[test]
@@ -225,11 +281,11 @@ mod tests {
             )
         };
         assert_eq!(
-            bind(ShortcutAction::CaptureRegion),
+            bind(ShortcutAction::Region),
             "bind = , Print, global, dev.example.App:capture-region"
         );
         assert_eq!(
-            bind(ShortcutAction::CaptureFullscreen),
+            bind(ShortcutAction::Fullscreen),
             "bind = SHIFT, Print, global, dev.example.App:capture-fullscreen"
         );
     }
@@ -238,15 +294,12 @@ mod tests {
     fn finds_a_trigger_shared_by_two_actions() {
         let mut shortcuts = Shortcuts::default();
         assert_eq!(shortcuts.conflict(), None);
-        shortcuts.set(
-            ShortcutAction::CaptureFullscreen,
-            shortcuts.capture_region.clone(),
-        );
+        shortcuts.set(ShortcutAction::Fullscreen, shortcuts.capture_region.clone());
         let conflict = shortcuts.conflict().unwrap();
-        assert_eq!(conflict.first, ShortcutAction::CaptureRegion);
-        assert_eq!(conflict.second, ShortcutAction::CaptureFullscreen);
-        shortcuts.set(ShortcutAction::CaptureRegion, Slot::Off);
-        shortcuts.set(ShortcutAction::CaptureFullscreen, Slot::Off);
+        assert_eq!(conflict.first, ShortcutAction::Region);
+        assert_eq!(conflict.second, ShortcutAction::Fullscreen);
+        shortcuts.set(ShortcutAction::Region, Slot::Off);
+        shortcuts.set(ShortcutAction::Fullscreen, Slot::Off);
         assert_eq!(shortcuts.conflict(), None);
     }
 }

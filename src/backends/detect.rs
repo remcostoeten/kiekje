@@ -71,6 +71,25 @@ pub fn probe() -> Environment {
     }
 }
 
+/// Reads the Wayland globals and whether KWin owns its bus name, without asking the portal.
+///
+/// Skipping the portal version avoids starting the portal for checks that only need the compositor.
+///
+/// # Examples
+///
+/// ```ignore
+/// let on_plasma = detect::probe_compositor().has_kwin();
+/// ```
+pub fn probe_compositor() -> Environment {
+    Environment {
+        wayland_globals: wayland_globals(),
+        kwin_on_bus: session_bus()
+            .ok()
+            .is_some_and(|connection| name_has_owner(&connection, KWIN_NAME)),
+        portal_screenshot: None,
+    }
+}
+
 /// Opens a session bus connection whose method calls give up after two seconds, so a hung
 /// service cannot stall detection.
 ///
