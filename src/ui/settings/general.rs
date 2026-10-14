@@ -7,7 +7,8 @@ use gtk::{gio, glib};
 use super::Pages;
 use crate::capture::CaptureMode;
 use crate::config::{
-    self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, SlowPointer, Storage,
+    self, AfterSelection, Capture, Config, Folder, General as GeneralConfig, Notifications,
+    Overlay, SlowPointer, Storage,
 };
 use crate::storage::{
     self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
@@ -48,6 +49,7 @@ pub(super) struct General {
     window_snap: gtk::Switch,
     hints: gtk::Switch,
     autostart: gtk::Switch,
+    updates: gtk::Switch,
     capture_problem: gtk::Label,
     saving_problem: gtk::Label,
     general_problem: gtk::Label,
@@ -59,6 +61,7 @@ pub(super) fn append(
     notifications: Notifications,
     capture: Capture,
     overlay: Overlay,
+    preferences: GeneralConfig,
 ) -> Weak<General> {
     let (changes, receiver) = async_channel::unbounded::<(Page, Change)>();
 
@@ -190,6 +193,14 @@ pub(super) fn append(
     let general_problem = problem();
     startup.footer(&general_problem);
 
+    let releases = group(&pages.general, "Updates");
+    let updates = switch(preferences.check_for_updates);
+    releases.add(row(
+        "Check for updates",
+        Some("Asks api.github.com for a newer release at startup and once a day."),
+        Some(&updates),
+    ));
+
     let general = Rc::new(General {
         quiet: Cell::new(false),
         folder,
@@ -210,6 +221,7 @@ pub(super) fn append(
         window_snap,
         hints,
         autostart,
+        updates,
         capture_problem,
         saving_problem,
         general_problem,
@@ -301,6 +313,19 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             &sender,
             Page::General,
             Box::new(move |config| config.notifications.sound = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.updates.connect_active_notify(move |check| {
+        let on = check.is_active();
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::General,
+            Box::new(move |config| config.general.check_for_updates = on),
         );
     });
     let weak = Rc::downgrade(general);
@@ -610,6 +635,7 @@ impl General {
             .set_selected(slow_index(config.overlay.slow_pointer));
         self.window_snap.set_active(config.overlay.window_snap);
         self.hints.set_active(config.overlay.hints);
+        self.updates.set_active(config.general.check_for_updates);
         self.quiet.set(false);
     }
 

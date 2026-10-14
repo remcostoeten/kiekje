@@ -213,7 +213,7 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 
 **Phase 3: V1 release**
 
-- About and update check. About is done in settings; the update check waits for a release feed.
+- About and update check. Done: About in settings, an opt-in daily check against the GitHub releases API and a Check now button.
 - Danger zone. Done: reset settings, clear gallery, clear thumbnails.
 - AUR, deb, rpm, tarball, Flatpak and Nix packages.
 - CI with clippy, tests and fmt.

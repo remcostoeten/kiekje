@@ -1,4 +1,5 @@
 mod about;
+mod clipboard;
 mod danger;
 mod drawing;
 mod general;
@@ -11,7 +12,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::app::APP_ID;
-use crate::config::{self, Capture, Config, ConfigError, Notifications, Overlay, Storage};
+use crate::config::{self, Capture, Config, ConfigError, General, Notifications, Overlay, Storage};
 use crate::editor::DrawingKeys;
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
@@ -29,6 +30,7 @@ pub struct Model {
     pub notifications: Notifications,
     pub capture: Capture,
     pub overlay: Overlay,
+    pub general: General,
     pub drawing_keys: DrawingKeys,
 }
 
@@ -199,7 +201,9 @@ pub fn show(
         model.notifications,
         model.capture,
         model.overlay,
+        model.general,
     );
+    clipboard::append(&pages.general);
 
     let keys_group = group(&pages.shortcuts, "Keys");
     let editable = model.host.editable();

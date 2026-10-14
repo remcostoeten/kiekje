@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -31,9 +31,12 @@ use crate::storage::{self, ImageFormat, Naming, last_region};
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 use crate::ui::{fonts, gallery, settings};
+use crate::update;
 
 pub const APP_ID: &str = "dev.remcostoeten.Kiekje";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
+const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
+const UPDATE_CHECK_TICK: Duration = Duration::from_secs(60 * 60);
 
 struct Session {
     busy: Cell<bool>,
@@ -178,6 +181,7 @@ pub fn run(command: Command) -> glib::ExitCode {
     start_tray(&app, &session);
     write_default_config();
     check_library();
+    schedule_update_checks(&session);
     thread::spawn(|| {
         if config::load().notifications.sound {
             sound::check();
@@ -520,6 +524,46 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
     });
 }
 
+fn schedule_update_checks(session: &Rc<Session>) {
+    let session = Rc::downgrade(session);
+    glib::timeout_add_local_once(FIRST_UPDATE_CHECK, move || {
+        check_for_updates(session.clone());
+        glib::timeout_add_local(UPDATE_CHECK_TICK, move || {
+            check_for_updates(session.clone());
+            glib::ControlFlow::Continue
+        });
+    });
+}
+
+fn check_for_updates(session: Weak<Session>) {
+    glib::spawn_future_local(async move {
+        let checked =
+            gio::spawn_blocking(|| update::automatic(&config::path(), &update::state::path()))
+                .await;
+        match checked {
+            Ok(update::Automatic::Newer {
+                available,
+                notify: true,
+            }) => {
+                println!("kiekje: version {} is available", available.version);
+                let Some(session) = session.upgrade() else {
+                    return;
+                };
+                let notice = Notice::UpdateAvailable {
+                    version: available.version,
+                    url: available.url,
+                };
+                match &session.notifier {
+                    Some(notifier) => notifier.send(&notice),
+                    None => println!("kiekje: no session bus, update notification skipped"),
+                }
+            }
+            Ok(_) => {}
+            Err(_) => eprintln!("kiekje: the update check worker stopped"),
+        }
+    });
+}
+
 fn write_default_config() {
     glib::spawn_future_local(async {
         let path = config::path();
@@ -699,6 +743,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             notifications: config.notifications,
             capture: config.capture,
             overlay: config.overlay,
+            general: config.general,
             drawing_keys: config.drawing.keys,
             host: session.shortcut_host.borrow().clone(),
             bound,

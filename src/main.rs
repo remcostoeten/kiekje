@@ -19,6 +19,7 @@ mod storage;
 mod style;
 mod tray;
 mod ui;
+mod update;
 
 use std::path::PathBuf;
 use std::time::Duration;

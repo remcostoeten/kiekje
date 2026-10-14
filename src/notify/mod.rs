@@ -1,6 +1,6 @@
 mod fdo;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub use fdo::FdoNotifier;
 
@@ -23,6 +23,16 @@ pub enum Notice {
     CaptureFailed {
         reason: String,
     },
+    UpdateAvailable {
+        version: String,
+        url: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    File(PathBuf),
+    Link(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,16 +80,17 @@ pub struct Content {
 }
 
 impl Notice {
-    /// The file a notice's actions open, when it has one.
+    /// The file or link a notice's actions open, when it has one.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// let target = notice.file();
+    /// let target = notice.target();
     /// ```
-    pub fn file(&self) -> Option<&Path> {
+    pub fn target(&self) -> Option<Target> {
         match self {
-            Self::Saved { path, .. } => Some(path),
+            Self::Saved { path, .. } => Some(Target::File(path.clone())),
+            Self::UpdateAvailable { url, .. } => Some(Target::Link(url.clone())),
             Self::Copied { .. } | Self::SaveFailed { .. } | Self::CaptureFailed { .. } => None,
         }
     }
@@ -151,6 +162,17 @@ impl Notice {
                 actions: Vec::new(),
                 urgency: Urgency::Critical,
             },
+            Self::UpdateAvailable { version, url } => Content {
+                summary: "Kiekje update available",
+                body: escape(&format!(
+                    "Kiekje {version} is out. This is {}.\n{url}",
+                    env!("CARGO_PKG_VERSION")
+                )),
+                icon: "software-update-available",
+                image: None,
+                actions: vec![NoticeAction::Open],
+                urgency: Urgency::Normal,
+            },
         }
     }
 }
@@ -214,6 +236,24 @@ mod tests {
         }
         .content();
         assert_eq!(content.body, "&lt;b&gt;&amp;&lt;/b&gt;");
+    }
+
+    #[test]
+    fn opens_the_release_page_of_an_update() {
+        let notice = Notice::UpdateAvailable {
+            version: "0.1.0-alpha.6".into(),
+            url: "https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.6".into(),
+        };
+        let content = notice.content();
+        assert!(content.body.contains("Kiekje 0.1.0-alpha.6 is out."));
+        assert!(content.body.ends_with("/releases/tag/v0.1.0-alpha.6"));
+        assert_eq!(content.actions, vec![NoticeAction::Open]);
+        assert_eq!(
+            notice.target(),
+            Some(Target::Link(
+                "https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.6".into()
+            ))
+        );
     }
 
     #[test]

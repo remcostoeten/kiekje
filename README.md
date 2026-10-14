@@ -78,7 +78,6 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | macOS, Windows | Not planned | Kiekje is Linux only. |
 | Screen recording | Post-V1 | Planned with GStreamer. |
 | Text recognition (OCR) | Post-V1 | Planned with Tesseract. |
-| Update check | Not built | There is no release feed to check against yet. |
 | Window capture as its own mode | Partial | On Plasma 6 and Hyprland a click selects the window under the pointer inside the region overlay. There is no separate window command. |
 | Real hardware | Unverified | No run on physical machines with Omarchy, Plasma or GNOME yet. See [issue #41](https://github.com/remcostoeten/kiekje/issues/41). |
 
@@ -138,6 +137,8 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Settings | Capture, Shortcuts, Saving, General and About pages | Lab tested on sway |
 | Start at login | Toggle in Settings | Unverified |
 | Doctor | Reports what the session supports and how to fix the rest | Lab tested |
+| Update check | Off by default. When on, asks GitHub for a newer release at startup and at most once a day, with one notification per new version. Check now on the About page works either way | Unverified on desktops |
+| Clipboard manager notice | Settings and `kiekje doctor` say whether a clipboard manager such as Klipper, GPaste, CopyQ or cliphist is running. Without one, copied captures are lost when Kiekje quits | Unverified on desktops |
 | Danger zone | Reset settings, clear gallery, colours or thumbnails, with a two-click guard | Lab tested on sway |
 | Single instance | CLI commands talk to the running daemon over D-Bus | Lab tested |
 
@@ -287,7 +288,7 @@ Settings live in `~/.config/kiekje/config.toml`. Set `[capture] after_selection 
 
 ## Privacy
 
-**Kiekje's code makes no network requests.** There are no analytics and no update check, and [Cargo.toml](Cargo.toml) lists no HTTP client.
+**Kiekje makes no network requests unless you ask for them.** There are no analytics. The update check is off by default. When you turn it on in Settings, General, or press Check now on the About page, Kiekje sends one request to `api.github.com` for the list of Kiekje releases. The request carries a `kiekje/<version>` user agent and nothing else about you or your captures.
 
 | Data | Location |
 | --- | --- |
@@ -295,6 +296,7 @@ Settings live in `~/.config/kiekje/config.toml`. Set `[capture] after_selection 
 | Settings | `$XDG_CONFIG_HOME/kiekje` |
 | Gallery index | `$XDG_DATA_HOME/kiekje` |
 | Thumbnails, unsaved captures | `$XDG_CACHE_HOME/kiekje` |
+| Last update check | `$XDG_DATA_HOME/kiekje/update-check.toml` |
 
 The guarantee stops at your desktop: a copied image sits on the clipboard where other apps can read it, and notifications, the screenshot portal and the tray go through your desktop's own services.
 
