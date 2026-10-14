@@ -23,6 +23,7 @@ pub enum Notice {
     CaptureFailed {
         reason: String,
     },
+    MonitorLost,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +81,10 @@ impl Notice {
     pub fn file(&self) -> Option<&Path> {
         match self {
             Self::Saved { path, .. } => Some(path),
-            Self::Copied { .. } | Self::SaveFailed { .. } | Self::CaptureFailed { .. } => None,
+            Self::Copied { .. }
+            | Self::SaveFailed { .. }
+            | Self::CaptureFailed { .. }
+            | Self::MonitorLost => None,
         }
     }
 
@@ -151,6 +155,14 @@ impl Notice {
                 actions: Vec::new(),
                 urgency: Urgency::Critical,
             },
+            Self::MonitorLost => Content {
+                summary: "Screenshot cancelled",
+                body: "A monitor was disconnected. The capture was cancelled.".to_owned(),
+                icon: "dialog-warning",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Normal,
+            },
         }
     }
 }
@@ -214,6 +226,17 @@ mod tests {
         }
         .content();
         assert_eq!(content.body, "&lt;b&gt;&amp;&lt;/b&gt;");
+    }
+
+    #[test]
+    fn says_a_disconnected_monitor_cancelled_the_capture() {
+        let content = Notice::MonitorLost.content();
+        assert_eq!(
+            content.body,
+            "A monitor was disconnected. The capture was cancelled."
+        );
+        assert!(content.actions.is_empty());
+        assert_eq!(Notice::MonitorLost.file(), None);
     }
 
     #[test]

@@ -7,20 +7,23 @@ use gtk::gdk;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CaptureMode {
+    #[default]
     Region,
     Fullscreen,
+    Window,
     Repeat,
 }
 
 impl CaptureMode {
-    pub const ALL: [Self; 3] = [Self::Region, Self::Fullscreen, Self::Repeat];
+    pub const ALL: [Self; 4] = [Self::Region, Self::Fullscreen, Self::Window, Self::Repeat];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Region => "region",
             Self::Fullscreen => "fullscreen",
+            Self::Window => "window",
             Self::Repeat => "repeat",
         }
     }
@@ -42,7 +45,31 @@ impl CaptureMode {
         match self {
             Self::Region | Self::Repeat => "region",
             Self::Fullscreen => "fullscreen",
+            Self::Window => "window",
         }
+    }
+
+    /// Whether this mode opens the selection overlay on the frozen frame.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert!(CaptureMode::Window.selects());
+    /// ```
+    pub fn selects(self) -> bool {
+        matches!(self, Self::Region | Self::Window)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Availability {
+    Available,
+    Unavailable(&'static str),
+}
+
+impl Availability {
+    pub fn is_available(self) -> bool {
+        self == Self::Available
     }
 }
 
@@ -259,6 +286,10 @@ pub enum CaptureError {
     Canceled,
     #[error("no region was selected yet; run `kiekje capture region` first")]
     NoLastRegion,
+    #[error("window capture is unavailable: {0}")]
+    NoWindowSource(&'static str),
+    #[error("could not list the windows: {0}")]
+    WindowList(String),
     #[error("backend unavailable: {0}")]
     Unavailable(String),
     #[error("unsupported pixel format {0}")]
@@ -345,12 +376,22 @@ mod tests {
         for mode in CaptureMode::ALL {
             assert_eq!(CaptureMode::parse(mode.as_str()), Some(mode));
         }
-        assert_eq!(CaptureMode::parse("window"), None);
+        assert_eq!(CaptureMode::parse("window"), Some(CaptureMode::Window));
+        assert_eq!(CaptureMode::parse("active-window"), None);
     }
 
     #[test]
     fn names_a_repeated_region_like_a_region() {
         assert_eq!(CaptureMode::Repeat.file_label(), "region");
         assert_eq!(CaptureMode::Fullscreen.file_label(), "fullscreen");
+        assert_eq!(CaptureMode::Window.file_label(), "window");
+    }
+
+    #[test]
+    fn opens_the_overlay_only_for_modes_that_pick_on_screen() {
+        assert!(CaptureMode::Region.selects());
+        assert!(CaptureMode::Window.selects());
+        assert!(!CaptureMode::Fullscreen.selects());
+        assert!(!CaptureMode::Repeat.selects());
     }
 }

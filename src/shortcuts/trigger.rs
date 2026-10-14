@@ -259,6 +259,9 @@ impl Slot {
             Self::Key(trigger) => Some(trigger),
         }
     }
+    pub fn is_off(&self) -> bool {
+        *self == Self::Off
+    }
 }
 
 impl TryFrom<String> for Slot {
