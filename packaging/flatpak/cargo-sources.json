@@ -1068,6 +1068,19 @@
     {
         "type": "archive",
         "archive-type": "tar-gzip",
+        "url": "https://static.crates.io/crates/jpeg-encoder/jpeg-encoder-0.7.1.crate",
+        "sha256": "a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6",
+        "dest": "cargo/vendor/jpeg-encoder-0.7.1"
+    },
+    {
+        "type": "inline",
+        "contents": "{\"package\": \"a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6\", \"files\": {}}",
+        "dest": "cargo/vendor/jpeg-encoder-0.7.1",
+        "dest-filename": ".cargo-checksum.json"
+    },
+    {
+        "type": "archive",
+        "archive-type": "tar-gzip",
         "url": "https://static.crates.io/crates/js-sys/js-sys-0.3.106.crate",
         "sha256": "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5",
         "dest": "cargo/vendor/js-sys-0.3.106"

@@ -12,6 +12,8 @@
     "--socket=wayland",
     "--socket=fallback-x11",
     "--device=dri",
+    "--socket=pulseaudio",
+    "--talk-name=org.freedesktop.Notifications",
     "--talk-name=org.freedesktop.portal.Desktop",
     "--talk-name=org.freedesktop.portal.GlobalShortcuts",
     "--talk-name=org.kde.KWin",

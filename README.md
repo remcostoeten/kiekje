@@ -262,6 +262,8 @@ Flatpak uses the desktop portals for capture and global shortcuts.
 nix profile install github:remcostoeten/kiekje
 ```
 
+This needs the `nix-command` and `flakes` experimental features. Without them, add `--extra-experimental-features 'nix-command flakes'`.
+
 ### From source
 
 ```bash
