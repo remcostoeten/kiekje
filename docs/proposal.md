@@ -70,7 +70,7 @@ What to keep or adapt:
 | Recording (later) | GStreamer: `pipewiresrc` from the ScreenCast portal, VA-API or x264 encode |
 | OCR (later) | Tesseract |
 | Lint and format | clippy `-D warnings`, rustfmt, enforced in CI along with `cargo test` |
-| Packaging | AUR (`kiekje`, `kiekje-bin`), `.deb` and `.rpm` through `cargo-deb` and `cargo-generate-rpm`, portable tarball; Flatpak later with reduced features (see section 9) |
+| Packaging | AUR (`kiekje`, `kiekje-bin`), `.deb` and `.rpm` through nfpm, portable tarball, Flatpak bundle and Nix flake |
 
 Why this stack beats the alternatives:
 
@@ -215,7 +215,7 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 
 - About and update check. About is done in settings; the update check waits for a release feed.
 - Danger zone. Done: reset settings, clear gallery, clear thumbnails.
-- AUR, deb, rpm and tarball packages.
+- AUR, deb, rpm, tarball, Flatpak and Nix packages.
 - CI with clippy, tests and fmt.
 
 **Optional, roadmap**
@@ -252,7 +252,7 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 
 ## 9. Open decisions
 
-1. **Flatpak**: decided 2026-10-02, native packages first, Flatpak later. Original question: Flatpak as a first-class target? Inside Flatpak, KWin ScreenShot2 is unavailable (the restricted-interface check depends on the host `.desktop` file), and direct Hyprland protocols depend on sandbox permissions (?). Making Flatpak first-class means portal-only capture, with the portal's latency and permission dialogs. My suggestion is native packages first and Flatpak later.
+1. **Flatpak**: the manifest and release bundle are now present. The sandbox uses portal capture and global shortcuts; KWin ScreenShot2 and direct Hyprland protocols remain unavailable until the required portal and permission behavior has been verified on real desktops.
 2. **Annotation editor**: decided, part of V1 (Phase 2b).
 3. **Breeze-native look on KDE**: no longer relevant now that the app has its own design system (section 10).
 

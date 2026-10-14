@@ -25,19 +25,7 @@ A screenshot tray app for Linux. Kiekje grabs the screen the moment you trigger 
 </p>
 
 > [!WARNING]
-> Kiekje is pre-release (`0.1.0-alpha.2`). Everything below has been tested in virtual machines and headless sessions only. Runs on real hardware with Omarchy, Plasma and GNOME are still open and tracked in [issue #41](https://github.com/remcostoeten/kiekje/issues/41). Detailed lab results are in [docs/phase-0-results.md](docs/phase-0-results.md).
-
-## Contents
-
-- [Supported](#supported)
-- [Not supported](#not-supported)
-- [Features](#features)
-- [Keys](#keys)
-- [Commands](#commands)
-- [Install](#install)
-- [Getting started](#getting-started)
-- [Privacy](#privacy)
-- [Development](#development)
+> Kiekje is pre-release (`0.1.0-alpha.5`). Everything below has been tested in virtual machines and headless sessions only. Runs on real hardware with Omarchy, Plasma and GNOME are still open and tracked in [issue #41](https://github.com/remcostoeten/kiekje/issues/41). Detailed lab results are in [docs/phase-0-results.md](docs/phase-0-results.md).
 
 ## Supported
 
@@ -224,13 +212,21 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 
 ## Install
 
+### Arch Linux (AUR)
+
+```bash
+yay -S kiekje-bin
+```
+
+`kiekje-bin` installs the release binary. `yay -S kiekje` builds the same version from source.
+
 ### One line
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/master/get.sh | bash
 ```
 
-It picks the `.deb`, `.rpm` or tarball for your system from the newest release, checks it against `SHA256SUMS` and installs it with sudo. `KIEKJE_VERSION=v0.1.0-alpha.4` pins a release, `KIEKJE_FORMAT=tarball` skips the native package. It needs the repository to be public.
+It picks the `.deb`, `.rpm` or tarball for your system from the newest release, checks it against `SHA256SUMS` and installs it with sudo. `KIEKJE_VERSION=v0.1.0-alpha.5` pins a release, `KIEKJE_FORMAT=tarball` skips the native package.
 
 ### Release packages
 
@@ -249,6 +245,24 @@ tar -xzf kiekje-VERSION-x86_64-linux.tar.gz
 cd kiekje-VERSION-x86_64-linux
 sudo packaging/install.sh ./kiekje
 ```
+
+### Flatpak
+
+Download `kiekje.flatpak` from the [latest release](https://github.com/remcostoeten/kiekje/releases/latest), then run:
+
+```bash
+flatpak install --user ./kiekje.flatpak
+```
+
+Flatpak uses the desktop portals for capture and global shortcuts.
+
+### Nix
+
+```bash
+nix profile install github:remcostoeten/kiekje
+```
+
+This needs the `nix-command` and `flakes` experimental features. Without them, add `--extra-experimental-features 'nix-command flakes'`.
 
 ### From source
 
@@ -295,7 +309,7 @@ cargo test                                                                      
 cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings     # what CI checks
 ```
 
-Architecture, capability matrix and phases are in [docs/proposal.md](docs/proposal.md). Layout, rules and code style are in [AGENTS.md](AGENTS.md).
+Architecture, capability matrix and phases are in [docs/proposal.md](docs/proposal.md). Layout, rules and code style are in [AGENTS.md](AGENTS.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 <br/>
 
