@@ -79,7 +79,16 @@ fn factory(gallery: &Rc<Gallery>, shape: Shape) -> gtk::SignalListItemFactory {
         else {
             return;
         };
-        let (Some(path), Some((picture, name, meta))) = (bound_path(item), parts(item)) else {
+        let (
+            Some(path),
+            Some(Parts {
+                picture,
+                name,
+                meta,
+                badge,
+            }),
+        ) = (bound_path(item), parts(item))
+        else {
             return;
         };
         let details = gallery.details.borrow();
@@ -91,6 +100,7 @@ fn factory(gallery: &Rc<Gallery>, shape: Shape) -> gtk::SignalListItemFactory {
                 .unwrap_or_default(),
         );
         meta.set_label(&capture.map(meta_text).unwrap_or_default());
+        badge.set_visible(capture.is_some_and(|capture| capture.unsaved && !capture.missing));
         item.set_accessible_label(&name.label());
         drop(details);
         gallery.thumbnail(item, &picture, path);
@@ -157,19 +167,37 @@ fn item_widget(shape: Shape) -> gtk::Box {
             .css_classes(["shortcut"])
             .build(),
     );
+    text.append(
+        &gtk::Label::builder()
+            .label("Unsaved")
+            .halign(gtk::Align::Start)
+            .visible(false)
+            .tooltip_text("Kept in the cache and deleted after a few days. Keep moves it to the capture folder.")
+            .css_classes(["badge"])
+            .build(),
+    );
     widget.append(&text);
     widget
 }
 
-fn parts(item: &gtk::ListItem) -> Option<(gtk::Picture, gtk::Label, gtk::Label)> {
+struct Parts {
+    picture: gtk::Picture,
+    name: gtk::Label,
+    meta: gtk::Label,
+    badge: gtk::Label,
+}
+
+fn parts(item: &gtk::ListItem) -> Option<Parts> {
     let picture = item.child()?.first_child()?;
     let name = picture.next_sibling()?.first_child()?;
     let meta = name.next_sibling()?;
-    Some((
-        picture.downcast().ok()?,
-        name.downcast().ok()?,
-        meta.downcast().ok()?,
-    ))
+    let badge = meta.next_sibling()?;
+    Some(Parts {
+        picture: picture.downcast().ok()?,
+        name: name.downcast().ok()?,
+        meta: meta.downcast().ok()?,
+        badge: badge.downcast().ok()?,
+    })
 }
 
 pub(super) fn bound_path(item: &gtk::ListItem) -> Option<String> {

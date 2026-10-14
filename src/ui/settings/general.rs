@@ -7,7 +7,8 @@ use gtk::{gio, glib};
 use super::Pages;
 use crate::capture::CaptureMode;
 use crate::config::{
-    self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, SlowPointer, Storage,
+    self, AfterSelection, Capture, Config, Folder, Notifications, Overlay, Saving, SlowPointer,
+    Storage,
 };
 use crate::storage::{
     self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
@@ -20,6 +21,7 @@ type Changes = async_channel::Sender<(Page, Change)>;
 const PREVIEW_WIDTH: u32 = 1920;
 const PREVIEW_HEIGHT: u32 = 1080;
 const ENTRY_WIDTH: i32 = 280;
+const MAX_KEEP_DAYS: u32 = 365;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
@@ -30,6 +32,8 @@ enum Page {
 
 pub(super) struct General {
     quiet: Cell<bool>,
+    save_to_disk: gtk::Switch,
+    keep_days: gtk::SpinButton,
     folder: gtk::Label,
     default_folder: gtk::Button,
     filename: gtk::Entry,
@@ -56,6 +60,7 @@ pub(super) struct General {
 pub(super) fn append(
     pages: &Pages,
     storage: &Storage,
+    saving_settings: Saving,
     notifications: Notifications,
     capture: Capture,
     overlay: Overlay,
@@ -103,6 +108,12 @@ pub(super) fn append(
     loupe.footer(&capture_problem);
 
     let saving = group(&pages.saving, "Location");
+    let save_to_disk = switch(saving_settings.enabled);
+    saving.add(row(
+        "Save captures to the folder",
+        Some("Off: captures are copied and listed in the gallery as Unsaved until you keep them."),
+        Some(&save_to_disk),
+    ));
     let folder = gtk::Label::builder()
         .label(storage::tilde(&storage.captures_dir()))
         .xalign(0.0)
@@ -134,6 +145,21 @@ pub(super) fn append(
     saving.footer(&preview);
     saving.footer(&note(
         "Tokens: {mode} {date} {time} {year} {month} {day} {hour} {minute} {second} {width} {height}",
+    ));
+
+    let unsaved = group(&pages.saving, "Unsaved captures");
+    let keep_days = gtk::SpinButton::with_range(0.0, f64::from(MAX_KEEP_DAYS), 1.0);
+    keep_days.set_value(f64::from(saving_settings.keep_unsaved_days));
+    keep_days.update_property(&[gtk::accessible::Property::Label(
+        "Days to keep unsaved captures",
+    )]);
+    unsaved.add(row(
+        "Days to keep unsaved captures",
+        Some("Older ones are deleted when Kiekje starts. 0 deletes them at the next start."),
+        Some(&keep_days),
+    ));
+    unsaved.footer(&note(
+        "Unsaved captures live in ~/.cache/kiekje/unsaved. Keep in the gallery moves one to the folder.",
     ));
 
     let kind = group(&pages.saving, "Format");
@@ -192,6 +218,8 @@ pub(super) fn append(
 
     let general = Rc::new(General {
         quiet: Cell::new(false),
+        save_to_disk,
+        keep_days,
         folder,
         default_folder,
         filename,
@@ -277,6 +305,34 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
         }
     });
 
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.save_to_disk.connect_active_notify(move |check| {
+        let on = check.is_active();
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::Saving,
+            Box::new(move |config| config.saving.enabled = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.keep_days.connect_value_changed(move |spin| {
+        let Ok(days) = u32::try_from(spin.value_as_int()) else {
+            return;
+        };
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::Saving,
+            Box::new(move |config| config.saving.keep_unsaved_days = days),
+        );
+    });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
     general.enabled.connect_active_notify(move |check| {
@@ -601,6 +657,9 @@ impl General {
             .set_selected(format_index(config.storage.format));
         self.quality
             .set_value(f64::from(config.storage.quality.get()));
+        self.save_to_disk.set_active(config.saving.enabled);
+        self.keep_days
+            .set_value(f64::from(config.saving.keep_unsaved_days));
         self.enabled.set_active(config.notifications.enabled);
         self.sound.set_active(config.notifications.sound);
         self.edit

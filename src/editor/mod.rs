@@ -659,11 +659,13 @@ fn write(
     let storage = config::load().storage;
     let bytes =
         output::encode(image, storage.format, storage.quality).map_err(SaveError::Encode)?;
+    let unsaved = storage::unsaved_dir();
     let (folder, base) = match original {
         Some(original) => {
             let folder = original
                 .parent()
-                .map_or_else(storage::default_captures_dir, Path::to_path_buf);
+                .filter(|parent| *parent != unsaved)
+                .map_or_else(|| storage.captures_dir(), Path::to_path_buf);
             let stem = original
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
@@ -686,19 +688,31 @@ fn write(
             source,
         }
     })?;
-    let capture = NewCapture {
-        path: path.clone(),
-        mode,
-        width,
-        height,
-        bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-        created_us: glib::real_time(),
-    };
-    if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
-    {
+    let recorded = Library::open(&library::path()).and_then(|library| {
+        let source_annotated = match original {
+            Some(original) => library.is_annotated(original)?,
+            None => false,
+        };
+        let capture = NewCapture {
+            path: path.clone(),
+            mode,
+            width,
+            height,
+            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            created_us: glib::real_time(),
+            unsaved: false,
+            annotated: annotated_after(source_annotated, shapes.len()),
+        };
+        library.insert(&capture)
+    });
+    if let Err(error) = recorded {
         eprintln!("kiekje: the edited capture is saved but not in the library: {error}");
     }
     Ok(path)
+}
+
+fn annotated_after(source_annotated: bool, shapes: usize) -> bool {
+    source_annotated || shapes > 0
 }
 
 fn edited_base(stem: &str) -> String {
@@ -718,6 +732,14 @@ fn edited_base(stem: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_an_annotated_source_annotated_after_an_edit() {
+        assert!(annotated_after(true, 0));
+        assert!(annotated_after(true, 2));
+        assert!(annotated_after(false, 1));
+        assert!(!annotated_after(false, 0));
+    }
 
     #[test]
     fn names_an_edit_after_its_original() {

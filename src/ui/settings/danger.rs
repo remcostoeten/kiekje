@@ -50,7 +50,9 @@ impl Danger {
             Self::ResetSettings => {
                 "Puts the folder, file name, notifications and shortcuts back to their defaults."
             }
-            Self::ClearGallery => "Forgets every capture in the gallery. The files stay on disk.",
+            Self::ClearGallery => {
+                "Forgets every capture in the gallery and deletes unsaved ones. Saved files stay on disk."
+            }
             Self::ClearColours => "Forgets every colour copied from the magnifier.",
             Self::ClearThumbnails => "Deletes cached thumbnails. They are made again when needed.",
         }
@@ -160,9 +162,13 @@ fn run(danger: Danger, host: &ShortcutHost) -> Result<String, String> {
             let forgotten = Library::open(&library::path())
                 .and_then(|library| library.clear())
                 .map_err(|error| format!("The gallery was not cleared: {error}"))?;
+            let deleted = storage::delete_files_in(&storage::unsaved_dir()).map_err(|error| {
+                format!("The gallery was cleared, but unsaved captures were not deleted: {error}")
+            })?;
             Ok(format!(
-                "The gallery forgot {}.",
-                count(forgotten, "capture")
+                "The gallery forgot {} and deleted {}.",
+                count(forgotten, "capture"),
+                count(deleted, "unsaved capture")
             ))
         }
         Danger::ClearColours => {

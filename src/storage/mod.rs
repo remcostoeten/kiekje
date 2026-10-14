@@ -31,6 +31,17 @@ pub fn default_captures_dir() -> PathBuf {
         .join("Kiekje")
 }
 
+/// Returns `$XDG_CACHE_HOME/kiekje/unsaved`, where captures go while saving is switched off.
+///
+/// # Examples
+///
+/// ```ignore
+/// let path = save(&bytes, &unsaved_dir(), &base, format)?;
+/// ```
+pub fn unsaved_dir() -> PathBuf {
+    glib::user_cache_dir().join("kiekje").join("unsaved")
+}
+
 /// Reads the local wall-clock time for naming a capture.
 ///
 /// # Examples
@@ -124,6 +135,70 @@ pub fn save_as(bytes: &[u8], path: &Path, format: ImageFormat) -> io::Result<Pat
         |stem| stem.to_string_lossy().into_owned(),
     );
     save(bytes, folder, &base, format)
+}
+
+/// Moves the file at `path` into `folder` under its own name and returns where it landed.
+///
+/// The target name is claimed with an exclusive create, so a taken name gets `-2`, `-3` and so on
+/// and no existing file is overwritten. A move across file systems copies and then removes the
+/// source.
+///
+/// # Examples
+///
+/// ```ignore
+/// let kept = move_into(&capture.path, &config.storage.captures_dir())?;
+/// ```
+pub fn move_into(path: &Path, folder: &Path) -> io::Result<PathBuf> {
+    let base = path.file_stem().map_or_else(
+        || "kiekje".to_owned(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    let extension = path
+        .extension()
+        .map(|extension| extension.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    fs::create_dir_all(folder)?;
+    let (target, mut claimed) = create_unique(folder, &base, &extension)?;
+    let moved = match fs::rename(path, &target) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::CrossesDevices => File::open(path)
+            .and_then(|mut source| io::copy(&mut source, &mut claimed))
+            .and_then(|_| claimed.sync_all())
+            .and_then(|()| fs::remove_file(path)),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = moved {
+        // Best-effort cleanup of the claimed name; the move error is the one to report.
+        let _ = fs::remove_file(&target);
+        return Err(error);
+    }
+    Ok(target)
+}
+
+/// Deletes every file directly in `folder` and returns how many went; a missing folder counts as empty.
+///
+/// Subfolders are left alone. Touches the disk, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let deleted = delete_files_in(&unsaved_dir())?;
+/// ```
+pub fn delete_files_in(folder: &Path) -> io::Result<usize> {
+    let entries = match fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut deleted = 0;
+    for entry in entries {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            fs::remove_file(entry.path())?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
 
 #[derive(Debug, Error)]
@@ -287,6 +362,38 @@ mod tests {
         assert!(matches!(rename(&renamed, ".."), Err(RenameError::Invalid)));
         assert_eq!(rename(&renamed, "invoice bug").unwrap(), renamed);
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn moves_a_file_into_a_folder_without_overwriting() {
+        let directory = scratch("move-into");
+        let (from, to) = (directory.join("cache"), directory.join("shots"));
+        fs::create_dir_all(&from).unwrap();
+        fs::create_dir_all(&to).unwrap();
+        fs::write(to.join("shot.png"), b"other").unwrap();
+        let source = from.join("shot.png");
+        fs::write(&source, b"mine").unwrap();
+        let kept = move_into(&source, &to).unwrap();
+        assert_eq!(kept, to.join("shot-2.png"));
+        assert_eq!(fs::read(&kept).unwrap(), b"mine");
+        assert_eq!(fs::read(to.join("shot.png")).unwrap(), b"other");
+        assert!(!source.exists());
+        assert!(move_into(&source, &to).is_err());
+        assert_eq!(fs::read_dir(&to).unwrap().count(), 2);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn deletes_the_files_in_a_folder_and_reads_a_missing_one_as_empty() {
+        let directory = scratch("delete-files");
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("a.png"), b"a").unwrap();
+        fs::write(directory.join("b.jpg"), b"b").unwrap();
+        assert_eq!(delete_files_in(&directory).unwrap(), 2);
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        assert!(directory.join("nested").is_dir());
+        fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(delete_files_in(&directory).unwrap(), 0);
     }
 
     #[test]

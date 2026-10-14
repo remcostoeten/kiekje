@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 
-use crate::library::query::{Kind, Period, Sort};
+use crate::library::query::{Dimensions, FileSize, Kind, Period, Sort};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum View {
@@ -30,6 +30,10 @@ pub(super) enum Change {
     Text(String),
     Kind(Kind),
     Period(Period),
+    Dimensions(Dimensions),
+    FileSize(FileSize),
+    Annotated(bool),
+    Unsaved(bool),
     Sort(Sort),
     View(View),
     Missing(bool),
@@ -40,6 +44,7 @@ pub(super) struct Parts {
     pub(super) sidebar: gtk::Box,
     pub(super) tabs: gtk::Box,
     pub(super) bar: gtk::Box,
+    pub(super) filters: gtk::Box,
     pub(super) search: gtk::SearchEntry,
     pub(super) missing: gtk::ToggleButton,
 }
@@ -89,9 +94,61 @@ pub(super) fn build(on_change: impl Fn(Change) + 'static) -> Parts {
         sidebar,
         tabs,
         bar,
+        filters: filters(&on_change),
         search,
         missing,
     }
+}
+
+fn filters(on_change: &Rc<dyn Fn(Change)>) -> gtk::Box {
+    let filters = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .css_classes(["filters"])
+        .build();
+    filters.append(&dropdown(
+        &Dimensions::ALL,
+        Dimensions::label,
+        "Dimensions, by the longer side",
+        on_change,
+        Change::Dimensions,
+    ));
+    filters.append(&dropdown(
+        &FileSize::ALL,
+        FileSize::label,
+        "File size",
+        on_change,
+        Change::FileSize,
+    ));
+    filters.append(&toggle(
+        "Annotated",
+        "Only captures saved from the editor with something drawn on them",
+        on_change,
+        Change::Annotated,
+    ));
+    filters.append(&toggle(
+        "Unsaved",
+        "Only captures kept in the cache while saving is off",
+        on_change,
+        Change::Unsaved,
+    ));
+    filters
+}
+
+fn toggle(
+    label: &str,
+    tooltip: &str,
+    on_change: &Rc<dyn Fn(Change)>,
+    change: fn(bool) -> Change,
+) -> gtk::ToggleButton {
+    let toggle = gtk::ToggleButton::builder()
+        .label(label)
+        .tooltip_text(tooltip)
+        .css_classes(["chip"])
+        .build();
+    let on_change = on_change.clone();
+    toggle.connect_toggled(move |toggle| on_change(change(toggle.is_active())));
+    toggle
 }
 
 fn sidebar(on_change: &Rc<dyn Fn(Change)>) -> (gtk::Box, gtk::ToggleButton) {

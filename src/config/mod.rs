@@ -22,6 +22,8 @@ pub struct Config {
     #[serde(default)]
     pub storage: Storage,
     #[serde(default)]
+    pub saving: Saving,
+    #[serde(default)]
     pub capture: Capture,
     #[serde(default)]
     pub overlay: Overlay,
@@ -40,6 +42,13 @@ pub struct Drawing {
     pub size: u32,
     pub opacity: u32,
     pub keys: DrawingKeys,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Saving {
+    pub enabled: bool,
+    pub keep_unsaved_days: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -149,11 +158,21 @@ impl Default for Config {
         Self {
             version: VERSION,
             storage: Storage::default(),
+            saving: Saving::default(),
             capture: Capture::default(),
             overlay: Overlay::default(),
             notifications: Notifications::default(),
             drawing: Drawing::default(),
             shortcuts: Shortcuts::default(),
+        }
+    }
+}
+
+impl Default for Saving {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            keep_unsaved_days: 7,
         }
     }
 }
@@ -590,6 +609,39 @@ mod tests {
     }
 
     #[test]
+    fn saves_to_disk_and_keeps_unsaved_captures_a_week_by_default() {
+        let older = parse(
+            "version = 1\n[storage]\nfilename = \"a\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert_eq!(
+            older.saving,
+            Saving {
+                enabled: true,
+                keep_unsaved_days: 7
+            }
+        );
+        assert_eq!(Config::default().saving, older.saving);
+    }
+
+    #[test]
+    fn reads_saving_switched_off_and_defaults_the_keep_days() {
+        let config = parse("[saving]\nenabled = false", Path::new("config.toml")).unwrap();
+        assert!(!config.saving.enabled);
+        assert_eq!(config.saving.keep_unsaved_days, 7);
+        let custom = parse("[saving]\nkeep_unsaved_days = 2", Path::new("config.toml")).unwrap();
+        assert!(custom.saving.enabled);
+        assert_eq!(custom.saving.keep_unsaved_days, 2);
+    }
+
+    #[test]
+    fn rejects_negative_keep_days_and_unknown_saving_keys() {
+        assert!(parse("[saving]\nkeep_unsaved_days = -1", Path::new("config.toml")).is_err());
+        assert!(parse("[saving]\nkeep = 3", Path::new("config.toml")).is_err());
+    }
+
+    #[test]
     fn reads_inline_editing_after_selection() {
         let config = parse(
             "[capture]\nafter_selection = \"edit\"",
@@ -798,6 +850,10 @@ mod tests {
         config.storage.format = ImageFormat::Jpeg;
         config.storage.quality = Quality::try_from(60).unwrap();
         config.shortcuts.capture_fullscreen = Slot::Off;
+        config.saving = Saving {
+            enabled: false,
+            keep_unsaved_days: 3,
+        };
         save_to(&path, &config).unwrap();
         save_to(&path, &config).unwrap();
         assert_eq!(load_from(&path).unwrap(), Some(config));

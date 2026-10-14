@@ -627,6 +627,8 @@ fn write(texture: &gdk::Texture, path: &Path) -> std::io::Result<PathBuf> {
         height: u32::try_from(texture.height()).unwrap_or(0),
         bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         created_us: glib::real_time(),
+        unsaved: false,
+        annotated: false,
     };
     if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
     {

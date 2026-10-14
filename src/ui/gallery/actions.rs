@@ -5,15 +5,18 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use super::Gallery;
+use crate::config;
 use crate::editor;
 use crate::library::{self, Library};
 use crate::pin;
+use crate::storage;
 use crate::ui::files;
 
 const GROUP: &str = "gallery";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FileAction {
+    Keep,
     Open,
     Edit,
     Pin,
@@ -28,7 +31,8 @@ pub(super) enum FileAction {
 }
 
 impl FileAction {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 12] = [
+        Self::Keep,
         Self::Open,
         Self::Edit,
         Self::Pin,
@@ -44,6 +48,7 @@ impl FileAction {
 
     fn name(self) -> &'static str {
         match self {
+            Self::Keep => "keep",
             Self::Open => "open",
             Self::Edit => "edit",
             Self::Pin => "pin",
@@ -60,6 +65,7 @@ impl FileAction {
 
     fn label(self) -> &'static str {
         match self {
+            Self::Keep => "Keep",
             Self::Open => "Open",
             Self::Edit => "Edit",
             Self::Pin => "Pin on screen",
@@ -76,6 +82,7 @@ impl FileAction {
 
     fn keys(self) -> Option<&'static str> {
         match self {
+            Self::Keep => Some("<Ctrl>s"),
             Self::Open => None,
             Self::Edit => Some("<Ctrl>e"),
             Self::Pin => Some("<Ctrl>p"),
@@ -120,7 +127,8 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
     let remove = gio::Menu::new();
     for action in FileAction::ALL {
         let section = match action {
-            FileAction::Open
+            FileAction::Keep
+            | FileAction::Open
             | FileAction::Edit
             | FileAction::Pin
             | FileAction::Reveal
@@ -218,15 +226,18 @@ impl Gallery {
         let Some(group) = self.actions.get() else {
             return;
         };
-        let missing = self.selected().map(|path| {
+        let selected = self.selected().map(|path| {
             self.details
                 .borrow()
                 .get(path.to_string_lossy().as_ref())
-                .is_some_and(|capture| capture.missing)
+                .map_or((false, false), |capture| (capture.missing, capture.unsaved))
         });
+        let missing = selected.map(|(missing, _)| missing);
+        let unsaved = selected.is_some_and(|(missing, unsaved)| unsaved && !missing);
         let any_missing = self.all.borrow().iter().any(|capture| capture.missing);
         for action in FileAction::ALL {
             let enabled = match action {
+                FileAction::Keep => unsaved,
                 FileAction::Forget => missing.is_some(),
                 FileAction::Locate => missing == Some(true),
                 FileAction::ForgetMissing => self.query.borrow().missing && any_missing,
@@ -306,6 +317,7 @@ impl Gallery {
                     gallery.forget(path, message).await;
                 });
             }
+            FileAction::Keep => self.keep(path),
             FileAction::Edit => self.edit(path),
             FileAction::Pin => self.pin(path),
             FileAction::Locate => self.locate(path),
@@ -399,6 +411,39 @@ impl Gallery {
             match linked {
                 Ok(Ok(())) => gallery.say(&format!("Linked the capture to {name}"), false),
                 Ok(Err(error)) => gallery.say(&format!("Not linked: {error}"), true),
+                Err(_) => gallery.say("The library worker stopped", true),
+            }
+            gallery.reload();
+        });
+    }
+
+    fn keep(self: &Rc<Self>, path: PathBuf) {
+        let Some(id) = self
+            .details
+            .borrow()
+            .get(path.to_string_lossy().as_ref())
+            .filter(|capture| capture.unsaved)
+            .map(|capture| capture.id)
+        else {
+            return;
+        };
+        let gallery = self.clone();
+        glib::spawn_future_local(async move {
+            let kept = gio::spawn_blocking(move || {
+                let folder = config::load().storage.captures_dir();
+                Library::open(&library::path()).and_then(|library| library.keep(id, &folder))
+            })
+            .await;
+            match kept {
+                Ok(Ok(kept)) => {
+                    let name = kept
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let folder = kept.parent().map(storage::tilde).unwrap_or_default();
+                    gallery.say(&format!("Kept {name} in {folder}"), false);
+                }
+                Ok(Err(error)) => gallery.say(&format!("Not kept: {error}"), true),
                 Err(_) => gallery.say("The library worker stopped", true),
             }
             gallery.reload();

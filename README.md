@@ -120,11 +120,12 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | --- | --- | --- |
 | Clipboard | PNG on the clipboard, also from the background daemon on Plasma | Lab tested |
 | Save to disk | PNG in `~/Pictures/Kiekje`, exclusive create, never overwrites | Lab tested |
+| Unsaved captures | With saving off, captures go to `~/.cache/kiekje/unsaved`, show an Unsaved badge, and Keep moves one to the folder. Pruned after 7 days | Unit tested, unverified on desktops |
 | Filename templates | e.g. `kiekje-{mode}-{date}-{time}`, live preview in Settings | Unit and lab tested |
 | Pin on screen | Keep a capture floating above other windows; drag, scroll to zoom | Unverified on desktops |
 | Notifications | With the image, Open and Show in folder actions | Lab tested |
 | Capture sound | Sound theme shutter or the bundled one, needs the GStreamer base plugins | Lab tested |
-| Gallery | Grid and list views, search, kind and period filters, sorting | Lab tested on sway |
+| Gallery | Grid and list views, search, sorting, and filters for kind, period, dimensions, file size, annotated and unsaved | Filters unit tested, unverified on desktops |
 | File actions | Open, show in folder, copy image, copy path, trash, remove, edit, pin | Lab tested on sway |
 | Missing files | Detects moved or deleted files and lets you relink them | Lab tested on sway |
 | Large libraries | Thumbnails load only for visible items; 10,000 captures tested | Lab tested on sway |
@@ -284,6 +285,8 @@ Other distributions need GTK 4.14 or newer and gtk4-layer-shell 1.1. [.github/wo
 4. Press Print, drag, and let go. The region is on your clipboard and in `~/Pictures/Kiekje`.
 
 Settings live in `~/.config/kiekje/config.toml`. Set `[capture] after_selection = "edit"` to always open the inline editor after selecting.
+
+Set `[saving] enabled = false`, or switch off Save captures to the folder in Settings, to only copy captures. Each one still lands in the gallery as Unsaved, kept in `~/.cache/kiekje/unsaved` for `keep_unsaved_days` (7 by default) and deleted at the first start after that. Keep in the gallery moves it to the capture folder. The editor's Save and Save as always write to the folder.
 
 ## Privacy
 
