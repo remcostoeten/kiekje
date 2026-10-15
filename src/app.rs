@@ -787,6 +787,7 @@ fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             capture: config.capture,
             overlay: config.overlay,
             general: config.general,
+            upload: config.upload,
             drawing_keys: config.drawing.keys,
             host: session.shortcut_host.borrow().clone(),
             bound,

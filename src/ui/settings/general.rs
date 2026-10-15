@@ -4,16 +4,14 @@ use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
-use super::Pages;
+use super::{Model, Pages};
 use crate::capture::CaptureMode;
-use crate::config::{
-    self, AfterSelection, Capture, Config, Folder, General as GeneralConfig, Notifications,
-    Overlay, Saving, SlowPointer, Storage,
-};
+use crate::config::{self, AfterSelection, Config, Folder, SlowPointer};
 use crate::storage::{
     self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
 };
 use crate::ui::widgets::{group, note, problem, row, switch};
+use crate::upload::{self, Expiry};
 
 type Change = Box<dyn FnOnce(&mut Config) + Send>;
 type Changes = async_channel::Sender<(Page, Change)>;
@@ -53,20 +51,21 @@ pub(super) struct General {
     hints: gtk::Switch,
     autostart: gtk::Switch,
     updates: gtk::Switch,
+    upload: gtk::Switch,
+    expiry: gtk::DropDown,
+    expiry_row: gtk::ListBoxRow,
     capture_problem: gtk::Label,
     saving_problem: gtk::Label,
     general_problem: gtk::Label,
 }
 
-pub(super) fn append(
-    pages: &Pages,
-    storage: &Storage,
-    saving_settings: Saving,
-    notifications: Notifications,
-    capture: Capture,
-    overlay: Overlay,
-    preferences: GeneralConfig,
-) -> Weak<General> {
+pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
+    let storage = &model.storage;
+    let saving_settings = model.saving;
+    let notifications = model.notifications;
+    let capture = model.capture;
+    let overlay = model.overlay;
+    let preferences = model.general;
     let (changes, receiver) = async_channel::unbounded::<(Page, Change)>();
 
     let selection = group(&pages.capture, "Selection");
@@ -226,6 +225,27 @@ pub(super) fn append(
         Some(&updates),
     ));
 
+    let sharing = group(&pages.general, "Sharing");
+    let upload = switch(model.upload.enabled);
+    sharing.add(row(
+        "Upload to a temporary link",
+        Some(&format!(
+            "Upload and copy link in the gallery, Ctrl+U, sends the file to {}. Anyone with the link can open it until it expires.",
+            upload::HOST
+        )),
+        Some(&upload),
+    ));
+    let expiries: Vec<&str> = Expiry::ALL.iter().map(|expiry| expiry.label()).collect();
+    let expiry = gtk::DropDown::from_strings(&expiries);
+    expiry.set_selected(expiry_index(model.upload.expiry));
+    expiry.update_property(&[gtk::accessible::Property::Label("Link expiry")]);
+    let expiry_row = sharing.add(row(
+        "Link expires after",
+        Some("The host deletes the file then."),
+        Some(&expiry),
+    ));
+    expiry_row.set_sensitive(model.upload.enabled);
+
     let general = Rc::new(General {
         quiet: Cell::new(false),
         save_to_disk,
@@ -249,6 +269,9 @@ pub(super) fn append(
         hints,
         autostart,
         updates,
+        upload,
+        expiry,
+        expiry_row,
         capture_problem,
         saving_problem,
         general_problem,
@@ -381,6 +404,41 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             &sender,
             Page::General,
             Box::new(move |config| config.general.check_for_updates = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.upload.connect_active_notify(move |check| {
+        let on = check.is_active();
+        let Some(general) = weak.upgrade() else {
+            return;
+        };
+        general.expiry_row.set_sensitive(on);
+        if general.quiet.get() {
+            return;
+        }
+        send(
+            &sender,
+            Page::General,
+            Box::new(move |config| config.upload.enabled = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.expiry.connect_selected_notify(move |dropdown| {
+        let picked = usize::try_from(dropdown.selected())
+            .ok()
+            .and_then(|index| Expiry::ALL.get(index).copied());
+        let Some(expiry) = picked else {
+            return;
+        };
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::General,
+            Box::new(move |config| config.upload.expiry = expiry),
         );
     });
     let weak = Rc::downgrade(general);
@@ -694,6 +752,9 @@ impl General {
         self.window_snap.set_active(config.overlay.window_snap);
         self.hints.set_active(config.overlay.hints);
         self.updates.set_active(config.general.check_for_updates);
+        self.upload.set_active(config.upload.enabled);
+        self.expiry_row.set_sensitive(config.upload.enabled);
+        self.expiry.set_selected(expiry_index(config.upload.expiry));
         self.quiet.set(false);
     }
 
@@ -729,6 +790,14 @@ fn slow_index(speed: SlowPointer) -> u32 {
     SlowPointer::ALL
         .iter()
         .position(|candidate| *candidate == speed)
+        .and_then(|index| u32::try_from(index).ok())
+        .unwrap_or(0)
+}
+
+fn expiry_index(expiry: Expiry) -> u32 {
+    Expiry::ALL
+        .iter()
+        .position(|candidate| *candidate == expiry)
         .and_then(|index| u32::try_from(index).ok())
         .unwrap_or(0)
 }
