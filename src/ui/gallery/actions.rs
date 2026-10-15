@@ -11,6 +11,7 @@ use crate::library::{self, Library};
 use crate::pin;
 use crate::storage;
 use crate::ui::files;
+use crate::upload;
 
 const GROUP: &str = "gallery";
 
@@ -23,6 +24,7 @@ pub(super) enum FileAction {
     Reveal,
     CopyImage,
     CopyPath,
+    Upload,
     Rename,
     Trash,
     Forget,
@@ -31,7 +33,7 @@ pub(super) enum FileAction {
 }
 
 impl FileAction {
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::Keep,
         Self::Open,
         Self::Edit,
@@ -40,6 +42,7 @@ impl FileAction {
         Self::Locate,
         Self::CopyImage,
         Self::CopyPath,
+        Self::Upload,
         Self::Rename,
         Self::Trash,
         Self::Forget,
@@ -55,6 +58,7 @@ impl FileAction {
             Self::Reveal => "reveal",
             Self::CopyImage => "copy-image",
             Self::CopyPath => "copy-path",
+            Self::Upload => "upload",
             Self::Rename => "rename",
             Self::Trash => "trash",
             Self::Forget => "forget",
@@ -72,6 +76,7 @@ impl FileAction {
             Self::Reveal => "Show in folder",
             Self::CopyImage => "Copy image",
             Self::CopyPath => "Copy path",
+            Self::Upload => "Upload and copy link",
             Self::Rename => "Rename",
             Self::Trash => "Move to trash",
             Self::Forget => "Remove from gallery",
@@ -89,6 +94,7 @@ impl FileAction {
             Self::Reveal => Some("<Ctrl>Return"),
             Self::CopyImage => Some("<Ctrl>c"),
             Self::CopyPath => Some("<Ctrl><Alt>c"),
+            Self::Upload => Some("<Ctrl>u"),
             Self::Rename => Some("F2"),
             Self::Trash => Some("Delete"),
             Self::Forget | Self::ForgetMissing => None,
@@ -133,7 +139,7 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
             | FileAction::Pin
             | FileAction::Reveal
             | FileAction::Locate => &open,
-            FileAction::CopyImage | FileAction::CopyPath => &copy,
+            FileAction::CopyImage | FileAction::CopyPath | FileAction::Upload => &copy,
             FileAction::Rename
             | FileAction::Trash
             | FileAction::Forget
@@ -320,6 +326,7 @@ impl Gallery {
             FileAction::Keep => self.keep(path),
             FileAction::Edit => self.edit(path),
             FileAction::Pin => self.pin(path),
+            FileAction::Upload => self.upload(path, name),
             FileAction::Locate => self.locate(path),
             FileAction::Rename => self.rename(path),
             FileAction::ForgetMissing => {}
@@ -357,6 +364,41 @@ impl Gallery {
         glib::spawn_future_local(async move {
             if let Err(error) = pin::open_file(&app, path, window.as_ref()).await {
                 gallery.say(&format!("Not pinned: {error}"), true);
+            }
+        });
+    }
+
+    fn upload(self: &Rc<Self>, path: PathBuf, name: String) {
+        let gallery = self.clone();
+        glib::spawn_future_local(async move {
+            let settings = gio::spawn_blocking(|| config::load().upload).await;
+            let Ok(settings) = settings else {
+                gallery.say("The upload worker stopped", true);
+                return;
+            };
+            if !settings.enabled {
+                gallery.say(
+                    "Turn on Upload to a temporary link in Settings, General first",
+                    true,
+                );
+                return;
+            }
+            gallery.say(&format!("Uploading {name} to {}", upload::HOST), false);
+            let expiry = settings.expiry;
+            let sent = gio::spawn_blocking(move || upload::send(&path, expiry)).await;
+            match sent {
+                Ok(Ok(link)) => {
+                    gallery.clipboard().set_text(&link);
+                    gallery.say(
+                        &format!(
+                            "Copied the link to {name}; it expires after {}",
+                            expiry.label()
+                        ),
+                        false,
+                    );
+                }
+                Ok(Err(error)) => gallery.say(&format!("Not uploaded: {error}"), true),
+                Err(_) => gallery.say("The upload worker stopped", true),
             }
         });
     }

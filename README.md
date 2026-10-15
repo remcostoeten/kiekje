@@ -128,6 +128,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Capture sound | Sound theme shutter or the bundled one, needs the GStreamer base plugins | Lab tested |
 | Gallery | Grid and list views, search, sorting, and filters for kind, period, dimensions, file size, annotated and unsaved | Filters unit tested, unverified on desktops |
 | File actions | Open, show in folder, copy image, copy path, trash, remove, edit, pin | Lab tested on sway |
+| Temporary upload | Off by default. When on, Upload and copy link (Ctrl+U) in the gallery sends the file to [Litterbox](https://litterbox.catbox.moe) and copies the link. The link expires after 1, 12, 24 or 72 hours | Unit tested, unverified on desktops |
 | Missing files | Detects moved or deleted files and lets you relink them | Lab tested on sway |
 | Large libraries | Thumbnails load only for visible items; 10,000 captures tested | Lab tested on sway |
 
@@ -304,6 +305,8 @@ Set `[saving] enabled = false`, or switch off Save captures to the folder in Set
 ## Privacy
 
 **Kiekje makes no network requests unless you ask for them.** There are no analytics. The update check is off by default. When you turn it on in Settings, General, or press Check now on the About page, Kiekje sends one request to `api.github.com` for the list of Kiekje releases. The request carries a `kiekje/<version>` user agent and nothing else about you or your captures.
+
+Uploading is off by default too. With Upload to a temporary link on in Settings, General, Upload and copy link sends the one file you picked to `litterbox.catbox.moe` as `capture.<extension>`, so the file name stays on your machine. Anyone with the link can open the file until it expires, and Kiekje can't delete it earlier.
 
 | Data | Location |
 | --- | --- |

@@ -14,7 +14,7 @@ use gtk::{gdk, gio, glib};
 use crate::app::APP_ID;
 use crate::capture::Availability;
 use crate::config::{
-    self, Capture, Config, ConfigError, General, Notifications, Overlay, Saving, Storage,
+    self, Capture, Config, ConfigError, General, Notifications, Overlay, Saving, Storage, Upload,
 };
 use crate::editor::DrawingKeys;
 use crate::shortcuts::{
@@ -36,6 +36,7 @@ pub struct Model {
     pub capture: Capture,
     pub overlay: Overlay,
     pub general: General,
+    pub upload: Upload,
     pub drawing_keys: DrawingKeys,
 }
 
@@ -197,15 +198,7 @@ pub fn show(
     window.set_child(Some(&root));
 
     let pages = Pages::new(&stack);
-    let general = general::append(
-        &pages,
-        &model.storage,
-        model.saving,
-        model.notifications,
-        model.capture,
-        model.overlay,
-        model.general,
-    );
+    let general = general::append(&pages, &model);
     clipboard::append(&pages.general);
 
     let keys_group = group(&pages.shortcuts, "Keys");

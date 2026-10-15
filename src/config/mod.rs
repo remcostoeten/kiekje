@@ -13,6 +13,7 @@ use toml::Table;
 use crate::editor::{Color, DrawAction, DrawKey, DrawingKeys, KeyConflict};
 use crate::shortcuts::{Conflict, ShortcutAction, Shortcuts, Slot};
 use crate::storage::{self, ImageFormat, Quality, Template};
+use crate::upload::Expiry;
 pub use migrate::{MigrateError, VERSION};
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -34,6 +35,8 @@ pub struct Config {
     #[serde(default)]
     pub drawing: Drawing,
     #[serde(default)]
+    pub upload: Upload,
+    #[serde(default)]
     pub shortcuts: Shortcuts,
 }
 
@@ -41,6 +44,13 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct General {
     pub check_for_updates: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Upload {
+    pub enabled: bool,
+    pub expiry: Expiry,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -172,6 +182,7 @@ impl Default for Config {
             overlay: Overlay::default(),
             notifications: Notifications::default(),
             drawing: Drawing::default(),
+            upload: Upload::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -766,6 +777,21 @@ mod tests {
         .unwrap();
         assert!(on.general.check_for_updates);
         assert!(parse("[general]\nupdates = true", Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn leaves_uploads_off_with_a_day_of_expiry_unless_turned_on() {
+        let defaults = Config::default().upload;
+        assert!(!defaults.enabled);
+        assert_eq!(defaults.expiry, Expiry::Day);
+        let on = parse(
+            "[upload]\nenabled = true\nexpiry = \"1h\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert!(on.upload.enabled);
+        assert_eq!(on.upload.expiry, Expiry::Hour);
+        assert!(parse("[upload]\nhost = \"x\"", Path::new("config.toml")).is_err());
     }
 
     #[test]
