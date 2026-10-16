@@ -143,6 +143,7 @@ jobs:
           useradd --create-home builder
           install -d -m 700 -o builder -g builder /home/builder/.ssh
           printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > /home/builder/.ssh/id_ed25519
+          chown builder:builder /home/builder/.ssh/id_ed25519
           chmod 600 /home/builder/.ssh/id_ed25519
           ssh-keyscan -H aur.archlinux.org > /home/builder/.ssh/known_hosts
           chown builder:builder /home/builder/.ssh/known_hosts
