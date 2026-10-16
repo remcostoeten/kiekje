@@ -11,7 +11,8 @@ depends=('gtk4' 'wayland' 'glib2' 'cairo' 'pango' 'fontconfig' 'gdk-pixbuf2' 'gr
 optdepends=(
     'xdg-desktop-portal: capture and global shortcuts through the portal'
     'gst-plugins-base: capture sound'
-    'gst-plugins-good: capture sound through PulseAudio'
+    'gst-plugins-good: capture sound through PulseAudio, and screen recording'
+    'gst-plugin-pipewire: screen recording'
 )
 provides=('kiekje')
 conflicts=('kiekje')

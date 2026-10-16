@@ -27,6 +27,7 @@ overrides:
       - libgtk-4-media-gstreamer
       - gstreamer1.0-plugins-base
       - gstreamer1.0-plugins-good
+      - gstreamer1.0-pipewire
   rpm:
     depends:
       - libgtk-4.so.1()(64bit)
@@ -35,3 +36,4 @@ overrides:
       - xdg-desktop-portal
       - gstreamer1-plugins-base
       - gstreamer1-plugins-good
+      - pipewire-gstreamer

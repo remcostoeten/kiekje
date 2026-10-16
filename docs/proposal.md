@@ -222,7 +222,7 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 
 | Feature | Cost | Notes |
 |---|---|---|
-| Recording | Large | GStreamer + ScreenCast portal; MP4 (H.264) and WebM; pause/resume; mic and desktop audio through PipeWire |
+| Recording | Large | Started: ScreenCast portal, `pipewiresrc`, VP8 in WebM to `~/Videos/Kiekje`, GStreamer loaded with `dlopen` so it stays optional. Next: region crop, MP4 (H.264, VA-API), pause/resume, mic and desktop audio through PipeWire, recordings in the gallery |
 | Temporary upload | Small | Started: opt-in, Litterbox with 1 to 72 hour expiry, link to the clipboard. Next: right after a capture or recording |
 | GIF export | Medium | From a recording, with the `gif` crate; fps and width capped |
 | Color picker | Small | |

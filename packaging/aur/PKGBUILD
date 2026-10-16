@@ -12,7 +12,8 @@ makedepends=('cargo')
 optdepends=(
     'xdg-desktop-portal: capture and global shortcuts through the portal'
     'gst-plugins-base: capture sound'
-    'gst-plugins-good: capture sound through PulseAudio'
+    'gst-plugins-good: capture sound through PulseAudio, and screen recording'
+    'gst-plugin-pipewire: screen recording'
 )
 options=('!lto')
 source=("$pkgname-$_tag.tar.gz::$url/archive/refs/tags/v$_tag.tar.gz")

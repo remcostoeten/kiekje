@@ -12,6 +12,7 @@ pub use sni::SniTray;
 pub enum TrayCommand {
     Capture { mode: CaptureMode },
     Annotate,
+    Record,
     OpenMenu { x: i32, y: i32 },
     OpenCaptures,
     OpenGallery,
@@ -49,4 +50,6 @@ pub trait TrayGuard {
     fn stop(&self);
 
     fn flash(&self);
+
+    fn set_recording(&self, recording: bool);
 }

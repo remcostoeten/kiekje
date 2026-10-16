@@ -28,6 +28,13 @@ pub enum Notice {
         url: String,
     },
     MonitorLost,
+    RecordingStarted,
+    RecordingSaved {
+        path: PathBuf,
+    },
+    RecordingFailed {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -90,12 +97,16 @@ impl Notice {
     /// ```
     pub fn target(&self) -> Option<Target> {
         match self {
-            Self::Saved { path, .. } => Some(Target::File(path.clone())),
+            Self::Saved { path, .. } | Self::RecordingSaved { path } => {
+                Some(Target::File(path.clone()))
+            }
             Self::UpdateAvailable { url, .. } => Some(Target::Link(url.clone())),
             Self::Copied { .. }
             | Self::SaveFailed { .. }
             | Self::CaptureFailed { .. }
-            | Self::MonitorLost => None,
+            | Self::MonitorLost
+            | Self::RecordingStarted
+            | Self::RecordingFailed { .. } => None,
         }
     }
 
@@ -185,6 +196,36 @@ impl Notice {
                 actions: Vec::new(),
                 urgency: Urgency::Normal,
             },
+            Self::RecordingStarted => Content {
+                summary: "Recording",
+                body: "Pick Stop recording in the tray menu or run kiekje record again to finish."
+                    .to_owned(),
+                icon: "media-record",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Normal,
+            },
+            Self::RecordingSaved { path } => Content {
+                summary: "Recording saved",
+                body: escape(
+                    &path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ),
+                icon: "video-x-generic",
+                image: None,
+                actions: NoticeAction::ALL.to_vec(),
+                urgency: Urgency::Normal,
+            },
+            Self::RecordingFailed { reason } => Content {
+                summary: "Recording failed",
+                body: escape(reason),
+                icon: "dialog-error",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Critical,
+            },
         }
     }
 }
@@ -218,6 +259,22 @@ mod tests {
             Some(PathBuf::from("/shots/kiekje-region.png"))
         );
         assert_eq!(content.actions, NoticeAction::ALL.to_vec());
+    }
+
+    #[test]
+    fn opens_a_saved_recording_without_a_preview_image() {
+        let notice = Notice::RecordingSaved {
+            path: PathBuf::from("/videos/kiekje-recording.webm"),
+        };
+        let content = notice.content();
+        assert_eq!(content.summary, "Recording saved");
+        assert_eq!(content.body, "kiekje-recording.webm");
+        assert_eq!(content.image, None);
+        assert_eq!(content.actions, NoticeAction::ALL.to_vec());
+        assert_eq!(
+            notice.target(),
+            Some(Target::File(PathBuf::from("/videos/kiekje-recording.webm")))
+        );
     }
 
     #[test]

@@ -14,6 +14,7 @@ use crate::config::{self, Config};
 use crate::desktop_file;
 use crate::overlay;
 use crate::pin::{self, Stacking};
+use crate::record;
 use crate::shortcuts::hyprland;
 use crate::storage;
 use crate::style::{Style, pad};
@@ -93,6 +94,7 @@ struct Report {
     hyprland: Option<HyprlandBinds>,
     fonts: Vec<Result<PathBuf, FontError>>,
     clipboard_manager: Option<ClipboardManager>,
+    recording: Result<(), String>,
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -170,6 +172,7 @@ fn collect() -> Report {
         hyprland: std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").map(|_| hyprland_binds()),
         fonts: fonts::locate(&fonts::search_dirs()),
         clipboard_manager: clipboard::detect(),
+        recording: record::check(),
     }
 }
 
@@ -379,6 +382,19 @@ fn field(style: &Style, label: &str, value: &str) -> String {
     format!("  {}{value}\n", style.dim(&pad(label, LABEL_WIDTH)))
 }
 
+fn recording(report: &Report, style: &Style) -> String {
+    let screen_cast = report.bus.as_ref().is_ok_and(|bus| {
+        bus.portals
+            .iter()
+            .any(|(name, version)| *name == "ScreenCast" && version.is_some())
+    });
+    match (&report.recording, screen_cast) {
+        (Err(reason), _) => style.warn(&format!("unavailable, {reason}")),
+        (Ok(()), false) => style.warn("unavailable, no ScreenCast portal"),
+        (Ok(()), true) => style.good("ScreenCast portal, WebM"),
+    }
+}
+
 fn render(report: &Report, style: &Style) -> String {
     let mut text = format!(
         "{}  {}\n\n",
@@ -432,6 +448,7 @@ fn render(report: &Report, style: &Style) -> String {
         None => style.warn("none found, copies are lost when Kiekje quits"),
     };
     text.push_str(&field(style, "clipboard", &keeper));
+    text.push_str(&field(style, "recording", &recording(report, style)));
     if report.kwin_present {
         let access = match report.kwin_access {
             Some(KwinAccess::Ready) => style.good("desktop file installed"),
@@ -596,7 +613,27 @@ mod tests {
                 .map(|file| Ok(PathBuf::from(file)))
                 .collect(),
             clipboard_manager: Some(ClipboardManager::Klipper),
+            recording: Ok(()),
         }
+    }
+
+    #[test]
+    fn says_why_recording_is_unavailable() {
+        assert!(render(&report(), &PLAIN).contains("recording         ScreenCast portal, WebM"));
+        let mut bare = report();
+        bare.recording = Err("GStreamer is not installed".into());
+        assert!(
+            render(&bare, &PLAIN)
+                .contains("recording         unavailable, GStreamer is not installed")
+        );
+        let mut portalless = report();
+        if let Ok(bus) = &mut portalless.bus {
+            bus.portals.retain(|(name, _)| *name != "ScreenCast");
+        }
+        assert!(
+            render(&portalless, &PLAIN)
+                .contains("recording         unavailable, no ScreenCast portal")
+        );
     }
 
     #[test]
