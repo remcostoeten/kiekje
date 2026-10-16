@@ -76,7 +76,6 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | X11 capture backend | On hold | Pure X11 sessions other than Plasma have no capture path. `doctor` reports it as unavailable. |
 | Flatpak | Not yet | Native packages come first. A portal-only Flatpak build is planned later. |
 | macOS, Windows | Not planned | Kiekje is Linux only. |
-| Screen recording | Post-V1 | Planned with GStreamer. |
 | Text recognition (OCR) | Post-V1 | Planned with Tesseract. |
 | Window capture on GNOME, Sway and X11 | Not built | Window capture needs the compositor to report where its windows are, which only Plasma 6 and Hyprland do. Elsewhere the tray item and shortcut are disabled, `kiekje capture window` exits with an error and `doctor` lists it as unavailable. |
 | Real hardware | Unverified | No run on physical machines with Omarchy, Plasma or GNOME yet. See [issue #41](https://github.com/remcostoeten/kiekje/issues/41). |
@@ -128,6 +127,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Capture sound | Sound theme shutter or the bundled one, needs the GStreamer base plugins | Lab tested |
 | Gallery | Grid and list views, search, sorting, and filters for kind, period, dimensions, file size, annotated and unsaved | Filters unit tested, unverified on desktops |
 | File actions | Open, show in folder, copy image, copy path, trash, remove, edit, pin | Lab tested on sway |
+| Screen recording | `kiekje record`, Record screen in the tray menu or the capture menu. The desktop's ScreenCast picker chooses a screen or window; running it again stops and saves WebM (VP8) to `~/Videos/Kiekje`. Needs the GStreamer PipeWire plugin and the good plugins; `doctor` says what is missing | Pipeline lab tested, unverified on desktops |
 | Temporary upload | Off by default. When on, Upload and copy link (Ctrl+U) in the gallery sends the file to [Litterbox](https://litterbox.catbox.moe) and copies the link. The link expires after 1, 12, 24 or 72 hours | Unit tested, unverified on desktops |
 | Missing files | Detects moved or deleted files and lets you relink them | Lab tested on sway |
 | Large libraries | Thumbnails load only for visible items; 10,000 captures tested | Lab tested on sway |
@@ -220,6 +220,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | `kiekje gallery` | Open the gallery |
 | `kiekje settings` | Open settings |
 | `kiekje pin <path>` | Keep an image on screen above other windows |
+| `kiekje record` | Start recording the screen, or stop and save the recording |
 | `kiekje doctor` | Report what this session supports |
 | `kiekje install-desktop-file` | Register the launcher entry, required on KDE |
 | `kiekje quit` | Stop the running instance |

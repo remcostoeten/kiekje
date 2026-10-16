@@ -35,6 +35,7 @@ pub struct Item {
     commands: async_channel::Sender<TrayCommand>,
     pose: Option<Pose>,
     window: Availability,
+    recording: bool,
 }
 
 impl Item {
@@ -57,6 +58,7 @@ impl TrayHost for SniTray {
             commands,
             pose: None,
             window: self.window,
+            recording: false,
         }
         .spawn()
         .map(|handle| {
@@ -99,6 +101,16 @@ impl TrayGuard for SniGuard {
             }
         });
     }
+
+    fn set_recording(&self, recording: bool) {
+        if self
+            .handle
+            .update(|item| item.recording = recording)
+            .is_none()
+        {
+            eprintln!("kiekje: the tray is gone, its recording state was not updated");
+        }
+    }
 }
 
 impl Tray for Item {
@@ -132,7 +144,11 @@ impl Tray for Item {
     fn tool_tip(&self) -> ToolTip {
         ToolTip {
             title: "Kiekje".into(),
-            description: "Click for the capture menu".into(),
+            description: if self.recording {
+                "Recording, open the menu to stop".into()
+            } else {
+                "Click for the capture menu".into()
+            },
             ..Default::default()
         }
     }
@@ -162,6 +178,14 @@ impl Tray for Item {
                 TrayCommand::Capture {
                     mode: CaptureMode::Repeat,
                 },
+            ),
+            command_item(
+                if self.recording {
+                    "Stop recording"
+                } else {
+                    "Record screen"
+                },
+                TrayCommand::Record,
             ),
             command_item("Open gallery", TrayCommand::OpenGallery),
             command_item("Open captures folder", TrayCommand::OpenCaptures),

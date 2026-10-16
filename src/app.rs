@@ -23,6 +23,7 @@ use crate::notify::{FdoNotifier, Notice};
 use crate::output::{self, Image};
 use crate::overlay::{self, Outcome, Selection};
 use crate::pin;
+use crate::record::{self, Recording};
 use crate::shortcuts::{
     Binding, PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar,
     Shortcuts, hyprland, kde,
@@ -38,6 +39,8 @@ pub const APP_ID: &str = "dev.remcostoeten.Kiekje";
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
 const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
 const UPDATE_CHECK_TICK: Duration = Duration::from_secs(60 * 60);
+const RECORDING_QUIT_POLL: Duration = Duration::from_millis(100);
+const RECORDING_QUIT_WAIT: Duration = Duration::from_secs(12);
 
 struct Session {
     busy: Cell<bool>,
@@ -55,6 +58,8 @@ struct Session {
     shortcut_host: RefCell<ShortcutHost>,
     shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
     window_capture: Cell<Option<Availability>>,
+    recording: RefCell<Option<Recording>>,
+    recording_live: Cell<bool>,
 }
 
 pub enum Command {
@@ -65,6 +70,7 @@ pub enum Command {
     Gallery,
     Capture(Request),
     Pin(std::path::PathBuf),
+    Record,
 }
 
 #[derive(Clone, Copy)]
@@ -178,6 +184,8 @@ pub fn run(command: Command) -> glib::ExitCode {
         shortcut_host: RefCell::new(ShortcutHost::Starting),
         shortcut_labels: RefCell::new(Vec::new()),
         window_capture: Cell::new(None),
+        recording: RefCell::new(None),
+        recording_live: Cell::new(false),
     });
     install_actions(&app, &session);
     start_session_services(&app, &session);
@@ -197,6 +205,7 @@ pub fn run(command: Command) -> glib::ExitCode {
         Some(Command::Settings) => open_settings(app, &session),
         Some(Command::Gallery) => open_gallery(app, &session),
         Some(Command::Pin(path)) => pin_file(app, path),
+        Some(Command::Record) => toggle_recording(&session),
         Some(Command::Daemon | Command::Quit) | None => {
             glib::idle_add_local_once(overlay::warm_up);
         }
@@ -214,6 +223,7 @@ fn forward(app: &gtk::Application, command: Command) -> glib::ExitCode {
         Command::Menu => app.activate_action("menu", None),
         Command::Settings => app.activate_action("settings", None),
         Command::Gallery => app.activate_action("gallery", None),
+        Command::Record => app.activate_action("record", None),
         Command::Capture(request) => app.activate_action("capture", Some(&request.to_variant())),
         Command::Pin(path) => {
             let Some(path) = path.to_str() else {
@@ -499,6 +509,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
             println!("kiekje: tray annotate-region");
             capture_after_menu(app, session, Request::annotated());
         }
+        TrayCommand::Record => toggle_recording(session),
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
         TrayCommand::OpenGallery => open_gallery(app, session),
@@ -530,6 +541,7 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
         let content = popover::Content {
             shortcuts: session.shortcut_labels.borrow().clone(),
             window: window_capture(&session),
+            recording: session.recording.borrow().is_some(),
         };
         let pick_app = app.downgrade();
         let pick_session = Rc::downgrade(&session);
@@ -546,6 +558,7 @@ fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32
                     println!("kiekje: menu annotate-region");
                     capture_after_menu(&app, &session, Request::annotated());
                 }
+                Pick::Record => toggle_recording(&session),
                 Pick::OpenCaptures => open_captures(),
                 Pick::Settings => open_settings(&app, &session),
                 Pick::Gallery => open_gallery(&app, &session),
@@ -675,8 +688,20 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         {
             guard.stop();
         }
-        if let Some(app) = quit_app.upgrade() {
-            app.quit();
+        let Some(app) = quit_app.upgrade() else {
+            return;
+        };
+        let recording = quit_session.upgrade().filter(|session| {
+            session
+                .recording
+                .borrow()
+                .as_ref()
+                .map(Recording::stop)
+                .is_some()
+        });
+        match recording {
+            Some(session) => quit_after_recording(app, Rc::downgrade(&session)),
+            None => app.quit(),
         }
     });
     app.add_action(&quit);
@@ -724,6 +749,91 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         pin_file(&app, std::path::PathBuf::from(path));
     });
     app.add_action(&pin);
+
+    let record = gio::SimpleAction::new("record", None);
+    let record_session = Rc::downgrade(session);
+    record.connect_activate(move |_, _| {
+        if let Some(session) = record_session.upgrade() {
+            toggle_recording(&session);
+        }
+    });
+    app.add_action(&record);
+}
+
+fn quit_after_recording(app: gtk::Application, session: Weak<Session>) {
+    println!("kiekje: saving the recording before quitting");
+    let started = std::time::Instant::now();
+    glib::timeout_add_local(RECORDING_QUIT_POLL, move || {
+        let saving = session
+            .upgrade()
+            .is_some_and(|session| session.recording.borrow().is_some());
+        if saving && started.elapsed() < RECORDING_QUIT_WAIT {
+            return glib::ControlFlow::Continue;
+        }
+        app.quit();
+        glib::ControlFlow::Break
+    });
+}
+
+fn toggle_recording(session: &Rc<Session>) {
+    if let Some(recording) = session.recording.borrow().as_ref() {
+        println!("kiekje: stopping the recording");
+        recording.stop();
+        return;
+    }
+    println!("kiekje: starting a recording");
+    let (events, received) = async_channel::unbounded();
+    session.recording.replace(Some(record::start(events)));
+    let weak = Rc::downgrade(session);
+    glib::spawn_future_local(async move {
+        while let Ok(event) = received.recv().await {
+            let Some(session) = weak.upgrade() else {
+                return;
+            };
+            recording_event(&session, event);
+        }
+    });
+}
+
+fn recording_event(session: &Session, event: record::Event) {
+    let notice = match event {
+        record::Event::Started => {
+            session.recording_live.set(true);
+            set_tray_recording(session, true);
+            Notice::RecordingStarted
+        }
+        record::Event::Saved(path) => {
+            println!("kiekje: recording saved to {}", path.display());
+            end_recording(session);
+            Notice::RecordingSaved { path }
+        }
+        record::Event::Failed(record::RecordError::Canceled) => {
+            println!("kiekje: recording cancelled");
+            end_recording(session);
+            return;
+        }
+        record::Event::Failed(error) => {
+            eprintln!("kiekje: recording failed: {error}");
+            end_recording(session);
+            Notice::RecordingFailed {
+                reason: error.to_string(),
+            }
+        }
+    };
+    notify(session, notice);
+}
+
+fn end_recording(session: &Session) {
+    session.recording.take();
+    if session.recording_live.replace(false) {
+        set_tray_recording(session, false);
+    }
+}
+
+fn set_tray_recording(session: &Session, recording: bool) {
+    if let Some(tray) = session.tray.borrow().as_ref() {
+        tray.set_recording(recording);
+    }
 }
 
 fn pin_file(app: &gtk::Application, path: std::path::PathBuf) {

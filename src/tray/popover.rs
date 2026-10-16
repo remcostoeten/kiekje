@@ -21,6 +21,7 @@ const PANEL_WIDTH: i32 = 320;
 pub enum Pick {
     Capture(CaptureMode),
     Annotate,
+    Record,
     OpenCaptures,
     Settings,
     Gallery,
@@ -49,6 +50,7 @@ pub struct Placement {
 pub struct Content {
     pub shortcuts: Vec<(CaptureMode, String)>,
     pub window: Availability,
+    pub recording: bool,
 }
 
 type PickCallback = Rc<dyn Fn(Pick)>;
@@ -258,6 +260,14 @@ fn panel(
             panel.append(&annotate);
         }
     }
+    let record_label = if content.recording {
+        "Stop recording"
+    } else {
+        "Record screen"
+    };
+    let record = action_button(record_label, None, "outline");
+    connect_pick(&record, window, picked, Pick::Record);
+    panel.append(&record);
 
     let recent_header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)

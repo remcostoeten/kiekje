@@ -13,6 +13,7 @@ mod notify;
 mod output;
 mod overlay;
 mod pin;
+mod record;
 mod shortcuts;
 mod sound;
 mod storage;
@@ -73,6 +74,7 @@ fn main() -> glib::ExitCode {
         Some("menu") => app::run(Command::Menu),
         Some("settings") => app::run(Command::Settings),
         Some("gallery") => app::run(Command::Gallery),
+        Some("record") => app::run(Command::Record),
         Some("doctor") => {
             doctor::run();
             glib::ExitCode::SUCCESS

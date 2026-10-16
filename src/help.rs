@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "settings",
     "gallery",
     "pin",
+    "record",
     "doctor",
     "install-desktop-file",
     "help",
@@ -96,6 +97,12 @@ const SESSION: &[Entry] = &[
         name: "pin",
         argument: "<path>",
         description: "Keep an image on screen above other windows",
+        note: "",
+    },
+    Entry {
+        name: "record",
+        argument: "",
+        description: "Start recording the screen, or stop and save",
         note: "",
     },
 ];
