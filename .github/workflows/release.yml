@@ -120,8 +120,7 @@ jobs:
 
   aur:
     name: Publish packages to AUR
-    needs: release
-    if: github.event_name == 'push'
+    needs: [version, release]
     runs-on: ubuntu-24.04
     container: archlinux:base-devel
     permissions:
@@ -151,7 +150,7 @@ jobs:
           runuser -u builder -- git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
           tag="v$version"
-          test "$tag" = "$GITHUB_REF_NAME"
+          test "$tag" = "${{ needs.version.outputs.tag }}"
           base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
           mkdir -p /tmp/release
           curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
@@ -172,9 +171,11 @@ jobs:
 
   flatpak:
     name: Build Flatpak bundle
-    needs: release
-    if: github.event_name == 'push'
+    needs: [version, release]
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
@@ -187,5 +188,5 @@ jobs:
       - name: Upload bundle to the release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: ${{ needs.version.outputs.tag }}
           files: kiekje.flatpak
