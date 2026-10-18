@@ -174,7 +174,7 @@ jobs:
     needs: [version, release]
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
     steps:
       - uses: actions/checkout@v4
