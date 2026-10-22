@@ -8,7 +8,7 @@ Open an issue with the bug report form. Include the output of `kiekje doctor`, y
 
 ## Pull requests
 
-1. Read [AGENTS.md](AGENTS.md) for the stack, layout, architecture rules and code style. Read [docs/proposal.md](docs/proposal.md) before changing capture, overlay, shortcuts or tray behavior.
+1. Read [AGENTS.md](AGENTS.md) for the stack, layout, architecture rules and code style. Read [docs/project/proposal.md](docs/project/proposal.md) before changing capture, overlay, shortcuts or tray behavior.
 2. Keep each pull request to one change, with a Conventional Commit title such as `fix: keep the selection inside the monitor`.
 3. Run what CI runs:
 

@@ -1,3 +1,8 @@
+---
+title: Lab results
+description: Measurements and verified behavior from VMs and headless sessions, per desktop and per feature.
+---
+
 # Phase 0 results
 
 Machine: Arch Linux, Plasma 6.7.5, KWin 6.7.5 on Wayland, GTK 4.22.5, one active monitor DP-2 (3840x2160). The display scale changed from 1.0 to 1.5 between runs, so both were exercised. Release build. All numbers are from `kiekje-next` log output on 2026-10-02 and are single-machine samples, not benchmarks.

@@ -69,7 +69,13 @@ jobs:
         run: |
           {
             if [[ -f "docs/releases/$VERSION.md" ]]; then
-              cat "docs/releases/$VERSION.md"
+              # The notes file carries site frontmatter and a heading that the release body does not need.
+              awk '
+                NR == 1 && $0 == "---" { skipping = 1; next }
+                skipping { if ($0 == "---") skipping = 0; next }
+                !heading && /^# / { heading = 1; next }
+                { print }
+              ' "docs/releases/$VERSION.md" | sed '/./,$!d'
             else
               git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
               git tag -l --format='%(contents)' "$TAG"

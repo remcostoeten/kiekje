@@ -18,14 +18,14 @@ A screenshot tray app for Linux. Kiekje grabs the screen the moment you trigger 
 </p>
 
 <p align="center">
-  <img src="docs/assets/editor-and-gallery.png" width="100%" alt="The Kiekje gallery on the left, a grid of captures with search and filters, and the annotation editor on the right with a box, an arrow, an ellipse and two numbered steps drawn on a capture." />
+  <img src="docs/public/editor-and-gallery.png" width="100%" alt="The Kiekje gallery on the left, a grid of captures with search and filters, and the annotation editor on the right with a box, an arrow, an ellipse and two numbered steps drawn on a capture." />
 </p>
 <p align="center">
   <sub>Recorded in a headless Sway session with a lab build.</sub>
 </p>
 
 > [!WARNING]
-> Kiekje is pre-release (`0.1.0-alpha.5`). Everything below has been tested in virtual machines and headless sessions only. Runs on real hardware with Omarchy, Plasma and GNOME are still open and tracked in [issue #41](https://github.com/remcostoeten/kiekje/issues/41). Detailed lab results are in [docs/phase-0-results.md](docs/phase-0-results.md).
+> Kiekje is pre-release (`0.1.0-alpha.6`). Everything below has been tested in virtual machines and headless sessions only. Runs on real hardware with Omarchy, Plasma and GNOME are still open and tracked in [issue #41](https://github.com/remcostoeten/kiekje/issues/41). Detailed lab results are on [the documentation site](https://remcostoeten.github.io/kiekje/project/lab-results).
 
 ## Supported
 
@@ -330,7 +330,7 @@ cargo test                                                                      
 cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings     # what CI checks
 ```
 
-Architecture, capability matrix and phases are in [docs/proposal.md](docs/proposal.md). Layout, rules and code style are in [AGENTS.md](AGENTS.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests and [SECURITY.md](SECURITY.md) to report a vulnerability.
+The documentation site is at [remcostoeten.github.io/kiekje](https://remcostoeten.github.io/kiekje/) and lives in [docs/](docs/). Architecture, capability matrix and phases are in [docs/project/proposal.md](docs/project/proposal.md). Layout, rules and code style are in [AGENTS.md](AGENTS.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for pull requests and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 <br/>
 

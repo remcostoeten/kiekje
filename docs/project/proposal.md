@@ -1,4 +1,13 @@
+---
+title: Rewrite proposal
+description: "The original proposal for the Rust and GTK rewrite: the two earlier versions, the stack, the capability matrix, the phases and the acceptance tests."
+---
+
 # Kiekje rewrite proposal
+
+::: info Record
+This is the proposal as written on 2026-10-01, kept as a record of the decisions and measurements behind the rewrite, with the phase and roadmap tables updated as work landed. The current shape of the code is on the [architecture page](/project/architecture).
+:::
 
 Status: proposal, nothing implemented. Written 2026-10-01.
 
