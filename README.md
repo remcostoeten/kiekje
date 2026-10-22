@@ -337,4 +337,4 @@ The documentation site is at [remcostoeten.github.io/kiekje](https://remcostoete
 xxx,<br/>
 [Remco Stoeten](https://remcostoeten.com)<br/>
 <small>MIT</small><br/>
-<small>PS The bundled Geist fonts are under the SIL Open Font License, see [resources/fonts/OFL.txt](resources/fonts/OFL.txt).</small>
+<small>PS The bundled Geist fonts are under the SIL Open Font License, see [resources/fonts/OFL.txt](resources/fonts/OFL.txt). The emoji names in `resources/emoji` come from Unicode CLDR under the Unicode License, see [resources/emoji/LICENSE.txt](resources/emoji/LICENSE.txt).</small>

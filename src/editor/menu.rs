@@ -48,7 +48,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
 impl Editor {
     fn open_menu(self: &Rc<Self>, x: f64, y: f64) {
         let content = if self.tool.get() == Tool::Emoji {
-            self.emoji_picker()
+            self.emoji_picker("")
         } else {
             self.menu_list()
         };

@@ -2,6 +2,7 @@ mod canvas;
 mod crop;
 mod document;
 mod emoji;
+mod emoji_index;
 mod inline;
 mod keys;
 mod menu;
@@ -96,6 +97,7 @@ struct Editor {
     color: Cell<Color>,
     emoji: RefCell<String>,
     emoji_button: gtk::Button,
+    recent_emoji: RefCell<Vec<String>>,
     stamp_at: Cell<Option<Point>>,
     size: gtk::Adjustment,
     opacity: gtk::Adjustment,
@@ -285,6 +287,7 @@ impl Editor {
             color: Cell::new(drawing.color),
             emoji: RefCell::new(DEFAULT_EMOJI.to_owned()),
             emoji_button: toolbar::emoji_action(DEFAULT_EMOJI),
+            recent_emoji: RefCell::new(Vec::new()),
             stamp_at: Cell::new(None),
             size: gtk::Adjustment::new(
                 f64::from(drawing.size),
@@ -337,6 +340,7 @@ impl Editor {
             discard: Cell::new(false),
         });
         canvas::attach(&editor);
+        editor.load_recent_emoji();
         text::attach(&editor);
         menu::attach(&editor);
         wheel::attach(&editor);
@@ -574,6 +578,7 @@ impl Editor {
                     return glib::Propagation::Proceed;
                 }
             }
+            (false, "colon") => self.open_emoji_picker_with(":"),
             (false, "Menu") => self.open_menu_by_key(),
             (false, "F10") if shift => self.open_menu_by_key(),
             (false, _) if !alt => {
