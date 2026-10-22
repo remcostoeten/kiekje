@@ -48,8 +48,21 @@ Check, Cross and Emoji place one stamp per click. Press and drag to adjust the p
 | Arrow keys | Move the stamp cursor, <kbd>Shift</kbd> moves it ten times further |
 | <kbd>Space</kbd> | Place the stamp at the cursor |
 | Right-click, <kbd>Menu</kbd> or <kbd>Shift</kbd>+<kbd>F10</kbd> | Open the emoji picker with the Emoji tool |
+| <kbd>:</kbd> | Open the emoji picker with any tool, with `:` already typed |
 
-The emoji picker has a search field for names such as `fire` or `bug`. Paste or type any other emoji into the field and press <kbd>Enter</kbd> to use it. The button next to the Emoji tool opens the same picker and shows the current choice. With an emoji selected, picking from that button changes the selected emoji. The chosen emoji is not remembered between editors.
+The emoji picker opens with the search field focused. It shows a Recent row with the last eight emoji you stamped, then 64 common emoji, and searches all of Unicode's emoji by their English and Dutch names and keywords, so `fire`, `vuur`, `vlam` and `insect` all work, and a small typo such as `rockett` still finds the rocket. The names come from Unicode CLDR. Paste or type any other emoji into the field and press <kbd>Enter</kbd> to use it. The button next to the Emoji tool opens the same picker and shows the current choice. With an emoji selected, picking from that button changes the selected emoji. The recent row is kept in the library; the chosen emoji itself is not remembered between editors.
+
+| Key in the picker | Effect |
+| --- | --- |
+| Letters | Search, wherever the focus is |
+| Emoticons | `:)`, `:p`, `xD`, `<3`, `(y)` and the other MSN Messenger ones pick their emoji; `:fire:` works too |
+| <kbd>Enter</kbd> in the field | Use the best match, or the pasted emoji |
+| <kbd>Down</kbd> | From the field into the Recent row, then the grid |
+| Arrow keys | Move between emoji; <kbd>Up</kbd> from the first row goes back to the field |
+| <kbd>Enter</kbd> or <kbd>Space</kbd> on an emoji | Use it |
+| <kbd>Escape</kbd> | Close the picker |
+
+A line under the grid names the emoji under the pointer or focus.
 
 While a stamp tool is active the arrow keys move the stamp cursor instead of the region on the inline editor. Pick another tool to move the region again.
 
