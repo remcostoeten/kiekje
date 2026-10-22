@@ -16,7 +16,7 @@ pub enum DrawAction {
 }
 
 impl DrawAction {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 16] = [
         Self::Tool(Tool::Select),
         Self::Tool(Tool::Rectangle),
         Self::Tool(Tool::Ellipse),
@@ -26,6 +26,9 @@ impl DrawAction {
         Self::Tool(Tool::Highlight),
         Self::Tool(Tool::Step),
         Self::Tool(Tool::Text),
+        Self::Tool(Tool::Check),
+        Self::Tool(Tool::Cross),
+        Self::Tool(Tool::Emoji),
         Self::Tool(Tool::Pixelate),
         Self::Tool(Tool::Crop),
         Self::Smaller,
@@ -134,6 +137,9 @@ pub struct DrawingKeys {
     pub marker: DrawKey,
     pub step: DrawKey,
     pub text: DrawKey,
+    pub check: DrawKey,
+    pub cross: DrawKey,
+    pub emoji: DrawKey,
     pub pixelate: DrawKey,
     pub crop: DrawKey,
     pub thinner: DrawKey,
@@ -160,6 +166,9 @@ impl Default for DrawingKeys {
             marker: DrawKey::Off,
             step: DrawKey::Off,
             text: DrawKey::Off,
+            check: DrawKey::Off,
+            cross: DrawKey::Off,
+            emoji: DrawKey::Off,
             pixelate: DrawKey::Off,
             crop: DrawKey::Off,
             thinner: DrawKey::Off,
@@ -235,6 +244,9 @@ impl DrawingKeys {
             DrawAction::Tool(Tool::Highlight) => &self.marker,
             DrawAction::Tool(Tool::Step) => &self.step,
             DrawAction::Tool(Tool::Text) => &self.text,
+            DrawAction::Tool(Tool::Check) => &self.check,
+            DrawAction::Tool(Tool::Cross) => &self.cross,
+            DrawAction::Tool(Tool::Emoji) => &self.emoji,
             DrawAction::Tool(Tool::Pixelate) => &self.pixelate,
             DrawAction::Tool(Tool::Crop) => &self.crop,
             DrawAction::Smaller => &self.thinner,
@@ -253,6 +265,9 @@ impl DrawingKeys {
             DrawAction::Tool(Tool::Highlight) => &mut self.marker,
             DrawAction::Tool(Tool::Step) => &mut self.step,
             DrawAction::Tool(Tool::Text) => &mut self.text,
+            DrawAction::Tool(Tool::Check) => &mut self.check,
+            DrawAction::Tool(Tool::Cross) => &mut self.cross,
+            DrawAction::Tool(Tool::Emoji) => &mut self.emoji,
             DrawAction::Tool(Tool::Pixelate) => &mut self.pixelate,
             DrawAction::Tool(Tool::Crop) => &mut self.crop,
             DrawAction::Smaller => &mut self.thinner,

@@ -48,10 +48,12 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     );
     let target = Rc::downgrade(editor);
     scroll.connect_scroll(move |controller, dx, dy| {
-        let (Some(editor), Some(dial)) = (
-            target.upgrade(),
-            Dial::for_state(controller.current_event_state()),
-        ) else {
+        let Some(editor) = target.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        let dial = Dial::for_state(controller.current_event_state())
+            .or_else(|| editor.resizes_on_scroll().then_some(Dial::Size));
+        let Some(dial) = dial else {
             return glib::Propagation::Proceed;
         };
         let delta = if dy == 0.0 { dx } else { dy };
@@ -106,7 +108,7 @@ impl Editor {
         };
         let stroke = self.stroke();
         let (red, green, blue) = stroke.color.rgb();
-        if dial == Dial::Size {
+        if dial == Dial::Size && !self.resizes_on_scroll() {
             cr.arc(x, y, (stroke.width * view.zoom() / 2.0).max(0.5), 0.0, TAU);
             cr.set_source_rgba(red, green, blue, stroke.opacity);
             cr.fill_preserve()?;

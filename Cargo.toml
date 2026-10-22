@@ -14,6 +14,7 @@ gtk4-layer-shell = { version = "0.8", default-features = false }
 jpeg-encoder = "0.7"
 ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
 libc = "0.2.189"
+pangocairo = "0.22"
 png = "0.18"
 rusqlite = { version = "0.37", features = ["bundled"] }
 rustix = { version = "1", features = ["event", "fs"] }

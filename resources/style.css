@@ -892,3 +892,37 @@ popover.context-menu > contents {
   min-height: 1px;
   margin: 4px 6px;
 }
+
+.emoji-picker {
+  min-width: 300px;
+}
+
+.emoji-picker flowbox {
+  background: none;
+}
+
+.emoji-picker flowboxchild {
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 3px;
+}
+
+.emoji-picker flowboxchild:hover {
+  background-color: var(--wash);
+  border-color: var(--stroke);
+}
+
+.emoji-picker flowboxchild:focus-visible {
+  background-color: var(--accent-wash);
+  border-color: var(--accent);
+}
+
+.emoji-picker label.emoji-choice {
+  font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 20px;
+}
+
+.palette button.emoji-pick label {
+  font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+  font-size: 15px;
+}

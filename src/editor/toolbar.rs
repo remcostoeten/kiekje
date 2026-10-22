@@ -89,6 +89,10 @@ fn tools(editor: &Rc<Editor>) -> gtk::Box {
         });
         top.append(&button);
         tools.push((tool, button));
+        if tool == Tool::Emoji {
+            on_click(editor, &editor.emoji_button, Editor::open_emoji_picker);
+            top.append(&editor.emoji_button);
+        }
     }
     editor.tools.replace(tools);
     top
@@ -236,6 +240,23 @@ pub(super) fn icon_action(icon: &str, label: &str, tooltip: &str) -> gtk::Button
     button
 }
 
+pub(super) fn emoji_action(glyph: &str) -> gtk::Button {
+    let button = gtk::Button::builder()
+        .label(glyph)
+        .tooltip_text("Choose the emoji (right-click the image with the emoji tool, or Shift+F10)")
+        .css_classes(["chip", "icon", "emoji-pick"])
+        .build();
+    describe_emoji(&button, glyph);
+    button
+}
+
+pub(super) fn describe_emoji(button: &gtk::Button, glyph: &str) {
+    button.set_label(glyph);
+    button.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Choose emoji, now {glyph}"
+    ))]);
+}
+
 pub(super) fn row() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -273,6 +294,9 @@ fn icon(tool: Tool, inline: bool) -> &'static str {
         Tool::Highlight => "kiekje-highlight-symbolic",
         Tool::Step => "kiekje-step-symbolic",
         Tool::Text => "kiekje-text-symbolic",
+        Tool::Check => "kiekje-check-symbolic",
+        Tool::Cross => "kiekje-cross-symbolic",
+        Tool::Emoji => "kiekje-emoji-symbolic",
         Tool::Pixelate => "kiekje-pixelate-symbolic",
         Tool::Crop if inline => "kiekje-region-symbolic",
         Tool::Crop => "kiekje-crop-symbolic",

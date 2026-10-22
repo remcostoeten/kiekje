@@ -164,6 +164,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         if let Some(editor) = hovered.upgrade() {
             let point = editor.view.get().to_image(x, y, editor.size());
             editor.pointer.set(Some((x, y)));
+            editor.track_stamp(point);
             editor.hover_region(point);
         }
     });
@@ -230,6 +231,7 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
         let moving = editor.moving.borrow();
         let draft = editor.draft_shape();
         let typed = editor.typed_shape();
+        let ghost = editor.ghost_shape();
         let hidden = editor.typing_over();
         let shapes = document
             .shapes()
@@ -240,7 +242,7 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
                 Some(moving) if moving.index == index => &moving.preview,
                 _ => shape,
             });
-        let shapes: Vec<&Shape> = shapes.chain(&draft).chain(&typed).collect();
+        let shapes: Vec<&Shape> = shapes.chain(&draft).chain(&typed).chain(&ghost).collect();
         let marked = shapes
             .iter()
             .any(|shape| matches!(shape, Shape::Highlight { .. }));

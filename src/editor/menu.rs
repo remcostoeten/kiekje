@@ -47,8 +47,28 @@ pub(super) fn attach(editor: &Rc<Editor>) {
 
 impl Editor {
     fn open_menu(self: &Rc<Self>, x: f64, y: f64) {
+        let content = if self.tool.get() == Tool::Emoji {
+            self.emoji_picker()
+        } else {
+            self.menu_list()
+        };
+        self.open_menu_with(content, x, y);
+    }
+
+    pub(super) fn open_menu_by_key(self: &Rc<Self>) {
+        let (x, y) = if self.is_stamp_tool() {
+            self.view.get().to_widget(self.stamp_point())
+        } else {
+            self.pointer.get().unwrap_or((
+                f64::from(self.canvas.width()) / 2.0,
+                f64::from(self.canvas.height()) / 2.0,
+            ))
+        };
+        self.open_menu(x, y);
+    }
+
+    pub(super) fn open_menu_with(self: &Rc<Self>, list: gtk::Box, x: f64, y: f64) {
         self.close_menu();
-        let list = self.menu_list();
         match self.layer.borrow().as_ref() {
             Some((layer, origin)) => {
                 let (_, width, _, _) = list.measure(gtk::Orientation::Horizontal, -1);
