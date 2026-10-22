@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 
 use crate::capture::CaptureMode;
+use crate::fuzzy;
 use crate::library::Capture;
 
 const DAY_US: i64 = 24 * 60 * 60 * 1_000_000;
@@ -168,7 +169,7 @@ pub struct Query {
 
 /// Returns the captures that match `query`, in its sort order.
 ///
-/// Text matches any part of the file name, ignoring case. A repeated region counts as a region.
+/// Text matches the file name loosely through [`fuzzy::matches`], so a typo still finds it. A repeated region counts as a region.
 /// Periods are rolling windows ending at `now_us`. Dimensions bucket by the longer side, file
 /// sizes use decimal units, and the annotated and unsaved switches keep only captures with that
 /// flag. Only missing captures show when `query.missing` is set, and only present ones otherwise.
@@ -179,7 +180,7 @@ pub struct Query {
 /// let shown = query::apply(&captures, &Query { text: "invoice".into(), ..Query::default() }, now);
 /// ```
 pub fn apply<'a>(captures: &'a [Capture], query: &Query, now_us: i64) -> Vec<&'a Capture> {
-    let needle = query.text.trim().to_lowercase();
+    let needle = query.text.trim();
     let since = query.period.since(now_us);
     let mut shown: Vec<&Capture> = captures
         .iter()
@@ -190,7 +191,7 @@ pub fn apply<'a>(captures: &'a [Capture], query: &Query, now_us: i64) -> Vec<&'a
         .filter(|capture| query.file_size.matches(capture.bytes))
         .filter(|capture| !query.annotated || capture.annotated)
         .filter(|capture| !query.unsaved || capture.unsaved)
-        .filter(|capture| needle.is_empty() || name(capture).contains(&needle))
+        .filter(|capture| needle.is_empty() || fuzzy::matches(needle, &name(capture)))
         .collect();
     match query.sort {
         Sort::Newest => shown.sort_by_key(|capture| Reverse((capture.created_us, capture.id))),
@@ -355,6 +356,16 @@ mod tests {
         let captures = sample();
         let query = Query {
             text: "  INVOICE ".into(),
+            ..Query::default()
+        };
+        assert_eq!(ids(&apply(&captures, &query, 0)), [4, 1]);
+    }
+
+    #[test]
+    fn matches_name_text_with_a_typo() {
+        let captures = sample();
+        let query = Query {
+            text: "invoce".into(),
             ..Query::default()
         };
         assert_eq!(ids(&apply(&captures, &query, 0)), [4, 1]);
