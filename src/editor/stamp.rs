@@ -64,7 +64,7 @@ impl Editor {
     }
 
     pub(super) fn place_stamp(&self) -> bool {
-        if !self.is_stamp_tool() {
+        if !self.is_stamp_tool() || self.menu.borrow().is_some() {
             return false;
         }
         self.draft.replace(vec![self.stamp_point()]);

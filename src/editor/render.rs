@@ -545,7 +545,9 @@ mod tests {
             stroke,
         };
         let image = flatten(&picture, &[shape], None).unwrap();
-        assert_ne!(pixel(&image, 50, 50), [255, 255, 255, 255]);
+        for (x, y) in [(58, 58), (42, 42), (58, 42), (42, 58)] {
+            assert_ne!(pixel(&image, x, y), [255, 255, 255, 255], "{x},{y}");
+        }
         assert_eq!(pixel(&image, 50, 38), [255, 255, 255, 255]);
         assert_eq!(pixel(&image, 38, 50), [255, 255, 255, 255]);
     }

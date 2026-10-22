@@ -549,7 +549,9 @@ mod tests {
             glyph: "🔥".to_owned(),
             stroke: STROKE,
         };
-        assert_eq!(emoji.moved(5.0, -5.0).bounds().x, 10.0 + 5.0 - side / 2.0);
+        let moved = emoji.moved(5.0, -5.0).bounds();
+        assert_eq!(moved.x, 10.0 + 5.0 - side / 2.0);
+        assert_eq!(moved.y, 10.0 - 5.0 - side / 2.0);
     }
 
     #[test]
