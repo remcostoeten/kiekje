@@ -3,6 +3,7 @@ mod clipboard;
 mod danger;
 mod drawing;
 mod general;
+mod zoom;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -318,6 +319,12 @@ pub fn show(
     danger::append(&pages.about, &editor.host, on_done);
 
     let handle = Handle(Rc::downgrade(&editor));
+    let zoom_editor = Rc::downgrade(&editor);
+    zoom::install(&window, move || {
+        zoom_editor
+            .upgrade()
+            .is_some_and(|editor| editor.recording.get().is_some())
+    });
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     keys.connect_key_pressed(move |controller, keyval, keycode, state| {
