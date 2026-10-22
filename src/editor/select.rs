@@ -51,6 +51,15 @@ impl Editor {
                 false,
             ),
             Tool::Text => self.say("Click where the text goes, type, then press Enter.", false),
+            Tool::Check | Tool::Cross => self.say(
+                "Click to place it. Arrows move the cursor, Space places it, scroll sizes it.",
+                false,
+            ),
+            Tool::Emoji => self.say(
+                "Click to place it. Arrows move the cursor, Space places it, scroll sizes it, \
+                 right-click or Shift+F10 picks the emoji.",
+                false,
+            ),
             Tool::Select => self.say(
                 "Click a shape, then drag to move, drag a handle to resize, Delete removes, \
                  arrows nudge.",
@@ -204,7 +213,7 @@ impl Editor {
         true
     }
 
-    fn replace_selected(&self, change: impl FnOnce(&Shape) -> Shape) -> bool {
+    pub(super) fn replace_selected(&self, change: impl FnOnce(&Shape) -> Shape) -> bool {
         let Some(index) = self.selected.get() else {
             return false;
         };

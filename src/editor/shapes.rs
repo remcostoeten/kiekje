@@ -89,6 +89,17 @@ pub fn step_radius(stroke: Stroke) -> f64 {
     (stroke.width * 3.0 + 8.0).max(12.0)
 }
 
+/// Returns the side, in image pixels, of the square a check, cross or emoji fills.
+///
+/// # Examples
+///
+/// ```ignore
+/// let side = stamp_size(stroke);
+/// ```
+pub fn stamp_size(stroke: Stroke) -> f64 {
+    step_radius(stroke) * 2.0
+}
+
 /// Returns the font size, in image pixels, for text drawn at line width `width`.
 ///
 /// # Examples
@@ -138,6 +149,15 @@ impl Shape {
                     y: at.y - radius,
                     width: radius * 2.0,
                     height: radius * 2.0,
+                }
+            }
+            Self::Mark { at, stroke, .. } | Self::Emoji { at, stroke, .. } => {
+                let side = stamp_size(*stroke);
+                Area {
+                    x: at.x - side / 2.0,
+                    y: at.y - side / 2.0,
+                    width: side,
+                    height: side,
                 }
             }
             Self::Text { at, text, stroke } => {
@@ -196,7 +216,9 @@ impl Shape {
                 }
             }
             Self::Step { at, stroke, .. } => at.distance(point) <= step_radius(*stroke) + slack,
-            Self::Text { .. } => self.bounds().grown(slack).contains(point),
+            Self::Text { .. } | Self::Mark { .. } | Self::Emoji { .. } => {
+                self.bounds().grown(slack).contains(point)
+            }
         }
     }
 
@@ -223,7 +245,10 @@ impl Shape {
                     *point = point.moved(dx, dy);
                 }
             }
-            Self::Step { at, .. } | Self::Text { at, .. } => *at = at.moved(dx, dy),
+            Self::Step { at, .. }
+            | Self::Text { at, .. }
+            | Self::Mark { at, .. }
+            | Self::Emoji { at, .. } => *at = at.moved(dx, dy),
         }
         shape
     }
@@ -249,7 +274,11 @@ impl Shape {
             Self::Line { from, to, .. } | Self::Arrow { from, to, .. } => {
                 vec![(Handle::Start, *from), (Handle::End, *to)]
             }
-            Self::Pen { .. } | Self::Step { .. } | Self::Text { .. } => Vec::new(),
+            Self::Pen { .. }
+            | Self::Step { .. }
+            | Self::Text { .. }
+            | Self::Mark { .. }
+            | Self::Emoji { .. } => Vec::new(),
         }
     }
 
@@ -276,7 +305,11 @@ impl Shape {
                 Handle::End => *end = to,
                 _ => {}
             },
-            Self::Pen { .. } | Self::Step { .. } | Self::Text { .. } => {}
+            Self::Pen { .. }
+            | Self::Step { .. }
+            | Self::Text { .. }
+            | Self::Mark { .. }
+            | Self::Emoji { .. } => {}
         }
         shape
     }
@@ -298,7 +331,9 @@ impl Shape {
             | Self::Arrow { stroke, .. }
             | Self::Pen { stroke, .. }
             | Self::Step { stroke, .. }
-            | Self::Text { stroke, .. } => Some(*stroke),
+            | Self::Text { stroke, .. }
+            | Self::Mark { stroke, .. }
+            | Self::Emoji { stroke, .. } => Some(*stroke),
             Self::Highlight { .. } | Self::Pixelate { .. } => None,
         }
     }
@@ -321,7 +356,9 @@ impl Shape {
             | Self::Arrow { stroke, .. }
             | Self::Pen { stroke, .. }
             | Self::Step { stroke, .. }
-            | Self::Text { stroke, .. } => *stroke = style,
+            | Self::Text { stroke, .. }
+            | Self::Mark { stroke, .. }
+            | Self::Emoji { stroke, .. } => *stroke = style,
             Self::Highlight { color, .. } => *color = style.color,
             Self::Pixelate { .. } => {}
         }
@@ -345,7 +382,7 @@ fn segment_distance(point: Point, start: Point, end: Point) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::document::Color;
+    use crate::editor::document::{Color, MarkKind};
 
     const STROKE: Stroke = Stroke {
         color: Color::Accent,
@@ -490,6 +527,44 @@ mod tests {
         assert!(!text.hit(point(5.0, 25.0), 0.0));
         assert!(text.handles().is_empty());
         assert_eq!(text.moved(1.0, 1.0).bounds().x, 11.0);
+    }
+
+    #[test]
+    fn centers_a_stamp_on_its_point_and_moves_it_whole() {
+        let mark = Shape::Mark {
+            at: point(50.0, 40.0),
+            kind: MarkKind::Check,
+            stroke: STROKE,
+        };
+        let side = stamp_size(STROKE);
+        assert_eq!(
+            mark.bounds(),
+            area(50.0 - side / 2.0, 40.0 - side / 2.0, side, side)
+        );
+        assert!(mark.hit(point(50.0, 40.0), 0.0));
+        assert!(!mark.hit(point(50.0 + side, 40.0), 2.0));
+        assert!(mark.handles().is_empty());
+        let emoji = Shape::Emoji {
+            at: point(10.0, 10.0),
+            glyph: "🔥".to_owned(),
+            stroke: STROKE,
+        };
+        let moved = emoji.moved(5.0, -5.0).bounds();
+        assert_eq!(moved.x, 10.0 + 5.0 - side / 2.0);
+        assert_eq!(moved.y, 10.0 - 5.0 - side / 2.0);
+    }
+
+    #[test]
+    fn grows_a_stamp_with_the_line_width() {
+        let thin = Stroke {
+            width: 1.0,
+            ..STROKE
+        };
+        let thick = Stroke {
+            width: 12.0,
+            ..STROKE
+        };
+        assert!(stamp_size(thick) > stamp_size(thin));
     }
 
     #[test]

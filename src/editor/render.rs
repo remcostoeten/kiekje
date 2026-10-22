@@ -1,8 +1,8 @@
 use std::f64::consts::{PI, TAU};
 
-use gtk::cairo;
+use gtk::{cairo, pango};
 
-use super::document::{Area, Color, Point, Shape, Stroke};
+use super::document::{Area, Color, MarkKind, Point, Shape, Stroke};
 use super::pixels::{self, Picture};
 use super::shapes;
 use crate::output::Image;
@@ -191,6 +191,8 @@ fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(),
         }
         Shape::Step { at, number, stroke } => step(cr, *at, *number, *stroke),
         Shape::Text { at, text, stroke } => write(cr, *at, text, *stroke),
+        Shape::Mark { at, kind, stroke } => mark(cr, *at, *kind, *stroke),
+        Shape::Emoji { at, glyph, stroke } => emoji(cr, *at, glyph, *stroke),
         Shape::Pixelate { area } => {
             cr.rectangle(area.x, area.y, area.width, area.height);
             cr.clip();
@@ -203,6 +205,7 @@ fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(),
 }
 
 const FONT: &str = "Geist";
+const EMOJI_FONT: &str = "Apple Color Emoji, emoji";
 
 /// Measures one line of annotation text in image pixels: its advance and its line height.
 ///
@@ -246,6 +249,71 @@ fn write(cr: &cairo::Context, at: Point, text: &str, stroke: Stroke) -> Result<(
     let (red, green, blue) = stroke.color.rgb();
     cr.set_source_rgb(red, green, blue);
     cr.fill()
+}
+
+fn mark(
+    cr: &cairo::Context,
+    at: Point,
+    kind: MarkKind,
+    stroke: Stroke,
+) -> Result<(), cairo::Error> {
+    let reach = shapes::stamp_size(stroke) / 2.0;
+    let line = reach * 0.34;
+    cr.translate(at.x, at.y);
+    cr.set_line_cap(cairo::LineCap::Round);
+    cr.set_line_join(cairo::LineJoin::Round);
+    match kind {
+        MarkKind::Check => {
+            cr.move_to(-reach * 0.62, reach * 0.04);
+            cr.line_to(-reach * 0.2, reach * 0.48);
+            cr.line_to(reach * 0.66, -reach * 0.52);
+        }
+        MarkKind::Cross => {
+            cr.move_to(-reach * 0.52, -reach * 0.52);
+            cr.line_to(reach * 0.52, reach * 0.52);
+            cr.move_to(reach * 0.52, -reach * 0.52);
+            cr.line_to(-reach * 0.52, reach * 0.52);
+        }
+    }
+    let halo = if stroke.color == Color::Black {
+        Color::White
+    } else {
+        Color::Black
+    };
+    let (red, green, blue) = halo.rgb();
+    cr.set_source_rgba(red, green, blue, 0.7);
+    cr.set_line_width(line * 1.5);
+    cr.stroke_preserve()?;
+    let (red, green, blue) = stroke.color.rgb();
+    cr.set_source_rgb(red, green, blue);
+    cr.set_line_width(line);
+    cr.stroke()
+}
+
+fn emoji(cr: &cairo::Context, at: Point, glyph: &str, stroke: Stroke) -> Result<(), cairo::Error> {
+    let side = shapes::stamp_size(stroke);
+    let layout = pangocairo::functions::create_layout(cr);
+    let mut font = pango::FontDescription::new();
+    font.set_family(EMOJI_FONT);
+    font.set_absolute_size(side * f64::from(pango::SCALE));
+    layout.set_font_description(Some(&font));
+    layout.set_text(glyph);
+    let (_, logical) = layout.extents();
+    let (width, height) = (
+        f64::from(logical.width()) / f64::from(pango::SCALE),
+        f64::from(logical.height()) / f64::from(pango::SCALE),
+    );
+    let extent = width.max(height);
+    if extent <= 0.0 {
+        return Ok(());
+    }
+    let fit = side / extent;
+    cr.translate(at.x, at.y);
+    cr.scale(fit, fit);
+    cr.move_to(-width / 2.0, -height / 2.0);
+    pangocairo::functions::update_layout(cr, &layout);
+    pangocairo::functions::show_layout(cr, &layout);
+    Ok(())
 }
 
 fn use_stroke(cr: &cairo::Context, stroke: Stroke) {
@@ -438,6 +506,69 @@ mod tests {
         assert_eq!((image.width, image.height), (15, 12));
         assert_eq!(pixel(&image, 0, 8), [0x11, 0x11, 0x11, 255]);
         assert_eq!(pixel(&image, 5, 0), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn draws_a_check_in_its_colour_inside_its_square() {
+        let picture = white(100, 100);
+        let stroke = Stroke {
+            color: Color::Green,
+            width: 3.0,
+            opacity: 1.0,
+        };
+        let shape = Shape::Mark {
+            at: Point { x: 50.0, y: 50.0 },
+            kind: MarkKind::Check,
+            stroke,
+        };
+        let image = flatten(&picture, &[shape], None).unwrap();
+        let [red, green, blue, _] = pixel(&image, 50, 50 + 4);
+        assert!(
+            green > red && green > blue,
+            "pixel was {red} {green} {blue}"
+        );
+        assert_eq!(pixel(&image, 2, 2), [255, 255, 255, 255]);
+        assert_eq!(pixel(&image, 97, 97), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn draws_both_strokes_of_a_cross() {
+        let picture = white(100, 100);
+        let stroke = Stroke {
+            color: Color::Red,
+            width: 3.0,
+            opacity: 1.0,
+        };
+        let shape = Shape::Mark {
+            at: Point { x: 50.0, y: 50.0 },
+            kind: MarkKind::Cross,
+            stroke,
+        };
+        let image = flatten(&picture, &[shape], None).unwrap();
+        for (x, y) in [(58, 58), (42, 42), (58, 42), (42, 58)] {
+            assert_ne!(pixel(&image, x, y), [255, 255, 255, 255], "{x},{y}");
+        }
+        assert_eq!(pixel(&image, 50, 38), [255, 255, 255, 255]);
+        assert_eq!(pixel(&image, 38, 50), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn keeps_an_emoji_inside_its_square() {
+        let picture = white(120, 120);
+        let stroke = Stroke {
+            color: Color::Red,
+            width: 3.0,
+            opacity: 1.0,
+        };
+        let shape = Shape::Emoji {
+            at: Point { x: 60.0, y: 60.0 },
+            glyph: "🔥".to_owned(),
+            stroke,
+        };
+        let image = flatten(&picture, &[shape], None).unwrap();
+        for (x, y) in [(2, 2), (117, 2), (2, 117), (117, 117), (60, 2), (60, 117)] {
+            assert_eq!(pixel(&image, x, y), [255, 255, 255, 255], "{x},{y}");
+        }
     }
 
     #[test]

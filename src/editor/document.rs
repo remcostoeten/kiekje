@@ -198,6 +198,14 @@ fn unit(image: (u32, u32)) -> f64 {
     (f64::from(image.0.min(image.1)) / 1080.0).clamp(1.0, 2.0)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarkKind {
+    Check,
+    Cross,
+}
+
+pub const DEFAULT_EMOJI: &str = "👍";
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shape {
     Rectangle {
@@ -239,6 +247,16 @@ pub enum Shape {
         text: String,
         stroke: Stroke,
     },
+    Mark {
+        at: Point,
+        kind: MarkKind,
+        stroke: Stroke,
+    },
+    Emoji {
+        at: Point,
+        glyph: String,
+        stroke: Stroke,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -253,12 +271,15 @@ pub enum Tool {
     Highlight,
     Step,
     Text,
+    Check,
+    Cross,
+    Emoji,
     Pixelate,
     Crop,
 }
 
 impl Tool {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 14] = [
         Self::Select,
         Self::Rectangle,
         Self::Ellipse,
@@ -268,6 +289,9 @@ impl Tool {
         Self::Highlight,
         Self::Step,
         Self::Text,
+        Self::Check,
+        Self::Cross,
+        Self::Emoji,
         Self::Pixelate,
         Self::Crop,
     ];
@@ -283,6 +307,9 @@ impl Tool {
             Self::Highlight => "Marker",
             Self::Step => "Step",
             Self::Text => "Text",
+            Self::Check => "Check",
+            Self::Cross => "Cross",
+            Self::Emoji => "Emoji",
             Self::Pixelate => "Pixelate",
             Self::Crop => "Crop",
         }
@@ -299,6 +326,9 @@ impl Tool {
             Self::Highlight => "m",
             Self::Step => "n",
             Self::Text => "t",
+            Self::Check => "y",
+            Self::Cross => "u",
+            Self::Emoji => "i",
             Self::Pixelate => "x",
             Self::Crop => "c",
         }
@@ -306,7 +336,8 @@ impl Tool {
 
     /// Turns the points of one drag into a shape, or `None` when the drag was too small to mean one.
     ///
-    /// Steps need only a click; every other tool needs a drag of a few pixels.
+    /// Steps, checks, crosses and emoji need only a click; every other tool needs a drag of a few
+    /// pixels.
     ///
     /// # Examples
     ///
@@ -321,7 +352,7 @@ impl Tool {
         }
     }
 
-    pub fn shape(self, points: &[Point], stroke: Stroke, step: u32) -> Option<Shape> {
+    pub fn shape(self, points: &[Point], stroke: Stroke, step: u32, glyph: &str) -> Option<Shape> {
         let (&start, &end) = (points.first()?, points.last()?);
         let area = Area::between(start, end);
         let long_enough = start.distance(end) >= MIN_SIZE;
@@ -350,6 +381,21 @@ impl Tool {
             Self::Step => Some(Shape::Step {
                 at: end,
                 number: step,
+                stroke,
+            }),
+            Self::Check => Some(Shape::Mark {
+                at: end,
+                kind: MarkKind::Check,
+                stroke,
+            }),
+            Self::Cross => Some(Shape::Mark {
+                at: end,
+                kind: MarkKind::Cross,
+                stroke,
+            }),
+            Self::Emoji => Some(Shape::Emoji {
+                at: end,
+                glyph: glyph.to_owned(),
                 stroke,
             }),
             _ => None,
@@ -682,16 +728,16 @@ mod tests {
             Tool::Highlight,
             Tool::Pixelate,
         ] {
-            assert_eq!(tool.shape(&click, STROKE, 1), None, "{tool:?}");
+            assert_eq!(tool.shape(&click, STROKE, 1, ""), None, "{tool:?}");
         }
-        assert_eq!(Tool::Pen.shape(&click[..1], STROKE, 1), None);
+        assert_eq!(Tool::Pen.shape(&click[..1], STROKE, 1, ""), None);
     }
 
     #[test]
     fn places_a_step_with_a_click() {
         let click = [point(5.0, 5.0)];
         assert_eq!(
-            Tool::Step.shape(&click, STROKE, 4),
+            Tool::Step.shape(&click, STROKE, 4, ""),
             Some(Shape::Step {
                 at: point(5.0, 5.0),
                 number: 4,
@@ -701,9 +747,38 @@ mod tests {
     }
 
     #[test]
+    fn places_checks_crosses_and_emoji_with_a_click() {
+        let click = [point(5.0, 5.0)];
+        assert_eq!(
+            Tool::Check.shape(&click, STROKE, 1, ""),
+            Some(Shape::Mark {
+                at: point(5.0, 5.0),
+                kind: MarkKind::Check,
+                stroke: STROKE
+            })
+        );
+        assert_eq!(
+            Tool::Cross.shape(&click, STROKE, 1, ""),
+            Some(Shape::Mark {
+                at: point(5.0, 5.0),
+                kind: MarkKind::Cross,
+                stroke: STROKE
+            })
+        );
+        assert_eq!(
+            Tool::Emoji.shape(&click, STROKE, 1, "🔥"),
+            Some(Shape::Emoji {
+                at: point(5.0, 5.0),
+                glyph: "🔥".to_owned(),
+                stroke: STROKE
+            })
+        );
+    }
+
+    #[test]
     fn keeps_every_pen_point() {
         let points = [point(0.0, 0.0), point(1.0, 2.0), point(3.0, 1.0)];
-        let Some(Shape::Pen { points: kept, .. }) = Tool::Pen.shape(&points, STROKE, 1) else {
+        let Some(Shape::Pen { points: kept, .. }) = Tool::Pen.shape(&points, STROKE, 1, "") else {
             panic!("expected a pen stroke");
         };
         assert_eq!(kept, points);

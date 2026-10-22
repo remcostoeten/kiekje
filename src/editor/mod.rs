@@ -1,6 +1,7 @@
 mod canvas;
 mod crop;
 mod document;
+mod emoji;
 mod inline;
 mod keys;
 mod menu;
@@ -8,6 +9,7 @@ mod pixels;
 mod render;
 mod select;
 mod shapes;
+mod stamp;
 mod text;
 mod toolbar;
 mod wheel;
@@ -30,7 +32,8 @@ use crate::storage::Naming;
 use crate::{storage, ui};
 use canvas::View;
 use document::{
-    Area, Document, Edit, MAX_SIZE_PX, MIN_OPACITY, MIN_SIZE_PX, Point, Shape, Stroke, Tool,
+    Area, DEFAULT_EMOJI, Document, Edit, MAX_SIZE_PX, MIN_OPACITY, MIN_SIZE_PX, Point, Shape,
+    Stroke, Tool,
 };
 use pixels::{LoadError, Picture};
 use render::Layers;
@@ -91,6 +94,9 @@ struct Editor {
     document: RefCell<Document>,
     tool: Cell<Tool>,
     color: Cell<Color>,
+    emoji: RefCell<String>,
+    emoji_button: gtk::Button,
+    stamp_at: Cell<Option<Point>>,
     size: gtk::Adjustment,
     opacity: gtk::Adjustment,
     keys: DrawingKeys,
@@ -277,6 +283,9 @@ impl Editor {
             document: RefCell::new(document),
             tool: Cell::new(Tool::default()),
             color: Cell::new(drawing.color),
+            emoji: RefCell::new(DEFAULT_EMOJI.to_owned()),
+            emoji_button: toolbar::emoji_action(DEFAULT_EMOJI),
+            stamp_at: Cell::new(None),
             size: gtk::Adjustment::new(
                 f64::from(drawing.size),
                 f64::from(MIN_SIZE_PX),
@@ -433,7 +442,9 @@ impl Editor {
             return None;
         }
         let step = self.document.borrow().next_step();
-        self.tool.get().shape(&draft, self.stroke(), step)
+        self.tool
+            .get()
+            .shape(&draft, self.stroke(), step, &self.emoji.borrow())
     }
 
     fn commit(&self) {
@@ -509,10 +520,26 @@ impl Editor {
         let step = if shift { 10.0 } else { 1.0 };
         let handled = match (control, letter.as_str()) {
             (false, "Delete" | "BackSpace") => self.delete_selected(),
-            (false, "Left") => self.nudge(-step, 0.0) || self.step_region(-step, 0.0, false),
-            (false, "Right") => self.nudge(step, 0.0) || self.step_region(step, 0.0, false),
-            (false, "Up") => self.nudge(0.0, -step) || self.step_region(0.0, -step, false),
-            (false, "Down") => self.nudge(0.0, step) || self.step_region(0.0, step, false),
+            (false, "Left") => {
+                self.nudge(-step, 0.0)
+                    || self.move_stamp_cursor(-step, 0.0)
+                    || self.step_region(-step, 0.0, false)
+            }
+            (false, "Right") => {
+                self.nudge(step, 0.0)
+                    || self.move_stamp_cursor(step, 0.0)
+                    || self.step_region(step, 0.0, false)
+            }
+            (false, "Up") => {
+                self.nudge(0.0, -step)
+                    || self.move_stamp_cursor(0.0, -step)
+                    || self.step_region(0.0, -step, false)
+            }
+            (false, "Down") => {
+                self.nudge(0.0, step)
+                    || self.move_stamp_cursor(0.0, step)
+                    || self.step_region(0.0, step, false)
+            }
             (true, "Left") => self.step_region(-step, 0.0, true),
             (true, "Right") => self.step_region(step, 0.0, true),
             (true, "Up") => self.step_region(0.0, -step, true),
@@ -542,6 +569,13 @@ impl Editor {
                 }
             }
             (false, "s") if self.is_inline() => self.pick(Tool::Crop),
+            (false, "space") => {
+                if !self.place_stamp() {
+                    return glib::Propagation::Proceed;
+                }
+            }
+            (false, "Menu") => self.open_menu_by_key(),
+            (false, "F10") if shift => self.open_menu_by_key(),
             (false, _) if !alt => {
                 if let Some(action) = self.key_action(key, shift) {
                     self.run(action);
