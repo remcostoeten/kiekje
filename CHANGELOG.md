@@ -6,12 +6,29 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ### Added
 
-- Gallery search tolerates a typo in the file name and ignores accents.
-- Check, cross and emoji stamp tools. A faint preview follows the pointer, and a click places the stamp. From the keyboard, the arrow keys move the preview and Space places it.
-- The emoji tool has a picker with 64 common emoji and a search field over every Unicode emoji by its English and Dutch names and keywords from CLDR, with typo tolerance. The field also accepts a pasted emoji. A Recent row keeps the last eight stamped emoji, and the picker is fully keyboard driven: type from anywhere, Down into the rows, arrows between emoji, Enter or Space to use one, Escape to close. Pressing `:` in the editor opens it, and chat emoticons such as `:p`, `xD`, `<3` and `(y)` find their emoji. Open it from the toolbar, by right-clicking the image with the emoji tool, or with Shift+F10.
-- Several shapes can be selected at once by dragging a frame on empty canvas with Select, with Ctrl+click, or with Ctrl+A. Move, nudge, turn, restyle and delete then apply to all of them and undo as one step. A group has its own frame and turn handle and swings around its centre.
+- The emoji picker searches every Unicode emoji by its English and Dutch names and keywords from CLDR, with typo tolerance, so `vuur`, `insekt` and `rockett` all find something. Chat emoticons such as `:p`, `xD`, `<3` and `(y)` find their emoji, and `:fire:` works too.
+- A Recent row in the emoji picker keeps the last eight stamped emoji. The picker works from the keyboard alone: type from anywhere, Down into the rows, arrows between emoji, Enter or Space to use one, Escape to close. Pressing `:` in the editor opens it with the colon typed.
 - Text, checks, crosses and emoji can be turned: drag the handle above a selected one or just outside a corner, where a curved arrow shows (Shift keeps 15 degree steps), or press `,` and `.` for 15 degree steps. Both keys can be changed under Drawing keys.
-- Scroll resizes the active stamp tool or a selected stamp. A placed stamp is selected right away and the tool returns to Select.
+- Several shapes can be selected at once by dragging a frame on empty canvas with Select, with Ctrl+click, or with Ctrl+A. Move, nudge, turn, restyle and delete then apply to all of them and undo as one step. A group has its own frame and turn handle and swings around its centre.
+- Gallery search tolerates a typo in the file name and ignores accents.
+- Ctrl+plus, Ctrl+minus and Ctrl+0 zoom the settings window.
+- The documentation moved to a site built from `docs/` and published to GitHub Pages.
+
+### Changed
+
+- A placed stamp is selected right away and the tool returns to Select, so the preview stops following the pointer.
+
+### Fixed
+
+- Dragging and the stamp preview no longer stutter in the editor window on large screens.
+
+## [0.1.0-alpha.7] - 2026-10-22
+
+### Added
+
+- Check, cross and emoji stamp tools. A faint preview follows the pointer, and a click places the stamp. From the keyboard, the arrow keys move the preview and Space places it.
+- The emoji tool has a picker with 64 emoji and a search field that also accepts a pasted emoji. Open it from the toolbar, by right-clicking the image with the emoji tool, or with Shift+F10.
+- Scroll resizes the active stamp tool or a selected stamp.
 - The stamp tools can get keys under Settings, Shortcuts, Drawing keys. They have none by default.
 
 ## [0.1.0-alpha.6] - 2026-10-16
@@ -104,6 +121,7 @@ All notable changes to Kiekje. The full notes for each release, including what w
 First alpha: region capture with an overlay, a gallery, an editor with shapes, text and crop, a tray, and settings.
 
 [Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.7]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.4
