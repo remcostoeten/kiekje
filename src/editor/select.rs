@@ -207,6 +207,7 @@ impl Editor {
         };
         let previous = self.selected.get();
         match hit {
+            Some((_, Grab::Handle(_))) => {}
             Some((index, Grab::Body)) if extend => {
                 if !self.toggle_selected(index) {
                     self.moving.replace(None);
