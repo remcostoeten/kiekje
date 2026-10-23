@@ -84,7 +84,7 @@ Changing a slider with a shape selected restyles that shape. A whole slider drag
 
 ## Editing shapes
 
-With Select active, click a shape to select it. Drag it to move, drag a handle to resize, use the arrow keys to nudge, <kbd>Delete</kbd> removes it. Right-click the canvas for a menu with every tool, the line sizes, undo, redo and delete.
+With Select active, click a shape to select it. Drag it to move, drag a handle to resize, use the arrow keys to nudge, <kbd>Delete</kbd> removes it. <kbd>Ctrl</kbd>+click adds a shape to the selection or takes it out again, and <kbd>Ctrl</kbd>+<kbd>A</kbd> selects everything. Moving, nudging, turning, recolouring, resizing and deleting then apply to the whole selection and undo as one step; the handles only show for a single shape. Right-click the canvas for a menu with every tool, the line sizes, undo, redo and delete.
 
 <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Y</kbd> redoes. Every change is one step, including text edits and slider drags.
 

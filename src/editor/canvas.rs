@@ -83,7 +83,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         .button(gdk::BUTTON_PRIMARY)
         .build();
     let started = Rc::downgrade(editor);
-    drag.connect_drag_begin(move |_, x, y| {
+    drag.connect_drag_begin(move |gesture, x, y| {
         if let Some(editor) = started.upgrade() {
             editor.canvas.grab_focus();
             let point = editor.view.get().to_image(x, y, editor.size());
@@ -93,7 +93,10 @@ pub(super) fn attach(editor: &Rc<Editor>) {
             match editor.tool.get() {
                 Tool::Crop => editor.hide_bars(),
                 Tool::Select => {
-                    editor.grab(point);
+                    let extend = gesture
+                        .current_event_state()
+                        .contains(gdk::ModifierType::CONTROL_MASK);
+                    editor.grab(point, extend);
                     return;
                 }
                 Tool::Text => {

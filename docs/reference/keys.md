@@ -74,7 +74,9 @@ Defaults, rebindable under Settings, Shortcuts, Drawing keys or in [`[drawing.ke
 | <kbd>Ctrl</kbd>+scroll | Size |
 | <kbd>Shift</kbd>+scroll | Opacity |
 | <kbd>Alt</kbd>+scroll | Colour |
-| <kbd>Delete</kbd> | Delete the selected shape |
+| <kbd>Delete</kbd> | Delete the selected shapes |
+| <kbd>Ctrl</kbd>+click | Add a shape to the selection, or take it out |
+| <kbd>Ctrl</kbd>+<kbd>A</kbd> | Select every shape |
 | Scroll | Size, with a check, cross or emoji tool or stamp selected |
 | Arrow keys, <kbd>Space</kbd> | Move the stamp cursor and place the stamp |
 | <kbd>Menu</kbd>, <kbd>Shift</kbd>+<kbd>F10</kbd> | Open the context menu, or the emoji picker with the Emoji tool |

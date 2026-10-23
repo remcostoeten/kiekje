@@ -442,6 +442,17 @@ pub enum Edit {
         before: Option<Area>,
         after: Option<Area>,
     },
+    Batch(Vec<Edit>),
+}
+
+impl Edit {
+    fn valid_for(&self, count: usize) -> bool {
+        match self {
+            Self::Replace { index, .. } | Self::Remove { index, .. } => *index < count,
+            Self::Batch(edits) => edits.iter().all(|edit| edit.valid_for(count)),
+            _ => true,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -498,10 +509,8 @@ impl Document {
     /// document.apply(Edit::Add(shape));
     /// ```
     pub fn apply(&mut self, edit: Edit) {
-        if let Edit::Replace { index, .. } | Edit::Remove { index, .. } = edit
-            && index >= self.shapes.len()
-        {
-            eprintln!("kiekje: dropped an edit for shape {index}, which no longer exists");
+        if !edit.valid_for(self.shapes.len()) {
+            eprintln!("kiekje: dropped an edit for a shape that no longer exists");
             return;
         }
         if self.saved > self.done.len() {
@@ -637,6 +646,11 @@ impl Document {
             }
             Edit::Clear(_) => self.shapes.clear(),
             Edit::Crop { after, .. } => self.crop = *after,
+            Edit::Batch(edits) => {
+                for edit in edits {
+                    self.perform(edit);
+                }
+            }
         }
     }
 
@@ -652,6 +666,11 @@ impl Document {
             }
             Edit::Clear(shapes) => self.shapes = shapes.clone(),
             Edit::Crop { before, .. } => self.crop = *before,
+            Edit::Batch(edits) => {
+                for edit in edits.iter().rev() {
+                    self.revert(edit);
+                }
+            }
         }
     }
 
@@ -798,6 +817,34 @@ mod tests {
                 angle: 0.0
             })
         );
+    }
+
+    #[test]
+    fn undoes_a_batch_as_one_step() {
+        let mut document = Document::default();
+        for index in 0..3 {
+            document.apply(Edit::Add(step(index)));
+        }
+        document.apply(Edit::Batch(vec![
+            Edit::Remove {
+                index: 2,
+                shape: step(2),
+            },
+            Edit::Remove {
+                index: 0,
+                shape: step(0),
+            },
+        ]));
+        assert_eq!(document.shapes(), &[step(1)]);
+        assert!(document.undo());
+        assert_eq!(document.shapes(), &[step(0), step(1), step(2)]);
+        assert!(document.redo());
+        assert_eq!(document.shapes(), &[step(1)]);
+        document.apply(Edit::Batch(vec![Edit::Remove {
+            index: 5,
+            shape: step(5),
+        }]));
+        assert_eq!(document.shapes(), &[step(1)]);
     }
 
     #[test]

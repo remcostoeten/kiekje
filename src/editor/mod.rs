@@ -120,6 +120,7 @@ struct Editor {
     pointer: Cell<Option<(f64, f64)>>,
     hud: RefCell<Option<wheel::Hud>>,
     selected: Cell<Option<usize>>,
+    also_selected: RefCell<Vec<usize>>,
     moving: RefCell<Option<select::Moving>>,
     writer: gtk::Popover,
     entry: gtk::Entry,
@@ -328,6 +329,7 @@ impl Editor {
             pointer: Cell::new(None),
             hud: RefCell::new(None),
             selected: Cell::new(None),
+            also_selected: RefCell::new(Vec::new()),
             moving: RefCell::new(None),
             writer: gtk::Popover::new(),
             entry: gtk::Entry::builder()
@@ -488,6 +490,7 @@ impl Editor {
         let last = self.document.borrow().shapes().len().checked_sub(1);
         self.pick(Tool::Select);
         self.selected.set(last);
+        self.also_selected.borrow_mut().clear();
         self.say(
             "Placed. Scroll sizes it, arrows move it, comma and period turn it, drag the top handle to turn it freely.",
             false,
@@ -588,6 +591,7 @@ impl Editor {
         }
         match (control, letter.as_str()) {
             (true, "z") if shift => self.redo(),
+            (true, "a") => self.select_all(),
             (true, "z") => self.undo(),
             (true, "y") => self.redo(),
             (true, "c") => self.copy(),

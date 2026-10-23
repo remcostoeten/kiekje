@@ -23,6 +23,20 @@ pub(super) struct Moving {
     original: Shape,
     grab: Grab,
     start: Point,
+    others: Vec<(usize, Shape)>,
+    delta: (f64, f64),
+}
+
+impl Moving {
+    fn preview_of(&self, index: usize) -> Option<Shape> {
+        if index == self.index {
+            return Some(self.preview.clone());
+        }
+        self.others
+            .iter()
+            .find(|(other, _)| *other == index)
+            .map(|(_, shape)| shape.moved(self.delta.0, self.delta.1))
+    }
 }
 
 pub(super) fn tool_cursor(tool: Tool) -> &'static str {
@@ -30,6 +44,14 @@ pub(super) fn tool_cursor(tool: Tool) -> &'static str {
         Tool::Text => "text",
         Tool::Select => "default",
         _ => "crosshair",
+    }
+}
+
+fn batch(mut edits: Vec<Edit>) -> Edit {
+    if edits.len() == 1 {
+        edits.remove(0)
+    } else {
+        Edit::Batch(edits)
     }
 }
 
@@ -67,7 +89,7 @@ impl Editor {
             ),
             Tool::Select => self.say(
                 "Click a shape, then drag to move, drag a handle to resize, Delete removes, \
-                 arrows nudge.",
+                 arrows nudge. Ctrl+click adds to the selection, Ctrl+A selects all.",
                 false,
             ),
             _ => {}
@@ -78,11 +100,12 @@ impl Editor {
         REACH / self.view.get().zoom()
     }
 
-    pub(super) fn grab(&self, point: Point) {
+    pub(super) fn grab(&self, point: Point, extend: bool) {
         let slack = self.slack();
-        let target = {
+        let single = self.also_selected.borrow().is_empty();
+        let hit = {
             let document = self.document.borrow();
-            let on_handle = self.selected.get().and_then(|index| {
+            let on_handle = self.selected.get().filter(|_| single).and_then(|index| {
                 let (handle, _) = document
                     .shapes()
                     .get(index)?
@@ -91,25 +114,104 @@ impl Editor {
                     .find(|(_, at)| at.distance(point) <= slack)?;
                 Some((index, Grab::Handle(handle)))
             });
-            on_handle
-                .or_else(|| document.hit(point, slack).map(|index| (index, Grab::Body)))
-                .and_then(|(index, grab)| {
-                    let original = document.shapes().get(index)?.clone();
-                    Some(Moving {
-                        index,
-                        preview: original.clone(),
-                        original,
-                        grab,
-                        start: point,
-                    })
-                })
+            on_handle.or_else(|| document.hit(point, slack).map(|index| (index, Grab::Body)))
         };
-        let picked = target.as_ref().map(|moving| moving.index);
-        let previous = self.selected.replace(picked);
+        let previous = self.selected.get();
+        match hit {
+            Some((index, Grab::Body)) if extend => {
+                if !self.toggle_selected(index) {
+                    self.moving.replace(None);
+                    self.canvas.queue_draw();
+                    return;
+                }
+            }
+            Some((index, Grab::Body)) if self.is_selected(index) => {
+                if let Some(primary) = previous.filter(|primary| *primary != index) {
+                    let mut also = self.also_selected.borrow_mut();
+                    also.retain(|other| *other != index);
+                    also.push(primary);
+                }
+                self.selected.set(Some(index));
+            }
+            Some((index, _)) => {
+                self.also_selected.borrow_mut().clear();
+                self.selected.set(Some(index));
+            }
+            None => {
+                self.also_selected.borrow_mut().clear();
+                self.selected.set(None);
+            }
+        }
+        let target = hit.and_then(|(index, grab)| {
+            let document = self.document.borrow();
+            let original = document.shapes().get(index)?.clone();
+            let others = match grab {
+                Grab::Body => self
+                    .also_selected
+                    .borrow()
+                    .iter()
+                    .filter_map(|other| Some((*other, document.shapes().get(*other)?.clone())))
+                    .collect(),
+                Grab::Handle(_) => Vec::new(),
+            };
+            Some(Moving {
+                index,
+                preview: original.clone(),
+                original,
+                grab,
+                start: point,
+                others,
+                delta: (0.0, 0.0),
+            })
+        });
         self.moving.replace(target);
-        if let Some(index) = picked.filter(|index| previous != Some(*index)) {
+        if let Some(index) = self.selected.get().filter(|index| previous != Some(*index)) {
             self.adopt(index);
         }
+        self.canvas.queue_draw();
+    }
+
+    fn is_selected(&self, index: usize) -> bool {
+        self.selected.get() == Some(index) || self.also_selected.borrow().contains(&index)
+    }
+
+    fn toggle_selected(&self, index: usize) -> bool {
+        if self.selected.get() == Some(index) {
+            let next = self.also_selected.borrow_mut().pop();
+            self.selected.set(next);
+            return false;
+        }
+        let mut also = self.also_selected.borrow_mut();
+        if let Some(position) = also.iter().position(|other| *other == index) {
+            also.remove(position);
+            return false;
+        }
+        if let Some(primary) = self.selected.get() {
+            also.push(primary);
+        }
+        drop(also);
+        self.selected.set(Some(index));
+        true
+    }
+
+    /// Every selected shape index, lowest first.
+    fn selection(&self) -> Vec<usize> {
+        let mut all: Vec<usize> = self.also_selected.borrow().clone();
+        all.extend(self.selected.get());
+        all.sort_unstable();
+        all.dedup();
+        all
+    }
+
+    pub(super) fn select_all(&self) {
+        let count = self.document.borrow().shapes().len();
+        let Some(last) = count.checked_sub(1) else {
+            return;
+        };
+        self.moving.take();
+        self.selected.set(Some(last));
+        self.also_selected.replace((0..last).collect());
+        self.say(&format!("{count} shapes selected."), false);
         self.canvas.queue_draw();
     }
 
@@ -133,10 +235,9 @@ impl Editor {
 
     pub(super) fn drag_to(&self, point: Point, stepped: bool) {
         if let Some(moving) = self.moving.borrow_mut().as_mut() {
+            moving.delta = (point.x - moving.start.x, point.y - moving.start.y);
             moving.preview = match moving.grab {
-                Grab::Body => moving
-                    .original
-                    .moved(point.x - moving.start.x, point.y - moving.start.y),
+                Grab::Body => moving.original.moved(moving.delta.0, moving.delta.1),
                 Grab::Handle(Handle::Rotate) if stepped => {
                     let free = moving.original.resized(Handle::Rotate, point);
                     free.turned(stepped_angle(free.angle()))
@@ -152,11 +253,20 @@ impl Editor {
             return;
         };
         if moving.preview != moving.original {
-            self.document.borrow_mut().apply(Edit::Replace {
+            let mut edits = vec![Edit::Replace {
                 index: moving.index,
                 before: moving.original,
                 after: moving.preview,
-            });
+            }];
+            for (index, before) in moving.others {
+                let after = before.moved(moving.delta.0, moving.delta.1);
+                edits.push(Edit::Replace {
+                    index,
+                    before,
+                    after,
+                });
+            }
+            self.document.borrow_mut().apply(batch(edits));
             self.edited();
         }
         self.canvas.queue_draw();
@@ -170,6 +280,7 @@ impl Editor {
 
     pub(super) fn deselect(&self) -> bool {
         self.moving.take();
+        self.also_selected.borrow_mut().clear();
         let had = self.selected.take().is_some();
         self.canvas.queue_draw();
         had
@@ -186,10 +297,14 @@ impl Editor {
         let Some(index) = self.selected.get() else {
             return;
         };
+        let stroke = self.stroke();
+        if !self.also_selected.borrow().is_empty() {
+            self.replace_selected(|shape| shape.restyled(stroke));
+            return;
+        }
         let Some(before) = self.document.borrow().shapes().get(index).cloned() else {
             return;
         };
-        let stroke = self.stroke();
         let after = before.restyled(stroke);
         if after == before {
             return;
@@ -208,34 +323,48 @@ impl Editor {
     }
 
     pub(super) fn delete_selected(&self) -> bool {
-        let Some(index) = self.selected.get() else {
-            return false;
+        let edits: Vec<Edit> = {
+            let document = self.document.borrow();
+            self.selection()
+                .into_iter()
+                .rev()
+                .filter_map(|index| {
+                    let shape = document.shapes().get(index)?.clone();
+                    Some(Edit::Remove { index, shape })
+                })
+                .collect()
         };
-        let Some(shape) = self.document.borrow().shapes().get(index).cloned() else {
+        if edits.is_empty() {
             return false;
-        };
-        self.document
-            .borrow_mut()
-            .apply(Edit::Remove { index, shape });
+        }
+        self.document.borrow_mut().apply(batch(edits));
         self.deselect();
         self.edited();
         true
     }
 
-    pub(super) fn replace_selected(&self, change: impl FnOnce(&Shape) -> Shape) -> bool {
-        let Some(index) = self.selected.get() else {
+    pub(super) fn replace_selected(&self, change: impl Fn(&Shape) -> Shape) -> bool {
+        let selection = self.selection();
+        if selection.is_empty() {
             return false;
+        }
+        let edits: Vec<Edit> = {
+            let document = self.document.borrow();
+            selection
+                .into_iter()
+                .filter_map(|index| {
+                    let before = document.shapes().get(index)?.clone();
+                    let after = change(&before);
+                    (after != before).then_some(Edit::Replace {
+                        index,
+                        before,
+                        after,
+                    })
+                })
+                .collect()
         };
-        let Some(before) = self.document.borrow().shapes().get(index).cloned() else {
-            return false;
-        };
-        let after = change(&before);
-        if after != before {
-            self.document.borrow_mut().apply(Edit::Replace {
-                index,
-                before,
-                after,
-            });
+        if !edits.is_empty() {
+            self.document.borrow_mut().apply(batch(edits));
             self.edited();
         }
         true
@@ -246,18 +375,29 @@ impl Editor {
         cr: &cairo::Context,
         view: View,
     ) -> Result<(), cairo::Error> {
-        let Some(index) = self.selected.get() else {
-            return Ok(());
-        };
-        let moving = self.moving.borrow();
-        let document = self.document.borrow();
-        let shape = match moving.as_ref() {
-            Some(moving) if moving.index == index => &moving.preview,
-            _ => match document.shapes().get(index) {
-                Some(shape) => shape,
-                None => return Ok(()),
-            },
-        };
+        let single = self.also_selected.borrow().is_empty();
+        for index in self.selection() {
+            let moving = self.moving.borrow();
+            let document = self.document.borrow();
+            let shape = match moving.as_ref().and_then(|moving| moving.preview_of(index)) {
+                Some(preview) => preview,
+                None => match document.shapes().get(index) {
+                    Some(shape) => shape.clone(),
+                    None => continue,
+                },
+            };
+            self.paint_outline(cr, view, &shape, single)?;
+        }
+        Ok(())
+    }
+
+    fn paint_outline(
+        &self,
+        cr: &cairo::Context,
+        view: View,
+        shape: &Shape,
+        with_handles: bool,
+    ) -> Result<(), cairo::Error> {
         let (accent_red, accent_green, accent_blue) = Color::Accent.rgb();
         let bounds = shape.bounds();
         let (left, top) = view.to_widget(Point {
@@ -294,6 +434,9 @@ impl Editor {
         }
         cr.stroke()?;
         cr.set_dash(&[], 0.0);
+        if !with_handles {
+            return Ok(());
+        }
         for (handle, at) in shape.handles() {
             let (x, y) = view.to_widget(at);
             if handle == Handle::Rotate {
