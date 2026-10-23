@@ -1,2 +1,5 @@
 target/
 lab-results/**/png/
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

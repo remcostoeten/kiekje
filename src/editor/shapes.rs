@@ -1,6 +1,10 @@
 use super::document::{Area, Point, Shape, Stroke};
 use super::render;
 
+const ROTATE_REACH: f64 = 24.0;
+const ROTATE_ZONE: f64 = 22.0;
+const SNAP_DEGREES: f64 = 4.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handle {
     TopLeft,
@@ -9,6 +13,7 @@ pub enum Handle {
     BottomRight,
     Start,
     End,
+    Rotate,
 }
 
 impl Handle {
@@ -27,6 +32,7 @@ impl Handle {
             Self::BottomRight => Self::TopLeft,
             Self::Start => Self::End,
             Self::End => Self::Start,
+            Self::Rotate => Self::Rotate,
         }
     }
 }
@@ -40,11 +46,100 @@ impl Area {
             Handle::TopRight => (right, self.y),
             Handle::BottomLeft => (self.x, bottom),
             Handle::BottomRight | Handle::End => (right, bottom),
+            Handle::Rotate => (self.x + self.width / 2.0, self.y),
         };
         Point { x, y }
     }
 
-    fn grown(self, by: f64) -> Self {
+    /// The smallest area covering both.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let group = first.bounds().union(second.bounds());
+    /// ```
+    pub fn union(self, other: Self) -> Self {
+        let left = self.x.min(other.x);
+        let top = self.y.min(other.y);
+        let right = (self.x + self.width).max(other.x + other.width);
+        let bottom = (self.y + self.height).max(other.y + other.height);
+        Self {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        }
+    }
+
+    /// The centre of the area.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let pivot = bounds.centre();
+    /// ```
+    pub fn centre(self) -> Point {
+        Point {
+            x: self.x + self.width / 2.0,
+            y: self.y + self.height / 2.0,
+        }
+    }
+
+    /// Where the turn handle of an upright area sits: above its top centre.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let handle = bounds.turn_handle();
+    /// ```
+    pub fn turn_handle(self) -> Point {
+        Point {
+            x: self.x + self.width / 2.0,
+            y: self.y - ROTATE_REACH,
+        }
+    }
+
+    /// The corner whose turn zone `point` lies in: just outside a corner of an upright area.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if let Some(corner) = bounds.turn_zone(point, 1.0 / zoom) { show_turn_hint(corner) }
+    /// ```
+    pub fn turn_zone(self, point: Point, scale: f64) -> Option<Point> {
+        if self.grown(2.0 * scale).contains(point) {
+            return None;
+        }
+        self.corners()
+            .into_iter()
+            .find(|corner| corner.distance(point) <= ROTATE_ZONE * scale)
+    }
+
+    /// Whether the two areas share any point.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let touched = marquee.overlaps(shape.bounds());
+    /// ```
+    pub fn overlaps(self, other: Self) -> bool {
+        self.x <= other.x + other.width
+            && other.x <= self.x + self.width
+            && self.y <= other.y + other.height
+            && other.y <= self.y + self.height
+    }
+
+    pub(super) fn corners(self) -> [Point; 4] {
+        [
+            Handle::TopLeft,
+            Handle::TopRight,
+            Handle::BottomRight,
+            Handle::BottomLeft,
+        ]
+        .map(|handle| self.corner(handle))
+    }
+
+    pub(super) fn grown(self, by: f64) -> Self {
         Self {
             x: self.x - by,
             y: self.y - by,
@@ -98,6 +193,17 @@ pub fn step_radius(stroke: Stroke) -> f64 {
 /// ```
 pub fn stamp_size(stroke: Stroke) -> f64 {
     step_radius(stroke) * 2.0
+}
+
+fn snap_angle(degrees: f64) -> f64 {
+    let wrapped = (degrees + 180.0).rem_euclid(360.0) - 180.0;
+    let nearest = (wrapped / 90.0).round() * 90.0;
+    let snapped = if (wrapped - nearest).abs() <= SNAP_DEGREES {
+        nearest
+    } else {
+        wrapped
+    };
+    if snapped == 180.0 { -180.0 } else { snapped }
 }
 
 /// Returns the font size, in image pixels, for text drawn at line width `width`.
@@ -160,7 +266,9 @@ impl Shape {
                     height: side,
                 }
             }
-            Self::Text { at, text, stroke } => {
+            Self::Text {
+                at, text, stroke, ..
+            } => {
                 let (width, height) = render::measure(text, font_size(stroke.width));
                 Area {
                     x: at.x,
@@ -216,10 +324,168 @@ impl Shape {
                 }
             }
             Self::Step { at, stroke, .. } => at.distance(point) <= step_radius(*stroke) + slack,
-            Self::Text { .. } | Self::Mark { .. } | Self::Emoji { .. } => {
-                self.bounds().grown(slack).contains(point)
+            Self::Text { angle, .. } | Self::Mark { angle, .. } | Self::Emoji { angle, .. } => {
+                let upright = point.rotated(-angle, self.pivot());
+                self.bounds().grown(slack).contains(upright)
             }
         }
+    }
+
+    /// The point a text or stamp turns around: the centre of its upright bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let centre = shape.pivot();
+    /// ```
+    pub fn pivot(&self) -> Point {
+        let bounds = self.bounds();
+        Point {
+            x: bounds.x + bounds.width / 2.0,
+            y: bounds.y + bounds.height / 2.0,
+        }
+    }
+
+    /// The clockwise rotation in degrees of a text or stamp, zero for everything else.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let degrees = shape.angle();
+    /// ```
+    pub fn angle(&self) -> f64 {
+        match self {
+            Self::Text { angle, .. } | Self::Mark { angle, .. } | Self::Emoji { angle, .. } => {
+                *angle
+            }
+            _ => 0.0,
+        }
+    }
+
+    /// The corner whose turn zone `point` lies in: just outside a corner of a text or stamp,
+    /// as with Photoshop's transform tool. The corner comes back in image coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if let Some(corner) = shape.turn_zone(point, 1.0 / zoom) { show_turn_hint(corner) }
+    /// ```
+    pub fn turn_zone(&self, point: Point, scale: f64) -> Option<Point> {
+        if !self.turns() {
+            return None;
+        }
+        let pivot = self.pivot();
+        let upright = point.rotated(-self.angle(), pivot);
+        self.bounds()
+            .turn_zone(upright, scale)
+            .map(|corner| corner.rotated(self.angle(), pivot))
+    }
+
+    /// Returns a copy swung `degrees` clockwise around `pivot`, as part of a turning group.
+    ///
+    /// Texts and stamps turn with it; lines, arrows and pen strokes follow point by point; boxes,
+    /// ellipses, markers, pixelated areas and steps move along but stay upright.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let swung = shape.orbited(90.0, group_centre);
+    /// ```
+    pub fn orbited(&self, degrees: f64, pivot: Point) -> Self {
+        let mut shape = self.clone();
+        match &mut shape {
+            Self::Rectangle { area, .. }
+            | Self::Ellipse { area, .. }
+            | Self::Highlight { area, .. }
+            | Self::Pixelate { area } => {
+                let centre = area.centre().rotated(degrees, pivot);
+                area.x = centre.x - area.width / 2.0;
+                area.y = centre.y - area.height / 2.0;
+            }
+            Self::Line { from, to, .. } | Self::Arrow { from, to, .. } => {
+                *from = from.rotated(degrees, pivot);
+                *to = to.rotated(degrees, pivot);
+            }
+            Self::Pen { points, .. } => {
+                for point in points.iter_mut() {
+                    *point = point.rotated(degrees, pivot);
+                }
+            }
+            Self::Step { at, .. } => *at = at.rotated(degrees, pivot),
+            Self::Text { at, angle, .. }
+            | Self::Mark { at, angle, .. }
+            | Self::Emoji { at, angle, .. } => {
+                let own = self.pivot();
+                let swung = own.rotated(degrees, pivot);
+                *at = at.moved(swung.x - own.x, swung.y - own.y);
+                *angle = snap_angle(*angle + degrees);
+            }
+        }
+        shape
+    }
+
+    /// The upright area covering the shape as drawn, turned texts and stamps included.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let picked = marquee.overlaps(shape.extent());
+    /// ```
+    pub fn extent(&self) -> Area {
+        let bounds = self.bounds();
+        let angle = self.angle();
+        if angle == 0.0 {
+            return bounds;
+        }
+        let pivot = self.pivot();
+        let corners = bounds.corners().map(|corner| corner.rotated(angle, pivot));
+        let first = corners[0];
+        let (low, high) = corners.iter().fold((first, first), |(low, high), point| {
+            (
+                Point {
+                    x: low.x.min(point.x),
+                    y: low.y.min(point.y),
+                },
+                Point {
+                    x: high.x.max(point.x),
+                    y: high.y.max(point.y),
+                },
+            )
+        });
+        Area::between(low, high)
+    }
+
+    /// Whether the shape can turn: texts and stamps can, outlines and strokes can't.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if shape.turns() { show_rotate_handle() }
+    /// ```
+    pub fn turns(&self) -> bool {
+        matches!(
+            self,
+            Self::Text { .. } | Self::Mark { .. } | Self::Emoji { .. }
+        )
+    }
+
+    /// Returns a copy turned to `degrees` clockwise, normalised to a half turn either way.
+    ///
+    /// Angles within a few degrees of a right angle snap to it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let tilted = shape.turned(15.0);
+    /// ```
+    pub fn turned(&self, degrees: f64) -> Self {
+        let mut shape = self.clone();
+        if let Self::Text { angle, .. } | Self::Mark { angle, .. } | Self::Emoji { angle, .. } =
+            &mut shape
+        {
+            *angle = snap_angle(degrees);
+        }
+        shape
     }
 
     /// Returns a copy moved by `dx` and `dy` image pixels.
@@ -253,7 +519,8 @@ impl Shape {
         shape
     }
 
-    /// Lists the drag handles of the shape: four corners for boxes, both ends for lines.
+    /// Lists the drag handles of the shape: four corners for boxes, both ends for lines, and a
+    /// rotate handle above a text or stamp.
     ///
     /// Pen strokes and steps have none; they can only be moved.
     ///
@@ -274,15 +541,17 @@ impl Shape {
             Self::Line { from, to, .. } | Self::Arrow { from, to, .. } => {
                 vec![(Handle::Start, *from), (Handle::End, *to)]
             }
-            Self::Pen { .. }
-            | Self::Step { .. }
-            | Self::Text { .. }
-            | Self::Mark { .. }
-            | Self::Emoji { .. } => Vec::new(),
+            Self::Text { .. } | Self::Mark { .. } | Self::Emoji { .. } => {
+                let above = self.bounds().turn_handle();
+                vec![(Handle::Rotate, above.rotated(self.angle(), self.pivot()))]
+            }
+            Self::Pen { .. } | Self::Step { .. } => Vec::new(),
         }
     }
 
     /// Returns a copy with `handle` dragged to `to` while the opposite handle stays put.
+    ///
+    /// Dragging the rotate handle turns a text or stamp to face the pointer.
     ///
     /// # Examples
     ///
@@ -305,11 +574,14 @@ impl Shape {
                 Handle::End => *end = to,
                 _ => {}
             },
-            Self::Pen { .. }
-            | Self::Step { .. }
-            | Self::Text { .. }
-            | Self::Mark { .. }
-            | Self::Emoji { .. } => {}
+            Self::Text { .. } | Self::Mark { .. } | Self::Emoji { .. } => {
+                if handle == Handle::Rotate {
+                    let pivot = shape.pivot();
+                    let degrees = (to.y - pivot.y).atan2(to.x - pivot.x).to_degrees() + 90.0;
+                    shape = shape.turned(degrees);
+                }
+            }
+            Self::Pen { .. } | Self::Step { .. } => {}
         }
         shape
     }
@@ -518,6 +790,7 @@ mod tests {
             at: point(10.0, 20.0),
             text: "Hello".into(),
             stroke: STROKE,
+            angle: 0.0,
         };
         let bounds = text.bounds();
         assert_eq!((bounds.x, bounds.y), (10.0, 20.0));
@@ -525,8 +798,71 @@ mod tests {
         assert!(bounds.height >= font_size(STROKE.width));
         assert!(text.hit(point(12.0, 25.0), 0.0));
         assert!(!text.hit(point(5.0, 25.0), 0.0));
-        assert!(text.handles().is_empty());
+        assert_eq!(text.handles().len(), 1);
         assert_eq!(text.moved(1.0, 1.0).bounds().x, 11.0);
+    }
+
+    #[test]
+    fn turns_a_stamp_around_its_centre_and_snaps_near_right_angles() {
+        let mark = Shape::Mark {
+            at: point(50.0, 40.0),
+            kind: MarkKind::Check,
+            stroke: STROKE,
+            angle: 0.0,
+        };
+        assert_eq!(mark.pivot(), point(50.0, 40.0));
+        let (handle, above) = mark.handles()[0];
+        assert_eq!(handle, Handle::Rotate);
+        assert_eq!(above.x, 50.0);
+        assert!(above.y < mark.bounds().y);
+        let right = mark.resized(Handle::Rotate, point(90.0, 40.0));
+        assert_eq!(right.angle(), 90.0);
+        let nearly = mark.resized(Handle::Rotate, point(90.0, 42.0));
+        assert_eq!(nearly.angle(), 90.0);
+        let line = Shape::Line {
+            from: point(0.0, 0.0),
+            to: point(10.0, 0.0),
+            stroke: STROKE,
+        };
+        let swung = line.orbited(90.0, point(0.0, 0.0));
+        let Shape::Line { to, .. } = swung else {
+            panic!("still a line");
+        };
+        assert!((to.x).abs() < 1e-9 && (to.y - 10.0).abs() < 1e-9);
+        let swung = mark.orbited(90.0, point(0.0, 40.0));
+        assert_eq!(swung.angle(), 90.0);
+        let centre = swung.pivot();
+        assert!((centre.x).abs() < 1e-9 && (centre.y - 90.0).abs() < 1e-9);
+        let group = mark.bounds().union(line.bounds());
+        assert_eq!((group.x, group.y), (0.0, 0.0));
+        let wide = mark.turned(45.0).extent();
+        assert!(wide.width > mark.bounds().width);
+        assert!(area(0.0, 0.0, 10.0, 10.0).overlaps(area(10.0, 10.0, 5.0, 5.0)));
+        assert!(!area(0.0, 0.0, 10.0, 10.0).overlaps(area(11.0, 0.0, 5.0, 5.0)));
+        let corner = mark.bounds().corners()[0];
+        let outside = point(corner.x - 6.0, corner.y - 6.0);
+        assert_eq!(mark.turn_zone(outside, 1.0), Some(corner));
+        assert_eq!(mark.turn_zone(point(50.0, 40.0), 1.0), None);
+        assert_eq!(mark.turn_zone(point(corner.x - 40.0, corner.y), 1.0), None);
+        assert_eq!(rectangle().turn_zone(point(-5.0, -5.0), 1.0), None);
+        let tilted = mark.turned(30.0);
+        assert_eq!(tilted.angle(), 30.0);
+        assert_eq!(tilted.turned(370.0).angle(), 10.0);
+        assert_eq!(mark.turned(-180.0).angle(), -180.0);
+        assert!(mark.turns());
+        let side = stamp_size(STROKE);
+        assert!(tilted.hit(point(50.0, 40.0), 0.0));
+        assert!(!tilted.hit(point(50.0 + side, 40.0), 2.0));
+        let text = Shape::Text {
+            at: point(0.0, 0.0),
+            text: "Wide text here".into(),
+            stroke: STROKE,
+            angle: 90.0,
+        };
+        let bounds = text.bounds();
+        let upright_end = point(bounds.width - 2.0, bounds.height / 2.0);
+        assert!(!text.hit(upright_end, 0.0));
+        assert!(text.hit(upright_end.rotated(90.0, text.pivot()), 0.0));
     }
 
     #[test]
@@ -535,6 +871,7 @@ mod tests {
             at: point(50.0, 40.0),
             kind: MarkKind::Check,
             stroke: STROKE,
+            angle: 0.0,
         };
         let side = stamp_size(STROKE);
         assert_eq!(
@@ -543,11 +880,12 @@ mod tests {
         );
         assert!(mark.hit(point(50.0, 40.0), 0.0));
         assert!(!mark.hit(point(50.0 + side, 40.0), 2.0));
-        assert!(mark.handles().is_empty());
+        assert_eq!(mark.handles().len(), 1);
         let emoji = Shape::Emoji {
             at: point(10.0, 10.0),
             glyph: "🔥".to_owned(),
             stroke: STROKE,
+            angle: 0.0,
         };
         let moved = emoji.moved(5.0, -5.0).bounds();
         assert_eq!(moved.x, 10.0 + 5.0 - side / 2.0);

@@ -6,6 +6,7 @@ mod config;
 mod desktop_file;
 mod doctor;
 mod editor;
+mod fuzzy;
 mod help;
 mod library;
 mod mascot;

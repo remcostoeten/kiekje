@@ -11,6 +11,7 @@ pub mod query;
 pub mod thumbs;
 
 const COLOUR_LIMIT: i64 = 200;
+const EMOJI_LIMIT: i64 = 32;
 
 const SCHEMA: &[&str] = &[
     "CREATE TABLE captures (
@@ -32,6 +33,10 @@ const SCHEMA: &[&str] = &[
     CREATE INDEX colours_picked ON colours (picked_us DESC);",
     "ALTER TABLE captures ADD COLUMN unsaved INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE captures ADD COLUMN annotated INTEGER NOT NULL DEFAULT 0;",
+    "CREATE TABLE recent_emoji (
+        glyph TEXT PRIMARY KEY,
+        used_us INTEGER NOT NULL
+    );",
 ];
 
 const DAY_US: i64 = 24 * 60 * 60 * 1_000_000;
@@ -587,6 +592,48 @@ impl Library {
     pub fn clear_colours(&self) -> Result<usize, LibraryError> {
         Ok(self.connection.execute("DELETE FROM colours", [])?)
     }
+
+    /// Records that `glyph` was stamped at `used_us`; using it again moves it to the front.
+    ///
+    /// Only the newest emoji are kept.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// library.use_emoji("🔥", glib::real_time())?;
+    /// ```
+    pub fn use_emoji(&self, glyph: &str, used_us: i64) -> Result<(), LibraryError> {
+        self.connection.execute(
+            "INSERT INTO recent_emoji (glyph, used_us) VALUES (?1, ?2)
+             ON CONFLICT (glyph) DO UPDATE SET used_us = excluded.used_us",
+            params![glyph, used_us],
+        )?;
+        self.connection.execute(
+            "DELETE FROM recent_emoji WHERE glyph NOT IN
+             (SELECT glyph FROM recent_emoji ORDER BY used_us DESC, rowid DESC LIMIT ?1)",
+            params![EMOJI_LIMIT],
+        )?;
+        Ok(())
+    }
+
+    /// Returns up to `limit` recently stamped emoji, newest first.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let row = library.recent_emoji(8)?;
+    /// ```
+    pub fn recent_emoji(&self, limit: usize) -> Result<Vec<String>, LibraryError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT glyph FROM recent_emoji ORDER BY used_us DESC, rowid DESC LIMIT ?1")?;
+        let glyphs = statement
+            .query_map(params![i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+                row.get(0)
+            })?
+            .collect::<Result<_, _>>()?;
+        Ok(glyphs)
+    }
 }
 
 fn pack([red, green, blue]: [u8; 3]) -> i64 {
@@ -821,6 +868,23 @@ mod tests {
         assert!(!library.remove_colour(orange).unwrap());
         assert_eq!(library.clear_colours().unwrap(), 1);
         assert!(library.colours().unwrap().is_empty());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn lists_recent_emoji_newest_first_and_moves_a_repeat_to_the_front() {
+        let folder = scratch("recent-emoji");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        library.use_emoji("🔥", 1).unwrap();
+        library.use_emoji("👍", 2).unwrap();
+        library.use_emoji("🐛", 3).unwrap();
+        assert_eq!(library.recent_emoji(8).unwrap(), ["🐛", "👍", "🔥"]);
+        library.use_emoji("🔥", 4).unwrap();
+        assert_eq!(library.recent_emoji(2).unwrap(), ["🔥", "🐛"]);
+        for step in 0..40 {
+            library.use_emoji(&format!("{step}"), 10 + step).unwrap();
+        }
+        assert_eq!(library.recent_emoji(100).unwrap().len() as i64, EMOJI_LIMIT);
         std::fs::remove_dir_all(folder).unwrap();
     }
 

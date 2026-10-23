@@ -120,14 +120,15 @@ impl Editor {
         if text.trim().is_empty() {
             return None;
         }
-        let stroke = match &typing.before {
-            Some(Shape::Text { stroke, .. }) => *stroke,
-            _ => self.stroke(),
+        let (stroke, angle) = match &typing.before {
+            Some(Shape::Text { stroke, angle, .. }) => (*stroke, *angle),
+            _ => (self.stroke(), 0.0),
         };
         Some(Shape::Text {
             at: typing.at,
             text: text.to_string(),
             stroke,
+            angle,
         })
     }
 

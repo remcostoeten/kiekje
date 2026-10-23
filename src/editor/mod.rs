@@ -2,6 +2,7 @@ mod canvas;
 mod crop;
 mod document;
 mod emoji;
+mod emoji_index;
 mod inline;
 mod keys;
 mod menu;
@@ -37,6 +38,8 @@ use document::{
 };
 use pixels::{LoadError, Picture};
 use render::Layers;
+
+pub(super) const TURN_STEP_DEGREES: f64 = 15.0;
 
 pub use document::Color;
 pub use inline::{Ending, Finish, Inline};
@@ -91,11 +94,13 @@ struct Editor {
     original: RefCell<Option<PathBuf>>,
     picture: Arc<Picture>,
     layers: Layers,
+    scaled_base: RefCell<Option<(View, cairo::Surface)>>,
     document: RefCell<Document>,
     tool: Cell<Tool>,
     color: Cell<Color>,
     emoji: RefCell<String>,
     emoji_button: gtk::Button,
+    recent_emoji: RefCell<Vec<String>>,
     stamp_at: Cell<Option<Point>>,
     size: gtk::Adjustment,
     opacity: gtk::Adjustment,
@@ -116,6 +121,9 @@ struct Editor {
     pointer: Cell<Option<(f64, f64)>>,
     hud: RefCell<Option<wheel::Hud>>,
     selected: Cell<Option<usize>>,
+    also_selected: RefCell<Vec<usize>>,
+    turn_hint: Cell<Option<Point>>,
+    marquee: Cell<Option<select::Marquee>>,
     moving: RefCell<Option<select::Moving>>,
     writer: gtk::Popover,
     entry: gtk::Entry,
@@ -280,11 +288,13 @@ impl Editor {
             original: RefCell::new(original),
             picture: Arc::new(picture),
             layers,
+            scaled_base: RefCell::new(None),
             document: RefCell::new(document),
             tool: Cell::new(Tool::default()),
             color: Cell::new(drawing.color),
             emoji: RefCell::new(DEFAULT_EMOJI.to_owned()),
             emoji_button: toolbar::emoji_action(DEFAULT_EMOJI),
+            recent_emoji: RefCell::new(Vec::new()),
             stamp_at: Cell::new(None),
             size: gtk::Adjustment::new(
                 f64::from(drawing.size),
@@ -323,6 +333,9 @@ impl Editor {
             pointer: Cell::new(None),
             hud: RefCell::new(None),
             selected: Cell::new(None),
+            also_selected: RefCell::new(Vec::new()),
+            turn_hint: Cell::new(None),
+            marquee: Cell::new(None),
             moving: RefCell::new(None),
             writer: gtk::Popover::new(),
             entry: gtk::Entry::builder()
@@ -337,6 +350,7 @@ impl Editor {
             discard: Cell::new(false),
         });
         canvas::attach(&editor);
+        editor.load_recent_emoji();
         text::attach(&editor);
         menu::attach(&editor);
         wheel::attach(&editor);
@@ -403,6 +417,8 @@ impl Editor {
             DrawAction::Tool(tool) => self.pick(tool),
             DrawAction::Smaller => self.size.set_value(self.size.value() - 1.0),
             DrawAction::Larger => self.size.set_value(self.size.value() + 1.0),
+            DrawAction::TurnLeft => self.turn_selected(-TURN_STEP_DEGREES),
+            DrawAction::TurnRight => self.turn_selected(TURN_STEP_DEGREES),
         }
     }
 
@@ -451,10 +467,39 @@ impl Editor {
         let shape = self.draft_shape();
         self.draft.borrow_mut().clear();
         if let Some(shape) = shape {
+            let stamped = self.is_stamp_tool();
             self.document.borrow_mut().apply(Edit::Add(shape));
             self.edited();
+            if stamped {
+                self.settle_stamp();
+            }
         }
         self.canvas.queue_draw();
+    }
+
+    fn turn_selected(&self, degrees: f64) {
+        let group = self.group_pivot();
+        let turned = self.replace_selected(|shape| match group {
+            Some(pivot) => shape.orbited(degrees, pivot),
+            None if shape.turns() => shape.turned(shape.angle() + degrees),
+            None => shape.clone(),
+        });
+        if turned {
+            self.canvas.queue_draw();
+        } else {
+            self.say("Select a text, check, cross or emoji to turn it.", false);
+        }
+    }
+
+    fn settle_stamp(&self) {
+        let last = self.document.borrow().shapes().len().checked_sub(1);
+        self.pick(Tool::Select);
+        self.selected.set(last);
+        self.also_selected.borrow_mut().clear();
+        self.say(
+            "Placed. Scroll sizes it, arrows move it, comma and period turn it, drag the top handle to turn it freely.",
+            false,
+        );
     }
 
     fn cancel_draft(&self) -> bool {
@@ -551,6 +596,7 @@ impl Editor {
         }
         match (control, letter.as_str()) {
             (true, "z") if shift => self.redo(),
+            (true, "a") => self.select_all(),
             (true, "z") => self.undo(),
             (true, "y") => self.redo(),
             (true, "c") => self.copy(),
@@ -574,6 +620,7 @@ impl Editor {
                     return glib::Propagation::Proceed;
                 }
             }
+            (false, "colon") => self.open_emoji_picker_with(":"),
             (false, "Menu") => self.open_menu_by_key(),
             (false, "F10") if shift => self.open_menu_by_key(),
             (false, _) if !alt => {

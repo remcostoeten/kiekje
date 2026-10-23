@@ -9,6 +9,22 @@ pub struct Point {
 }
 
 impl Point {
+    /// Returns the point turned `degrees` clockwise around `pivot`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let turned = point.rotated(90.0, centre);
+    /// ```
+    pub fn rotated(self, degrees: f64, pivot: Self) -> Self {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let (dx, dy) = (self.x - pivot.x, self.y - pivot.y);
+        Self {
+            x: pivot.x + dx * cos - dy * sin,
+            y: pivot.y + dx * sin + dy * cos,
+        }
+    }
+
     pub fn distance(self, other: Self) -> f64 {
         (self.x - other.x).hypot(self.y - other.y)
     }
@@ -246,16 +262,19 @@ pub enum Shape {
         at: Point,
         text: String,
         stroke: Stroke,
+        angle: f64,
     },
     Mark {
         at: Point,
         kind: MarkKind,
         stroke: Stroke,
+        angle: f64,
     },
     Emoji {
         at: Point,
         glyph: String,
         stroke: Stroke,
+        angle: f64,
     },
 }
 
@@ -387,16 +406,19 @@ impl Tool {
                 at: end,
                 kind: MarkKind::Check,
                 stroke,
+                angle: 0.0,
             }),
             Self::Cross => Some(Shape::Mark {
                 at: end,
                 kind: MarkKind::Cross,
                 stroke,
+                angle: 0.0,
             }),
             Self::Emoji => Some(Shape::Emoji {
                 at: end,
                 glyph: glyph.to_owned(),
                 stroke,
+                angle: 0.0,
             }),
             _ => None,
         }
@@ -420,6 +442,17 @@ pub enum Edit {
         before: Option<Area>,
         after: Option<Area>,
     },
+    Batch(Vec<Edit>),
+}
+
+impl Edit {
+    fn valid_for(&self, count: usize) -> bool {
+        match self {
+            Self::Replace { index, .. } | Self::Remove { index, .. } => *index < count,
+            Self::Batch(edits) => edits.iter().all(|edit| edit.valid_for(count)),
+            _ => true,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -476,10 +509,8 @@ impl Document {
     /// document.apply(Edit::Add(shape));
     /// ```
     pub fn apply(&mut self, edit: Edit) {
-        if let Edit::Replace { index, .. } | Edit::Remove { index, .. } = edit
-            && index >= self.shapes.len()
-        {
-            eprintln!("kiekje: dropped an edit for shape {index}, which no longer exists");
+        if !edit.valid_for(self.shapes.len()) {
+            eprintln!("kiekje: dropped an edit for a shape that no longer exists");
             return;
         }
         if self.saved > self.done.len() {
@@ -615,6 +646,11 @@ impl Document {
             }
             Edit::Clear(_) => self.shapes.clear(),
             Edit::Crop { after, .. } => self.crop = *after,
+            Edit::Batch(edits) => {
+                for edit in edits {
+                    self.perform(edit);
+                }
+            }
         }
     }
 
@@ -630,6 +666,11 @@ impl Document {
             }
             Edit::Clear(shapes) => self.shapes = shapes.clone(),
             Edit::Crop { before, .. } => self.crop = *before,
+            Edit::Batch(edits) => {
+                for edit in edits.iter().rev() {
+                    self.revert(edit);
+                }
+            }
         }
     }
 
@@ -754,7 +795,8 @@ mod tests {
             Some(Shape::Mark {
                 at: point(5.0, 5.0),
                 kind: MarkKind::Check,
-                stroke: STROKE
+                stroke: STROKE,
+                angle: 0.0
             })
         );
         assert_eq!(
@@ -762,7 +804,8 @@ mod tests {
             Some(Shape::Mark {
                 at: point(5.0, 5.0),
                 kind: MarkKind::Cross,
-                stroke: STROKE
+                stroke: STROKE,
+                angle: 0.0
             })
         );
         assert_eq!(
@@ -770,9 +813,38 @@ mod tests {
             Some(Shape::Emoji {
                 at: point(5.0, 5.0),
                 glyph: "🔥".to_owned(),
-                stroke: STROKE
+                stroke: STROKE,
+                angle: 0.0
             })
         );
+    }
+
+    #[test]
+    fn undoes_a_batch_as_one_step() {
+        let mut document = Document::default();
+        for index in 0..3 {
+            document.apply(Edit::Add(step(index)));
+        }
+        document.apply(Edit::Batch(vec![
+            Edit::Remove {
+                index: 2,
+                shape: step(2),
+            },
+            Edit::Remove {
+                index: 0,
+                shape: step(0),
+            },
+        ]));
+        assert_eq!(document.shapes(), &[step(1)]);
+        assert!(document.undo());
+        assert_eq!(document.shapes(), &[step(0), step(1), step(2)]);
+        assert!(document.redo());
+        assert_eq!(document.shapes(), &[step(1)]);
+        document.apply(Edit::Batch(vec![Edit::Remove {
+            index: 5,
+            shape: step(5),
+        }]));
+        assert_eq!(document.shapes(), &[step(1)]);
     }
 
     #[test]

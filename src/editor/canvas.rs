@@ -83,7 +83,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         .button(gdk::BUTTON_PRIMARY)
         .build();
     let started = Rc::downgrade(editor);
-    drag.connect_drag_begin(move |_, x, y| {
+    drag.connect_drag_begin(move |gesture, x, y| {
         if let Some(editor) = started.upgrade() {
             editor.canvas.grab_focus();
             let point = editor.view.get().to_image(x, y, editor.size());
@@ -93,7 +93,10 @@ pub(super) fn attach(editor: &Rc<Editor>) {
             match editor.tool.get() {
                 Tool::Crop => editor.hide_bars(),
                 Tool::Select => {
-                    editor.grab(point);
+                    let extend = gesture
+                        .current_event_state()
+                        .contains(gdk::ModifierType::CONTROL_MASK);
+                    editor.grab(point, extend);
                     return;
                 }
                 Tool::Text => {
@@ -166,6 +169,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
             editor.pointer.set(Some((x, y)));
             editor.track_stamp(point);
             editor.hover_region(point);
+            editor.hover_turn_zone(point);
         }
     });
     let left = Rc::downgrade(editor);
@@ -187,17 +191,17 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
     if editor.reshape_to(point) {
         return;
     }
+    let straight = gesture
+        .current_event_state()
+        .contains(gdk::ModifierType::SHIFT_MASK);
     match editor.tool.get() {
         Tool::Select => {
-            editor.drag_to(point);
+            editor.drag_to(point, straight);
             return;
         }
         Tool::Text => return,
         _ => {}
     }
-    let straight = gesture
-        .current_event_state()
-        .contains(gdk::ModifierType::SHIFT_MASK);
     let tool = editor.tool.get();
     let mut draft = editor.draft.borrow_mut();
     let Some(&start) = draft.first() else {
@@ -219,13 +223,36 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
     editor.canvas.queue_draw();
 }
 
+impl Editor {
+    fn paint_base(&self, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
+        let (width, height) = self.size();
+        let (left, top) = (view.left.round(), view.top.round());
+        let mut cache = self.scaled_base.borrow_mut();
+        if cache.as_ref().is_none_or(|(cached, _)| *cached != view) {
+            let surface = cr.target().create_similar(
+                cairo::Content::ColorAlpha,
+                (width * view.zoom).ceil().max(1.0) as i32,
+                (height * view.zoom).ceil().max(1.0) as i32,
+            )?;
+            let scaled = cairo::Context::new(&surface)?;
+            scaled.scale(view.zoom, view.zoom);
+            scaled.set_source_surface(&self.layers.base, 0.0, 0.0)?;
+            scaled.paint()?;
+            *cache = Some((view, surface));
+        }
+        let Some((_, surface)) = cache.as_ref() else {
+            return Ok(());
+        };
+        cr.save()?;
+        cr.set_source_surface(surface, left, top)?;
+        cr.rectangle(left, top, width * view.zoom, height * view.zoom);
+        cr.fill()?;
+        cr.restore()
+    }
+}
+
 fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
     let (width, height) = editor.size();
-    cr.save()?;
-    cr.translate(view.left, view.top);
-    cr.scale(view.zoom, view.zoom);
-    cr.rectangle(0.0, 0.0, width, height);
-    cr.clip();
     let drawn = {
         let document = editor.document.borrow();
         let moving = editor.moving.borrow();
@@ -233,26 +260,39 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
         let typed = editor.typed_shape();
         let ghost = editor.ghost_shape();
         let hidden = editor.typing_over();
-        let shapes = document
+        let previews: Vec<Shape> = document
             .shapes()
             .iter()
             .enumerate()
             .filter(|(index, _)| hidden != Some(*index))
-            .map(|(index, shape)| match moving.as_ref() {
-                Some(moving) if moving.index == index => &moving.preview,
-                _ => shape,
-            });
-        let shapes: Vec<&Shape> = shapes.chain(&draft).chain(&typed).chain(&ghost).collect();
+            .map(|(index, shape)| {
+                moving
+                    .as_ref()
+                    .and_then(|moving| moving.preview_of(index))
+                    .unwrap_or_else(|| shape.clone())
+            })
+            .collect();
+        let shapes: Vec<&Shape> = previews
+            .iter()
+            .chain(&draft)
+            .chain(&typed)
+            .chain(&ghost)
+            .collect();
         let marked = shapes
             .iter()
             .any(|shape| matches!(shape, Shape::Highlight { .. }));
-        if editor.is_inline() && !marked {
-            render::draw_shapes(cr, &editor.layers, shapes)
-        } else {
-            render::draw(cr, &editor.layers, shapes)
+        if !editor.is_inline() || marked {
+            editor.paint_base(cr, view)?;
         }
+        cr.save()?;
+        cr.translate(view.left, view.top);
+        cr.scale(view.zoom, view.zoom);
+        cr.rectangle(0.0, 0.0, width, height);
+        cr.clip();
+        let drawn = render::draw_shapes(cr, &editor.layers, shapes);
+        cr.restore()?;
+        drawn
     };
-    cr.restore()?;
     drawn?;
     editor.paint_crop(cr, view)?;
     editor.paint_selection(cr, view)?;
