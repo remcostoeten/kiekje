@@ -474,12 +474,11 @@ impl Editor {
     }
 
     fn turn_selected(&self, degrees: f64) {
-        let turned = self.replace_selected(|shape| {
-            if shape.turns() {
-                shape.turned(shape.angle() + degrees)
-            } else {
-                shape.clone()
-            }
+        let group = self.group_pivot();
+        let turned = self.replace_selected(|shape| match group {
+            Some(pivot) => shape.orbited(degrees, pivot),
+            None if shape.turns() => shape.turned(shape.angle() + degrees),
+            None => shape.clone(),
         });
         if turned {
             self.canvas.queue_draw();

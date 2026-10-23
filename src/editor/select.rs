@@ -4,7 +4,7 @@ use gtk::prelude::*;
 use super::Editor;
 use super::TURN_STEP_DEGREES;
 use super::canvas::View;
-use super::document::{Color, Edit, Point, Shape, Tool};
+use super::document::{Area, Color, Edit, Point, Shape, Tool};
 use super::shapes::Handle;
 
 const REACH: f64 = 8.0;
@@ -27,8 +27,9 @@ pub(super) struct Moving {
     original: Shape,
     grab: Grab,
     start: Point,
-    others: Vec<(usize, Shape)>,
+    others: Vec<(usize, Shape, Shape)>,
     delta: (f64, f64),
+    group: Option<Point>,
 }
 
 impl Moving {
@@ -38,8 +39,8 @@ impl Moving {
         }
         self.others
             .iter()
-            .find(|(other, _)| *other == index)
-            .map(|(_, shape)| shape.moved(self.delta.0, self.delta.1))
+            .find(|(other, _, _)| *other == index)
+            .map(|(_, _, preview)| preview.clone())
     }
 }
 
@@ -57,6 +58,13 @@ fn batch(mut edits: Vec<Edit>) -> Edit {
     } else {
         Edit::Batch(edits)
     }
+}
+
+fn group_swing(pivot: Point, start: Point, now: Point, stepped: bool) -> f64 {
+    let before = (start.y - pivot.y).atan2(start.x - pivot.x);
+    let after = (now.y - pivot.y).atan2(now.x - pivot.x);
+    let swing = (after - before).to_degrees();
+    if stepped { stepped_angle(swing) } else { swing }
 }
 
 fn stepped_angle(degrees: f64) -> f64 {
@@ -109,10 +117,11 @@ impl Editor {
     }
 
     pub(super) fn hover_turn_zone(&self, point: Point) {
-        let hint = if self.tool.get() == Tool::Select
-            && self.moving.borrow().is_none()
-            && self.also_selected.borrow().is_empty()
-        {
+        let hint = if self.tool.get() != Tool::Select || self.moving.borrow().is_some() {
+            None
+        } else if let Some(group) = self.group_bounds() {
+            group.turn_zone(point, self.scale())
+        } else {
             self.selected.get().and_then(|index| {
                 self.document
                     .borrow()
@@ -120,8 +129,6 @@ impl Editor {
                     .get(index)?
                     .turn_zone(point, self.scale())
             })
-        } else {
-            None
         };
         if self.turn_hint.replace(hint) != hint {
             self.canvas.queue_draw();
@@ -132,8 +139,12 @@ impl Editor {
         let (Some(corner), Some(index)) = (self.turn_hint.get(), self.selected.get()) else {
             return Ok(());
         };
-        let Some(pivot) = self.document.borrow().shapes().get(index).map(Shape::pivot) else {
-            return Ok(());
+        let pivot = match self.group_bounds() {
+            Some(group) => group.centre(),
+            None => match self.document.borrow().shapes().get(index) {
+                Some(shape) => shape.pivot(),
+                None => return Ok(()),
+            },
         };
         let (x, y) = view.to_widget(corner);
         let (px, py) = view.to_widget(pivot);
@@ -175,15 +186,22 @@ impl Editor {
         let single = self.also_selected.borrow().is_empty();
         let hit = {
             let document = self.document.borrow();
-            let on_handle = self.selected.get().filter(|_| single).and_then(|index| {
-                let shape = document.shapes().get(index)?;
-                let handle = shape
-                    .handles()
-                    .into_iter()
-                    .find(|(_, at)| at.distance(point) <= slack)
-                    .map(|(handle, _)| handle)
-                    .or_else(|| shape.turn_zone(point, self.scale()).map(|_| Handle::Rotate))?;
-                Some((index, Grab::Handle(handle)))
+            let on_handle = self.selected.get().and_then(|index| {
+                let turning = if single {
+                    let shape = document.shapes().get(index)?;
+                    shape
+                        .handles()
+                        .into_iter()
+                        .find(|(_, at)| at.distance(point) <= slack)
+                        .map(|(handle, _)| handle)
+                        .or_else(|| shape.turn_zone(point, self.scale()).map(|_| Handle::Rotate))
+                } else {
+                    let group = self.group_bounds()?;
+                    (group.turn_handle().distance(point) <= slack
+                        || group.turn_zone(point, self.scale()).is_some())
+                    .then_some(Handle::Rotate)
+                };
+                Some((index, Grab::Handle(turning?)))
             });
             on_handle.or_else(|| document.hit(point, slack).map(|index| (index, Grab::Body)))
         };
@@ -214,14 +232,18 @@ impl Editor {
             }
         }
         let target = hit.and_then(|(index, grab)| {
+            let group = self.group_bounds().map(Area::centre);
             let document = self.document.borrow();
             let original = document.shapes().get(index)?.clone();
             let others = match grab {
-                Grab::Body => self
+                Grab::Body | Grab::Handle(Handle::Rotate) => self
                     .also_selected
                     .borrow()
                     .iter()
-                    .filter_map(|other| Some((*other, document.shapes().get(*other)?.clone())))
+                    .filter_map(|other| {
+                        let shape = document.shapes().get(*other)?.clone();
+                        Some((*other, shape.clone(), shape))
+                    })
                     .collect(),
                 Grab::Handle(_) => Vec::new(),
             };
@@ -233,6 +255,7 @@ impl Editor {
                 start: point,
                 others,
                 delta: (0.0, 0.0),
+                group,
             })
         });
         self.moving.replace(target);
@@ -263,6 +286,22 @@ impl Editor {
         drop(also);
         self.selected.set(Some(index));
         true
+    }
+
+    /// The upright area around every selected shape, when more than one is selected.
+    fn group_bounds(&self) -> Option<Area> {
+        if self.also_selected.borrow().is_empty() {
+            return None;
+        }
+        let document = self.document.borrow();
+        self.selection()
+            .into_iter()
+            .filter_map(|index| document.shapes().get(index).map(Shape::bounds))
+            .reduce(Area::union)
+    }
+
+    pub(super) fn group_pivot(&self) -> Option<Point> {
+        self.group_bounds().map(Area::centre)
     }
 
     /// Every selected shape index, lowest first.
@@ -307,14 +346,28 @@ impl Editor {
     pub(super) fn drag_to(&self, point: Point, stepped: bool) {
         if let Some(moving) = self.moving.borrow_mut().as_mut() {
             moving.delta = (point.x - moving.start.x, point.y - moving.start.y);
-            moving.preview = match moving.grab {
-                Grab::Body => moving.original.moved(moving.delta.0, moving.delta.1),
-                Grab::Handle(Handle::Rotate) if stepped => {
-                    let free = moving.original.resized(Handle::Rotate, point);
-                    free.turned(stepped_angle(free.angle()))
+            match (moving.grab, moving.group) {
+                (Grab::Handle(Handle::Rotate), Some(pivot)) => {
+                    let swing = group_swing(pivot, moving.start, point, stepped);
+                    moving.preview = moving.original.orbited(swing, pivot);
+                    for (_, original, preview) in moving.others.iter_mut() {
+                        *preview = original.orbited(swing, pivot);
+                    }
                 }
-                Grab::Handle(handle) => moving.original.resized(handle, point),
-            };
+                (Grab::Body, _) => {
+                    moving.preview = moving.original.moved(moving.delta.0, moving.delta.1);
+                    for (_, original, preview) in moving.others.iter_mut() {
+                        *preview = original.moved(moving.delta.0, moving.delta.1);
+                    }
+                }
+                (Grab::Handle(Handle::Rotate), None) if stepped => {
+                    let free = moving.original.resized(Handle::Rotate, point);
+                    moving.preview = free.turned(stepped_angle(free.angle()));
+                }
+                (Grab::Handle(handle), _) => {
+                    moving.preview = moving.original.resized(handle, point);
+                }
+            }
         }
         self.canvas.queue_draw();
     }
@@ -329,13 +382,14 @@ impl Editor {
                 before: moving.original,
                 after: moving.preview,
             }];
-            for (index, before) in moving.others {
-                let after = before.moved(moving.delta.0, moving.delta.1);
-                edits.push(Edit::Replace {
-                    index,
-                    before,
-                    after,
-                });
+            for (index, before, after) in moving.others {
+                if after != before {
+                    edits.push(Edit::Replace {
+                        index,
+                        before,
+                        after,
+                    });
+                }
             }
             self.document.borrow_mut().apply(batch(edits));
             self.edited();
@@ -459,7 +513,51 @@ impl Editor {
             };
             self.paint_outline(cr, view, &shape, single)?;
         }
+        self.paint_group_frame(cr, view)?;
         self.paint_turn_hint(cr, view)
+    }
+
+    fn paint_group_frame(&self, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
+        let Some(group) = self.group_bounds() else {
+            return Ok(());
+        };
+        if self.moving.borrow().is_some() {
+            return Ok(());
+        }
+        let (red, green, blue) = Color::Accent.rgb();
+        let outset = OUTSET * 2.0;
+        let (left, top) = view.to_widget(Point {
+            x: group.x,
+            y: group.y,
+        });
+        let (right, bottom) = view.to_widget(Point {
+            x: group.x + group.width,
+            y: group.y + group.height,
+        });
+        cr.set_source_rgba(red, green, blue, 0.8);
+        cr.set_line_width(1.0);
+        cr.rectangle(
+            left.floor() - outset + 0.5,
+            top.floor() - outset + 0.5,
+            (right - left).ceil() + outset * 2.0,
+            (bottom - top).ceil() + outset * 2.0,
+        );
+        cr.stroke()?;
+        let (x, y) = view.to_widget(group.turn_handle());
+        cr.move_to((left + right) / 2.0, top.floor() - outset + 0.5);
+        cr.line_to(x, y);
+        cr.stroke()?;
+        cr.arc(
+            x.round() + 0.5,
+            y.round() + 0.5,
+            HANDLE / 2.0,
+            0.0,
+            std::f64::consts::TAU,
+        );
+        cr.set_source_rgb(0.04, 0.04, 0.04);
+        cr.fill_preserve()?;
+        cr.set_source_rgb(red, green, blue);
+        cr.stroke()
     }
 
     fn paint_outline(

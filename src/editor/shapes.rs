@@ -51,6 +51,70 @@ impl Area {
         Point { x, y }
     }
 
+    /// The smallest area covering both.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let group = first.bounds().union(second.bounds());
+    /// ```
+    pub fn union(self, other: Self) -> Self {
+        let left = self.x.min(other.x);
+        let top = self.y.min(other.y);
+        let right = (self.x + self.width).max(other.x + other.width);
+        let bottom = (self.y + self.height).max(other.y + other.height);
+        Self {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        }
+    }
+
+    /// The centre of the area.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let pivot = bounds.centre();
+    /// ```
+    pub fn centre(self) -> Point {
+        Point {
+            x: self.x + self.width / 2.0,
+            y: self.y + self.height / 2.0,
+        }
+    }
+
+    /// Where the turn handle of an upright area sits: above its top centre.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let handle = bounds.turn_handle();
+    /// ```
+    pub fn turn_handle(self) -> Point {
+        Point {
+            x: self.x + self.width / 2.0,
+            y: self.y - ROTATE_REACH,
+        }
+    }
+
+    /// The corner whose turn zone `point` lies in: just outside a corner of an upright area.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if let Some(corner) = bounds.turn_zone(point, 1.0 / zoom) { show_turn_hint(corner) }
+    /// ```
+    pub fn turn_zone(self, point: Point, scale: f64) -> Option<Point> {
+        if self.grown(2.0 * scale).contains(point) {
+            return None;
+        }
+        self.corners()
+            .into_iter()
+            .find(|corner| corner.distance(point) <= ROTATE_ZONE * scale)
+    }
+
     pub(super) fn corners(self) -> [Point; 4] {
         [
             Handle::TopLeft,
@@ -298,15 +362,52 @@ impl Shape {
         }
         let pivot = self.pivot();
         let upright = point.rotated(-self.angle(), pivot);
-        let bounds = self.bounds();
-        if bounds.grown(2.0 * scale).contains(upright) {
-            return None;
-        }
-        bounds
-            .corners()
-            .into_iter()
-            .find(|corner| corner.distance(upright) <= ROTATE_ZONE * scale)
+        self.bounds()
+            .turn_zone(upright, scale)
             .map(|corner| corner.rotated(self.angle(), pivot))
+    }
+
+    /// Returns a copy swung `degrees` clockwise around `pivot`, as part of a turning group.
+    ///
+    /// Texts and stamps turn with it; lines, arrows and pen strokes follow point by point; boxes,
+    /// ellipses, markers, pixelated areas and steps move along but stay upright.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let swung = shape.orbited(90.0, group_centre);
+    /// ```
+    pub fn orbited(&self, degrees: f64, pivot: Point) -> Self {
+        let mut shape = self.clone();
+        match &mut shape {
+            Self::Rectangle { area, .. }
+            | Self::Ellipse { area, .. }
+            | Self::Highlight { area, .. }
+            | Self::Pixelate { area } => {
+                let centre = area.centre().rotated(degrees, pivot);
+                area.x = centre.x - area.width / 2.0;
+                area.y = centre.y - area.height / 2.0;
+            }
+            Self::Line { from, to, .. } | Self::Arrow { from, to, .. } => {
+                *from = from.rotated(degrees, pivot);
+                *to = to.rotated(degrees, pivot);
+            }
+            Self::Pen { points, .. } => {
+                for point in points.iter_mut() {
+                    *point = point.rotated(degrees, pivot);
+                }
+            }
+            Self::Step { at, .. } => *at = at.rotated(degrees, pivot),
+            Self::Text { at, angle, .. }
+            | Self::Mark { at, angle, .. }
+            | Self::Emoji { at, angle, .. } => {
+                let own = self.pivot();
+                let swung = own.rotated(degrees, pivot);
+                *at = at.moved(swung.x - own.x, swung.y - own.y);
+                *angle = snap_angle(*angle + degrees);
+            }
+        }
+        shape
     }
 
     /// Whether the shape can turn: texts and stamps can, outlines and strokes can't.
@@ -396,13 +497,8 @@ impl Shape {
                 vec![(Handle::Start, *from), (Handle::End, *to)]
             }
             Self::Text { .. } | Self::Mark { .. } | Self::Emoji { .. } => {
-                let bounds = self.bounds();
-                let pivot = self.pivot();
-                let above = Point {
-                    x: pivot.x,
-                    y: bounds.y - ROTATE_REACH,
-                };
-                vec![(Handle::Rotate, above.rotated(self.angle(), pivot))]
+                let above = self.bounds().turn_handle();
+                vec![(Handle::Rotate, above.rotated(self.angle(), self.pivot()))]
             }
             Self::Pen { .. } | Self::Step { .. } => Vec::new(),
         }
@@ -678,6 +774,22 @@ mod tests {
         assert_eq!(right.angle(), 90.0);
         let nearly = mark.resized(Handle::Rotate, point(90.0, 42.0));
         assert_eq!(nearly.angle(), 90.0);
+        let line = Shape::Line {
+            from: point(0.0, 0.0),
+            to: point(10.0, 0.0),
+            stroke: STROKE,
+        };
+        let swung = line.orbited(90.0, point(0.0, 0.0));
+        let Shape::Line { to, .. } = swung else {
+            panic!("still a line");
+        };
+        assert!((to.x).abs() < 1e-9 && (to.y - 10.0).abs() < 1e-9);
+        let swung = mark.orbited(90.0, point(0.0, 40.0));
+        assert_eq!(swung.angle(), 90.0);
+        let centre = swung.pivot();
+        assert!((centre.x).abs() < 1e-9 && (centre.y - 90.0).abs() < 1e-9);
+        let group = mark.bounds().union(line.bounds());
+        assert_eq!((group.x, group.y), (0.0, 0.0));
         let corner = mark.bounds().corners()[0];
         let outside = point(corner.x - 6.0, corner.y - 6.0);
         assert_eq!(mark.turn_zone(outside, 1.0), Some(corner));
