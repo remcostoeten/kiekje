@@ -2,6 +2,7 @@ use super::document::{Area, Point, Shape, Stroke};
 use super::render;
 
 const ROTATE_REACH: f64 = 24.0;
+const ROTATE_ZONE: f64 = 22.0;
 const SNAP_DEGREES: f64 = 4.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,6 +282,31 @@ impl Shape {
             }
             _ => 0.0,
         }
+    }
+
+    /// The corner whose turn zone `point` lies in: just outside a corner of a text or stamp,
+    /// as with Photoshop's transform tool. The corner comes back in image coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if let Some(corner) = shape.turn_zone(point, 1.0 / zoom) { show_turn_hint(corner) }
+    /// ```
+    pub fn turn_zone(&self, point: Point, scale: f64) -> Option<Point> {
+        if !self.turns() {
+            return None;
+        }
+        let pivot = self.pivot();
+        let upright = point.rotated(-self.angle(), pivot);
+        let bounds = self.bounds();
+        if bounds.grown(2.0 * scale).contains(upright) {
+            return None;
+        }
+        bounds
+            .corners()
+            .into_iter()
+            .find(|corner| corner.distance(upright) <= ROTATE_ZONE * scale)
+            .map(|corner| corner.rotated(self.angle(), pivot))
     }
 
     /// Whether the shape can turn: texts and stamps can, outlines and strokes can't.
@@ -652,6 +678,12 @@ mod tests {
         assert_eq!(right.angle(), 90.0);
         let nearly = mark.resized(Handle::Rotate, point(90.0, 42.0));
         assert_eq!(nearly.angle(), 90.0);
+        let corner = mark.bounds().corners()[0];
+        let outside = point(corner.x - 6.0, corner.y - 6.0);
+        assert_eq!(mark.turn_zone(outside, 1.0), Some(corner));
+        assert_eq!(mark.turn_zone(point(50.0, 40.0), 1.0), None);
+        assert_eq!(mark.turn_zone(point(corner.x - 40.0, corner.y), 1.0), None);
+        assert_eq!(rectangle().turn_zone(point(-5.0, -5.0), 1.0), None);
         let tilted = mark.turned(30.0);
         assert_eq!(tilted.angle(), 30.0);
         assert_eq!(tilted.turned(370.0).angle(), 10.0);

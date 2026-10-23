@@ -8,6 +8,10 @@ use super::document::{Color, Edit, Point, Shape, Tool};
 use super::shapes::Handle;
 
 const REACH: f64 = 8.0;
+const HINT_OFFSET: f64 = 14.0;
+const HINT_RADIUS: f64 = 7.0;
+const HINT_SWEEP: f64 = 2.2;
+const HINT_ARROW: f64 = 4.0;
 const HANDLE: f64 = 8.0;
 const OUTSET: f64 = 4.0;
 
@@ -28,7 +32,7 @@ pub(super) struct Moving {
 }
 
 impl Moving {
-    fn preview_of(&self, index: usize) -> Option<Shape> {
+    pub(super) fn preview_of(&self, index: usize) -> Option<Shape> {
         if index == self.index {
             return Some(self.preview.clone());
         }
@@ -100,18 +104,85 @@ impl Editor {
         REACH / self.view.get().zoom()
     }
 
+    fn scale(&self) -> f64 {
+        1.0 / self.view.get().zoom()
+    }
+
+    pub(super) fn hover_turn_zone(&self, point: Point) {
+        let hint = if self.tool.get() == Tool::Select
+            && self.moving.borrow().is_none()
+            && self.also_selected.borrow().is_empty()
+        {
+            self.selected.get().and_then(|index| {
+                self.document
+                    .borrow()
+                    .shapes()
+                    .get(index)?
+                    .turn_zone(point, self.scale())
+            })
+        } else {
+            None
+        };
+        if self.turn_hint.replace(hint) != hint {
+            self.canvas.queue_draw();
+        }
+    }
+
+    fn paint_turn_hint(&self, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
+        let (Some(corner), Some(index)) = (self.turn_hint.get(), self.selected.get()) else {
+            return Ok(());
+        };
+        let Some(pivot) = self.document.borrow().shapes().get(index).map(Shape::pivot) else {
+            return Ok(());
+        };
+        let (x, y) = view.to_widget(corner);
+        let (px, py) = view.to_widget(pivot);
+        let outward = (y - py).atan2(x - px);
+        let (cx, cy) = (
+            x + outward.cos() * HINT_OFFSET,
+            y + outward.sin() * HINT_OFFSET,
+        );
+        let (from, to) = (outward - HINT_SWEEP / 2.0, outward + HINT_SWEEP / 2.0);
+        let (red, green, blue) = Color::Accent.rgb();
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.9);
+        cr.set_line_width(3.0);
+        cr.arc(cx, cy, HINT_RADIUS, from, to);
+        cr.stroke_preserve()?;
+        cr.set_source_rgb(red, green, blue);
+        cr.set_line_width(1.5);
+        cr.stroke()?;
+        for (angle, sign) in [(from, -1.0), (to, 1.0)] {
+            let tip = (
+                cx + angle.cos() * HINT_RADIUS,
+                cy + angle.sin() * HINT_RADIUS,
+            );
+            let along = angle + sign * std::f64::consts::FRAC_PI_2;
+            for spread in [-0.6, 0.6] {
+                let direction = along + std::f64::consts::PI + spread;
+                cr.move_to(tip.0, tip.1);
+                cr.line_to(
+                    tip.0 + direction.cos() * HINT_ARROW,
+                    tip.1 + direction.sin() * HINT_ARROW,
+                );
+            }
+        }
+        cr.set_source_rgb(red, green, blue);
+        cr.stroke()
+    }
+
     pub(super) fn grab(&self, point: Point, extend: bool) {
         let slack = self.slack();
         let single = self.also_selected.borrow().is_empty();
         let hit = {
             let document = self.document.borrow();
             let on_handle = self.selected.get().filter(|_| single).and_then(|index| {
-                let (handle, _) = document
-                    .shapes()
-                    .get(index)?
+                let shape = document.shapes().get(index)?;
+                let handle = shape
                     .handles()
                     .into_iter()
-                    .find(|(_, at)| at.distance(point) <= slack)?;
+                    .find(|(_, at)| at.distance(point) <= slack)
+                    .map(|(handle, _)| handle)
+                    .or_else(|| shape.turn_zone(point, self.scale()).map(|_| Handle::Rotate))?;
                 Some((index, Grab::Handle(handle)))
             });
             on_handle.or_else(|| document.hit(point, slack).map(|index| (index, Grab::Body)))
@@ -388,7 +459,7 @@ impl Editor {
             };
             self.paint_outline(cr, view, &shape, single)?;
         }
-        Ok(())
+        self.paint_turn_hint(cr, view)
     }
 
     fn paint_outline(

@@ -169,6 +169,7 @@ pub(super) fn attach(editor: &Rc<Editor>) {
             editor.pointer.set(Some((x, y)));
             editor.track_stamp(point);
             editor.hover_region(point);
+            editor.hover_turn_zone(point);
         }
     });
     let left = Rc::downgrade(editor);
@@ -236,16 +237,24 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
         let typed = editor.typed_shape();
         let ghost = editor.ghost_shape();
         let hidden = editor.typing_over();
-        let shapes = document
+        let previews: Vec<Shape> = document
             .shapes()
             .iter()
             .enumerate()
             .filter(|(index, _)| hidden != Some(*index))
-            .map(|(index, shape)| match moving.as_ref() {
-                Some(moving) if moving.index == index => &moving.preview,
-                _ => shape,
-            });
-        let shapes: Vec<&Shape> = shapes.chain(&draft).chain(&typed).chain(&ghost).collect();
+            .map(|(index, shape)| {
+                moving
+                    .as_ref()
+                    .and_then(|moving| moving.preview_of(index))
+                    .unwrap_or_else(|| shape.clone())
+            })
+            .collect();
+        let shapes: Vec<&Shape> = previews
+            .iter()
+            .chain(&draft)
+            .chain(&typed)
+            .chain(&ghost)
+            .collect();
         let marked = shapes
             .iter()
             .any(|shape| matches!(shape, Shape::Highlight { .. }));
