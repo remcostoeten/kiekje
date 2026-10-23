@@ -241,7 +241,8 @@ window.settings-window {
   padding: 0 8px;
 }
 
-.settings switch {
+.settings switch,
+.emoji-picker switch {
   background: none;
   background-color: var(--raised-hi);
   border: 1px solid var(--stroke-hi);
@@ -253,7 +254,8 @@ window.settings-window {
   transition: background-color 150ms ease-out, border-color 150ms ease-out;
 }
 
-.settings switch > slider {
+.settings switch,
+.emoji-picker switch > slider {
   background: none;
   background-color: var(--muted);
   border: none;
@@ -265,30 +267,36 @@ window.settings-window {
   transition: background-color 150ms ease-out;
 }
 
-.settings switch > image {
+.settings switch,
+.emoji-picker switch > image {
   color: transparent;
   -gtk-icon-size: 0;
 }
 
-.settings switch:checked {
+.settings switch,
+.emoji-picker switch:checked {
   background-color: var(--accent);
   border-color: color-mix(in srgb, var(--fg) 30%, var(--accent));
 }
 
-.settings switch:checked > slider {
+.settings switch,
+.emoji-picker switch:checked > slider {
   background-color: var(--fg);
 }
 
-.settings switch:focus-visible {
+.settings switch,
+.emoji-picker switch:focus-visible {
   border-color: var(--accent);
   background-color: var(--focus-wash);
 }
 
-.settings switch:checked:focus-visible {
+.settings switch,
+.emoji-picker switch:checked:focus-visible {
   background-color: color-mix(in srgb, var(--fg) 12%, var(--accent));
 }
 
-.settings switch:disabled {
+.settings switch,
+.emoji-picker switch:disabled {
   opacity: 0.5;
 }
 

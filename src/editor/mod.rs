@@ -101,6 +101,8 @@ struct Editor {
     emoji: RefCell<String>,
     emoji_button: gtk::Button,
     recent_emoji: RefCell<Vec<String>>,
+    keep_emoji_open: Cell<bool>,
+    menu_pinned: Cell<bool>,
     stamp_at: Cell<Option<Point>>,
     size: gtk::Adjustment,
     opacity: gtk::Adjustment,
@@ -295,6 +297,8 @@ impl Editor {
             emoji: RefCell::new(DEFAULT_EMOJI.to_owned()),
             emoji_button: toolbar::emoji_action(DEFAULT_EMOJI),
             recent_emoji: RefCell::new(Vec::new()),
+            keep_emoji_open: Cell::new(false),
+            menu_pinned: Cell::new(false),
             stamp_at: Cell::new(None),
             size: gtk::Adjustment::new(
                 f64::from(drawing.size),
