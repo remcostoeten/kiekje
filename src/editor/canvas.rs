@@ -223,13 +223,36 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
     editor.canvas.queue_draw();
 }
 
+impl Editor {
+    fn paint_base(&self, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
+        let (width, height) = self.size();
+        let (left, top) = (view.left.round(), view.top.round());
+        let mut cache = self.scaled_base.borrow_mut();
+        if cache.as_ref().is_none_or(|(cached, _)| *cached != view) {
+            let surface = cr.target().create_similar(
+                cairo::Content::ColorAlpha,
+                (width * view.zoom).ceil().max(1.0) as i32,
+                (height * view.zoom).ceil().max(1.0) as i32,
+            )?;
+            let scaled = cairo::Context::new(&surface)?;
+            scaled.scale(view.zoom, view.zoom);
+            scaled.set_source_surface(&self.layers.base, 0.0, 0.0)?;
+            scaled.paint()?;
+            *cache = Some((view, surface));
+        }
+        let Some((_, surface)) = cache.as_ref() else {
+            return Ok(());
+        };
+        cr.save()?;
+        cr.set_source_surface(surface, left, top)?;
+        cr.rectangle(left, top, width * view.zoom, height * view.zoom);
+        cr.fill()?;
+        cr.restore()
+    }
+}
+
 fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
     let (width, height) = editor.size();
-    cr.save()?;
-    cr.translate(view.left, view.top);
-    cr.scale(view.zoom, view.zoom);
-    cr.rectangle(0.0, 0.0, width, height);
-    cr.clip();
     let drawn = {
         let document = editor.document.borrow();
         let moving = editor.moving.borrow();
@@ -258,13 +281,18 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
         let marked = shapes
             .iter()
             .any(|shape| matches!(shape, Shape::Highlight { .. }));
-        if editor.is_inline() && !marked {
-            render::draw_shapes(cr, &editor.layers, shapes)
-        } else {
-            render::draw(cr, &editor.layers, shapes)
+        if !editor.is_inline() || marked {
+            editor.paint_base(cr, view)?;
         }
+        cr.save()?;
+        cr.translate(view.left, view.top);
+        cr.scale(view.zoom, view.zoom);
+        cr.rectangle(0.0, 0.0, width, height);
+        cr.clip();
+        let drawn = render::draw_shapes(cr, &editor.layers, shapes);
+        cr.restore()?;
+        drawn
     };
-    cr.restore()?;
     drawn?;
     editor.paint_crop(cr, view)?;
     editor.paint_selection(cr, view)?;

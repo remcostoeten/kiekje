@@ -144,6 +144,12 @@ fn draw_faded(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(),
     if opacity >= 1.0 {
         return draw_shape(cr, layers, shape);
     }
+    let reach = shape.stroke().map_or(0.0, |stroke| {
+        stroke.width * 4.0 + shapes::font_size(stroke.width) / 4.0
+    }) + 8.0;
+    let extent = shape.extent().grown(reach);
+    cr.rectangle(extent.x, extent.y, extent.width, extent.height);
+    cr.clip();
     cr.push_group();
     let drawn = draw_shape(cr, layers, shape);
     cr.pop_group_to_source()?;
