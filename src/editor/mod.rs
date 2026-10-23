@@ -122,6 +122,7 @@ struct Editor {
     selected: Cell<Option<usize>>,
     also_selected: RefCell<Vec<usize>>,
     turn_hint: Cell<Option<Point>>,
+    marquee: Cell<Option<select::Marquee>>,
     moving: RefCell<Option<select::Moving>>,
     writer: gtk::Popover,
     entry: gtk::Entry,
@@ -332,6 +333,7 @@ impl Editor {
             selected: Cell::new(None),
             also_selected: RefCell::new(Vec::new()),
             turn_hint: Cell::new(None),
+            marquee: Cell::new(None),
             moving: RefCell::new(None),
             writer: gtk::Popover::new(),
             entry: gtk::Entry::builder()

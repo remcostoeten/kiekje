@@ -75,6 +75,7 @@ Defaults, rebindable under Settings, Shortcuts, Drawing keys or in [`[drawing.ke
 | <kbd>Shift</kbd>+scroll | Opacity |
 | <kbd>Alt</kbd>+scroll | Colour |
 | <kbd>Delete</kbd> | Delete the selected shapes |
+| Drag on empty canvas | Select every shape the frame touches |
 | <kbd>Ctrl</kbd>+click | Add a shape to the selection, or take it out |
 | <kbd>Ctrl</kbd>+<kbd>A</kbd> | Select every shape |
 | Scroll | Size, with a check, cross or emoji tool or stamp selected |

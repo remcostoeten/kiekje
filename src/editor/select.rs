@@ -21,6 +21,19 @@ pub(super) enum Grab {
     Handle(Handle),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Marquee {
+    start: Point,
+    end: Point,
+    extend: bool,
+}
+
+impl Marquee {
+    fn area(self) -> Area {
+        Area::between(self.start, self.end)
+    }
+}
+
 pub(super) struct Moving {
     pub(super) index: usize,
     pub(super) preview: Shape,
@@ -101,7 +114,7 @@ impl Editor {
             ),
             Tool::Select => self.say(
                 "Click a shape, then drag to move, drag a handle to resize, Delete removes, \
-                 arrows nudge. Ctrl+click adds to the selection, Ctrl+A selects all.",
+                 arrows nudge. Drag on empty canvas to select several, Ctrl adds to the selection.",
                 false,
             ),
             _ => {}
@@ -228,8 +241,18 @@ impl Editor {
                 self.selected.set(Some(index));
             }
             None => {
-                self.also_selected.borrow_mut().clear();
-                self.selected.set(None);
+                if !extend {
+                    self.also_selected.borrow_mut().clear();
+                    self.selected.set(None);
+                }
+                self.moving.replace(None);
+                self.marquee.set(Some(Marquee {
+                    start: point,
+                    end: point,
+                    extend,
+                }));
+                self.canvas.queue_draw();
+                return;
             }
         }
         let target = hit.and_then(|(index, grab)| {
@@ -345,6 +368,14 @@ impl Editor {
     }
 
     pub(super) fn drag_to(&self, point: Point, stepped: bool) {
+        if let Some(marquee) = self.marquee.get() {
+            self.marquee.set(Some(Marquee {
+                end: point,
+                ..marquee
+            }));
+            self.canvas.queue_draw();
+            return;
+        }
         if let Some(moving) = self.moving.borrow_mut().as_mut() {
             moving.delta = (point.x - moving.start.x, point.y - moving.start.y);
             match (moving.grab, moving.group) {
@@ -374,6 +405,10 @@ impl Editor {
     }
 
     pub(super) fn release(&self) {
+        if let Some(marquee) = self.marquee.take() {
+            self.select_within(marquee);
+            return;
+        }
         let Some(moving) = self.moving.take() else {
             return;
         };
@@ -398,8 +433,43 @@ impl Editor {
         self.canvas.queue_draw();
     }
 
+    fn select_within(&self, marquee: Marquee) {
+        let area = marquee.area();
+        let mut picked: Vec<usize> = if area.width < 2.0 && area.height < 2.0 {
+            Vec::new()
+        } else {
+            self.document
+                .borrow()
+                .shapes()
+                .iter()
+                .enumerate()
+                .filter(|(_, shape)| area.overlaps(shape.extent()))
+                .map(|(index, _)| index)
+                .collect()
+        };
+        if marquee.extend {
+            for index in self.selection() {
+                if !picked.contains(&index) {
+                    picked.push(index);
+                }
+            }
+            picked.sort_unstable();
+        }
+        let primary = picked.pop();
+        self.selected.set(primary);
+        self.also_selected.replace(picked);
+        if let Some(index) = primary {
+            self.adopt(index);
+            let count = self.selection().len();
+            if count > 1 {
+                self.say(&format!("{count} shapes selected."), false);
+            }
+        }
+        self.canvas.queue_draw();
+    }
+
     pub(super) fn cancel_grab(&self) -> bool {
-        let had = self.moving.take().is_some();
+        let had = self.moving.take().is_some() | self.marquee.take().is_some();
         self.canvas.queue_draw();
         had
     }
@@ -515,7 +585,38 @@ impl Editor {
             self.paint_outline(cr, view, &shape, single)?;
         }
         self.paint_group_frame(cr, view)?;
+        self.paint_marquee(cr, view)?;
         self.paint_turn_hint(cr, view)
+    }
+
+    fn paint_marquee(&self, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {
+        let Some(marquee) = self.marquee.get() else {
+            return Ok(());
+        };
+        let area = marquee.area();
+        let (left, top) = view.to_widget(Point {
+            x: area.x,
+            y: area.y,
+        });
+        let (right, bottom) = view.to_widget(Point {
+            x: area.x + area.width,
+            y: area.y + area.height,
+        });
+        let (red, green, blue) = Color::Accent.rgb();
+        cr.rectangle(
+            left.round() + 0.5,
+            top.round() + 0.5,
+            (right - left).round(),
+            (bottom - top).round(),
+        );
+        cr.set_source_rgba(red, green, blue, 0.12);
+        cr.fill_preserve()?;
+        cr.set_source_rgb(red, green, blue);
+        cr.set_line_width(1.0);
+        cr.set_dash(&[4.0, 3.0], 0.0);
+        cr.stroke()?;
+        cr.set_dash(&[], 0.0);
+        Ok(())
     }
 
     fn paint_group_frame(&self, cr: &cairo::Context, view: View) -> Result<(), cairo::Error> {

@@ -115,6 +115,20 @@ impl Area {
             .find(|corner| corner.distance(point) <= ROTATE_ZONE * scale)
     }
 
+    /// Whether the two areas share any point.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let touched = marquee.overlaps(shape.bounds());
+    /// ```
+    pub fn overlaps(self, other: Self) -> bool {
+        self.x <= other.x + other.width
+            && other.x <= self.x + self.width
+            && self.y <= other.y + other.height
+            && other.y <= self.y + self.height
+    }
+
     pub(super) fn corners(self) -> [Point; 4] {
         [
             Handle::TopLeft,
@@ -408,6 +422,37 @@ impl Shape {
             }
         }
         shape
+    }
+
+    /// The upright area covering the shape as drawn, turned texts and stamps included.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let picked = marquee.overlaps(shape.extent());
+    /// ```
+    pub fn extent(&self) -> Area {
+        let bounds = self.bounds();
+        let angle = self.angle();
+        if angle == 0.0 {
+            return bounds;
+        }
+        let pivot = self.pivot();
+        let corners = bounds.corners().map(|corner| corner.rotated(angle, pivot));
+        let first = corners[0];
+        let (low, high) = corners.iter().fold((first, first), |(low, high), point| {
+            (
+                Point {
+                    x: low.x.min(point.x),
+                    y: low.y.min(point.y),
+                },
+                Point {
+                    x: high.x.max(point.x),
+                    y: high.y.max(point.y),
+                },
+            )
+        });
+        Area::between(low, high)
     }
 
     /// Whether the shape can turn: texts and stamps can, outlines and strokes can't.
@@ -790,6 +835,10 @@ mod tests {
         assert!((centre.x).abs() < 1e-9 && (centre.y - 90.0).abs() < 1e-9);
         let group = mark.bounds().union(line.bounds());
         assert_eq!((group.x, group.y), (0.0, 0.0));
+        let wide = mark.turned(45.0).extent();
+        assert!(wide.width > mark.bounds().width);
+        assert!(area(0.0, 0.0, 10.0, 10.0).overlaps(area(10.0, 10.0, 5.0, 5.0)));
+        assert!(!area(0.0, 0.0, 10.0, 10.0).overlaps(area(11.0, 0.0, 5.0, 5.0)));
         let corner = mark.bounds().corners()[0];
         let outside = point(corner.x - 6.0, corner.y - 6.0);
         assert_eq!(mark.turn_zone(outside, 1.0), Some(corner));
