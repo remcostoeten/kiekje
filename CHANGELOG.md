@@ -9,7 +9,7 @@ All notable changes to Kiekje. The full notes for each release, including what w
 - Gallery search tolerates a typo in the file name and ignores accents.
 - Check, cross and emoji stamp tools. A faint preview follows the pointer, and a click places the stamp. From the keyboard, the arrow keys move the preview and Space places it.
 - The emoji tool has a picker with 64 common emoji and a search field over every Unicode emoji by its English and Dutch names and keywords from CLDR, with typo tolerance. The field also accepts a pasted emoji. A Recent row keeps the last eight stamped emoji, and the picker is fully keyboard driven: type from anywhere, Down into the rows, arrows between emoji, Enter or Space to use one, Escape to close. Pressing `:` in the editor opens it, and chat emoticons such as `:p`, `xD`, `<3` and `(y)` find their emoji. Open it from the toolbar, by right-clicking the image with the emoji tool, or with Shift+F10.
-- Scroll resizes the active stamp tool or a selected stamp.
+- Scroll resizes the active stamp tool or a selected stamp. A placed stamp is selected right away and the tool returns to Select.
 - The stamp tools can get keys under Settings, Shortcuts, Drawing keys. They have none by default.
 
 ## [0.1.0-alpha.6] - 2026-10-16

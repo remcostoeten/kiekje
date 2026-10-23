@@ -455,10 +455,24 @@ impl Editor {
         let shape = self.draft_shape();
         self.draft.borrow_mut().clear();
         if let Some(shape) = shape {
+            let stamped = self.is_stamp_tool();
             self.document.borrow_mut().apply(Edit::Add(shape));
             self.edited();
+            if stamped {
+                self.settle_stamp();
+            }
         }
         self.canvas.queue_draw();
+    }
+
+    fn settle_stamp(&self) {
+        let last = self.document.borrow().shapes().len().checked_sub(1);
+        self.pick(Tool::Select);
+        self.selected.set(last);
+        self.say(
+            "Placed. Scroll sizes it, arrows move it, Delete removes it. Press the tool key to place another.",
+            false,
+        );
     }
 
     fn cancel_draft(&self) -> bool {

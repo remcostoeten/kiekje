@@ -40,7 +40,7 @@ Every tool key and the thinner and thicker keys can be rebound under Settings, S
 
 ## Stamps
 
-Check, Cross and Emoji place one stamp per click. Press and drag to adjust the position before releasing. A faded preview follows the pointer and shows the size the stamp will have.
+Check, Cross and Emoji place one stamp per click. Press and drag to adjust the position before releasing. A faded preview follows the pointer and shows the size the stamp will have. Once placed, the stamp is selected and the tool returns to Select, so scroll sizes it and the arrows move it; press the tool key again for another.
 
 | Input | Effect |
 | --- | --- |
