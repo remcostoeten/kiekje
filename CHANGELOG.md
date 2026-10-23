@@ -4,6 +4,8 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] - 2026-10-23
+
 ### Added
 
 - The emoji picker searches every Unicode emoji by its English and Dutch names and keywords from CLDR, with typo tolerance, so `vuur`, `insekt` and `rockett` all find something. Chat emoticons such as `:p`, `xD`, `<3` and `(y)` find their emoji, and `:fire:` works too.
@@ -120,7 +122,8 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 First alpha: region capture with an overlay, a gallery, an editor with shapes, text and crop, a tray, and settings.
 
-[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.6...HEAD
+[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.8...HEAD
+[0.1.0-alpha.8]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.5
