@@ -187,17 +187,17 @@ fn extend(editor: &Editor, gesture: &gtk::GestureDrag, dx: f64, dy: f64) {
     if editor.reshape_to(point) {
         return;
     }
+    let straight = gesture
+        .current_event_state()
+        .contains(gdk::ModifierType::SHIFT_MASK);
     match editor.tool.get() {
         Tool::Select => {
-            editor.drag_to(point);
+            editor.drag_to(point, straight);
             return;
         }
         Tool::Text => return,
         _ => {}
     }
-    let straight = gesture
-        .current_event_state()
-        .contains(gdk::ModifierType::SHIFT_MASK);
     let tool = editor.tool.get();
     let mut draft = editor.draft.borrow_mut();
     let Some(&start) = draft.first() else {

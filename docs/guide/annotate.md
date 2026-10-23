@@ -42,6 +42,8 @@ Every tool key and the thinner and thicker keys can be rebound under Settings, S
 
 Check, Cross and Emoji place one stamp per click. Press and drag to adjust the position before releasing. A faded preview follows the pointer and shows the size the stamp will have. Once placed, the stamp is selected and the tool returns to Select, so scroll sizes it and the arrows move it; press the tool key again for another.
 
+A selected text, check, cross or emoji has a round handle above it. Drag it to turn the shape freely around its centre; near a right angle it snaps, and holding <kbd>Shift</kbd> while dragging keeps it on 15 degree steps, as in Photoshop. <kbd>,</kbd> and <kbd>.</kbd> turn in steps of 15 degrees.
+
 | Input | Effect |
 | --- | --- |
 | Scroll | Size of the stamp, also for a selected stamp |

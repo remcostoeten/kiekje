@@ -68,6 +68,8 @@ Defaults, rebindable under Settings, Shortcuts, Drawing keys or in [`[drawing.ke
 | <kbd>X</kbd> | Pixelate |
 | <kbd>C</kbd> | Crop (editor window) |
 | <kbd>[</kbd>, <kbd>]</kbd> | Thinner and thicker lines |
+| <kbd>,</kbd>, <kbd>.</kbd> | Turn the selected text, check, cross or emoji 15 degrees |
+| <kbd>Shift</kbd> while dragging the turn handle | Keep to 15 degree steps |
 | <kbd>1</kbd> to <kbd>7</kbd> | Pick a colour |
 | <kbd>Ctrl</kbd>+scroll | Size |
 | <kbd>Shift</kbd>+scroll | Opacity |

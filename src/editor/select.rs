@@ -2,6 +2,7 @@ use gtk::cairo;
 use gtk::prelude::*;
 
 use super::Editor;
+use super::TURN_STEP_DEGREES;
 use super::canvas::View;
 use super::document::{Color, Edit, Point, Shape, Tool};
 use super::shapes::Handle;
@@ -30,6 +31,10 @@ pub(super) fn tool_cursor(tool: Tool) -> &'static str {
         Tool::Select => "default",
         _ => "crosshair",
     }
+}
+
+fn stepped_angle(degrees: f64) -> f64 {
+    (degrees / TURN_STEP_DEGREES).round() * TURN_STEP_DEGREES
 }
 
 impl Editor {
@@ -126,12 +131,16 @@ impl Editor {
         self.adopting.set(false);
     }
 
-    pub(super) fn drag_to(&self, point: Point) {
+    pub(super) fn drag_to(&self, point: Point, stepped: bool) {
         if let Some(moving) = self.moving.borrow_mut().as_mut() {
             moving.preview = match moving.grab {
                 Grab::Body => moving
                     .original
                     .moved(point.x - moving.start.x, point.y - moving.start.y),
+                Grab::Handle(Handle::Rotate) if stepped => {
+                    let free = moving.original.resized(Handle::Rotate, point);
+                    free.turned(stepped_angle(free.angle()))
+                }
                 Grab::Handle(handle) => moving.original.resized(handle, point),
             };
         }

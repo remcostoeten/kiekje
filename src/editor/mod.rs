@@ -39,7 +39,7 @@ use document::{
 use pixels::{LoadError, Picture};
 use render::Layers;
 
-const TURN_STEP_DEGREES: f64 = 15.0;
+pub(super) const TURN_STEP_DEGREES: f64 = 15.0;
 
 pub use document::Color;
 pub use inline::{Ending, Finish, Inline};

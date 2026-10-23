@@ -60,6 +60,8 @@ pixelate = "x"
 crop = "c"
 thinner = "["
 thicker = "]"
+turn_left = ","
+turn_right = "."
 
 [upload]
 enabled = false
@@ -164,6 +166,8 @@ One key per drawing action, pressed without modifiers. A letter, a digit or punc
 | `crop` | `"c"` | Crop, editor window only |
 | `thinner` | `"["` | Thinner lines |
 | `thicker` | `"]"` | Thicker lines |
+| `turn_left` | `","` | Turn the selected text or stamp 15 degrees left |
+| `turn_right` | `"."` | Turn the selected text or stamp 15 degrees right |
 
 ## `[upload]`
 
