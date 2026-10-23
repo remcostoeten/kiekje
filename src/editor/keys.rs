@@ -13,10 +13,12 @@ pub enum DrawAction {
     Tool(Tool),
     Smaller,
     Larger,
+    TurnLeft,
+    TurnRight,
 }
 
 impl DrawAction {
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::Tool(Tool::Select),
         Self::Tool(Tool::Rectangle),
         Self::Tool(Tool::Ellipse),
@@ -33,6 +35,8 @@ impl DrawAction {
         Self::Tool(Tool::Crop),
         Self::Smaller,
         Self::Larger,
+        Self::TurnLeft,
+        Self::TurnRight,
     ];
 
     pub fn label(self) -> &'static str {
@@ -40,6 +44,8 @@ impl DrawAction {
             Self::Tool(tool) => tool.label(),
             Self::Smaller => "Thinner lines",
             Self::Larger => "Thicker lines",
+            Self::TurnLeft => "Turn left",
+            Self::TurnRight => "Turn right",
         }
     }
 
@@ -48,6 +54,8 @@ impl DrawAction {
             Self::Tool(tool) => tool.key().chars().next().map_or(DrawKey::Off, DrawKey::Key),
             Self::Smaller => DrawKey::Key('['),
             Self::Larger => DrawKey::Key(']'),
+            Self::TurnLeft => DrawKey::Key(','),
+            Self::TurnRight => DrawKey::Key('.'),
         }
     }
 }
@@ -144,6 +152,8 @@ pub struct DrawingKeys {
     pub crop: DrawKey,
     pub thinner: DrawKey,
     pub thicker: DrawKey,
+    pub turn_left: DrawKey,
+    pub turn_right: DrawKey,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -173,6 +183,8 @@ impl Default for DrawingKeys {
             crop: DrawKey::Off,
             thinner: DrawKey::Off,
             thicker: DrawKey::Off,
+            turn_left: DrawKey::Off,
+            turn_right: DrawKey::Off,
         };
         for action in DrawAction::ALL {
             keys.set(action, action.default_key());
@@ -251,6 +263,8 @@ impl DrawingKeys {
             DrawAction::Tool(Tool::Crop) => &self.crop,
             DrawAction::Smaller => &self.thinner,
             DrawAction::Larger => &self.thicker,
+            DrawAction::TurnLeft => &self.turn_left,
+            DrawAction::TurnRight => &self.turn_right,
         }
     }
 
@@ -272,6 +286,8 @@ impl DrawingKeys {
             DrawAction::Tool(Tool::Crop) => &mut self.crop,
             DrawAction::Smaller => &mut self.thinner,
             DrawAction::Larger => &mut self.thicker,
+            DrawAction::TurnLeft => &mut self.turn_left,
+            DrawAction::TurnRight => &mut self.turn_right,
         }
     }
 }

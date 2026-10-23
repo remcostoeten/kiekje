@@ -190,9 +190,24 @@ fn draw_shape(cr: &cairo::Context, layers: &Layers, shape: &Shape) -> Result<(),
             cr.fill()
         }
         Shape::Step { at, number, stroke } => step(cr, *at, *number, *stroke),
-        Shape::Text { at, text, stroke } => write(cr, *at, text, *stroke),
-        Shape::Mark { at, kind, stroke } => mark(cr, *at, *kind, *stroke),
-        Shape::Emoji { at, glyph, stroke } => emoji(cr, *at, glyph, *stroke),
+        Shape::Text {
+            at, text, stroke, ..
+        } => {
+            turn(cr, shape);
+            write(cr, *at, text, *stroke)
+        }
+        Shape::Mark {
+            at, kind, stroke, ..
+        } => {
+            turn(cr, shape);
+            mark(cr, *at, *kind, *stroke)
+        }
+        Shape::Emoji {
+            at, glyph, stroke, ..
+        } => {
+            turn(cr, shape);
+            emoji(cr, *at, glyph, *stroke)
+        }
         Shape::Pixelate { area } => {
             cr.rectangle(area.x, area.y, area.width, area.height);
             cr.clip();
@@ -227,6 +242,17 @@ pub fn measure(text: &str, size: f64) -> (f64, f64) {
             Ok((extents.x_advance(), line.ascent() + line.descent()))
         });
     measured.unwrap_or((text.chars().count() as f64 * size * 0.6, size * 1.2))
+}
+
+fn turn(cr: &cairo::Context, shape: &Shape) {
+    let angle = shape.angle();
+    if angle == 0.0 {
+        return;
+    }
+    let pivot = shape.pivot();
+    cr.translate(pivot.x, pivot.y);
+    cr.rotate(angle.to_radians());
+    cr.translate(-pivot.x, -pivot.y);
 }
 
 fn write(cr: &cairo::Context, at: Point, text: &str, stroke: Stroke) -> Result<(), cairo::Error> {
@@ -520,6 +546,7 @@ mod tests {
             at: Point { x: 50.0, y: 50.0 },
             kind: MarkKind::Check,
             stroke,
+            angle: 0.0,
         };
         let image = flatten(&picture, &[shape], None).unwrap();
         let [red, green, blue, _] = pixel(&image, 50, 50 + 4);
@@ -543,6 +570,7 @@ mod tests {
             at: Point { x: 50.0, y: 50.0 },
             kind: MarkKind::Cross,
             stroke,
+            angle: 0.0,
         };
         let image = flatten(&picture, &[shape], None).unwrap();
         for (x, y) in [(58, 58), (42, 42), (58, 42), (42, 58)] {
@@ -564,6 +592,7 @@ mod tests {
             at: Point { x: 60.0, y: 60.0 },
             glyph: "🔥".to_owned(),
             stroke,
+            angle: 0.0,
         };
         let image = flatten(&picture, &[shape], None).unwrap();
         for (x, y) in [(2, 2), (117, 2), (2, 117), (117, 117), (60, 2), (60, 117)] {

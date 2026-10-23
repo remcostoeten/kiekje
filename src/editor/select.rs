@@ -262,22 +262,56 @@ impl Editor {
         cr.set_source_rgb(accent_red, accent_green, accent_blue);
         cr.set_line_width(1.0);
         cr.set_dash(&[4.0, 3.0], 0.0);
-        cr.rectangle(
-            left.floor() - OUTSET + 0.5,
-            top.floor() - OUTSET + 0.5,
-            (right - left).ceil() + OUTSET * 2.0,
-            (bottom - top).ceil() + OUTSET * 2.0,
-        );
+        if shape.angle() == 0.0 {
+            cr.rectangle(
+                left.floor() - OUTSET + 0.5,
+                top.floor() - OUTSET + 0.5,
+                (right - left).ceil() + OUTSET * 2.0,
+                (bottom - top).ceil() + OUTSET * 2.0,
+            );
+        } else {
+            let outset = OUTSET / view.zoom();
+            let pivot = shape.pivot();
+            let corners = bounds.grown(outset).corners();
+            for (index, corner) in corners.into_iter().enumerate() {
+                let (x, y) = view.to_widget(corner.rotated(shape.angle(), pivot));
+                if index == 0 {
+                    cr.move_to(x, y);
+                } else {
+                    cr.line_to(x, y);
+                }
+            }
+            cr.close_path();
+        }
         cr.stroke()?;
         cr.set_dash(&[], 0.0);
-        for (_, at) in shape.handles() {
+        for (handle, at) in shape.handles() {
             let (x, y) = view.to_widget(at);
-            cr.rectangle(
-                x.round() - HANDLE / 2.0 + 0.5,
-                y.round() - HANDLE / 2.0 + 0.5,
-                HANDLE - 1.0,
-                HANDLE - 1.0,
-            );
+            if handle == Handle::Rotate {
+                let top = Point {
+                    x: bounds.x + bounds.width / 2.0,
+                    y: bounds.y,
+                }
+                .rotated(shape.angle(), shape.pivot());
+                let (top_x, top_y) = view.to_widget(top);
+                cr.move_to(top_x, top_y);
+                cr.line_to(x, y);
+                cr.stroke()?;
+                cr.arc(
+                    x.round() + 0.5,
+                    y.round() + 0.5,
+                    HANDLE / 2.0,
+                    0.0,
+                    std::f64::consts::TAU,
+                );
+            } else {
+                cr.rectangle(
+                    x.round() - HANDLE / 2.0 + 0.5,
+                    y.round() - HANDLE / 2.0 + 0.5,
+                    HANDLE - 1.0,
+                    HANDLE - 1.0,
+                );
+            }
             cr.set_source_rgb(0.04, 0.04, 0.04);
             cr.fill_preserve()?;
             cr.set_source_rgb(accent_red, accent_green, accent_blue);

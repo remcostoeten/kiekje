@@ -309,10 +309,13 @@ impl Editor {
             return false;
         }
         self.replace_selected(|shape| match shape {
-            Shape::Emoji { at, stroke, .. } => Shape::Emoji {
+            Shape::Emoji {
+                at, stroke, angle, ..
+            } => Shape::Emoji {
                 at: *at,
                 glyph: glyph.to_owned(),
                 stroke: *stroke,
+                angle: *angle,
             },
             other => other.clone(),
         })

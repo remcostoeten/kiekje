@@ -9,6 +9,22 @@ pub struct Point {
 }
 
 impl Point {
+    /// Returns the point turned `degrees` clockwise around `pivot`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let turned = point.rotated(90.0, centre);
+    /// ```
+    pub fn rotated(self, degrees: f64, pivot: Self) -> Self {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let (dx, dy) = (self.x - pivot.x, self.y - pivot.y);
+        Self {
+            x: pivot.x + dx * cos - dy * sin,
+            y: pivot.y + dx * sin + dy * cos,
+        }
+    }
+
     pub fn distance(self, other: Self) -> f64 {
         (self.x - other.x).hypot(self.y - other.y)
     }
@@ -246,16 +262,19 @@ pub enum Shape {
         at: Point,
         text: String,
         stroke: Stroke,
+        angle: f64,
     },
     Mark {
         at: Point,
         kind: MarkKind,
         stroke: Stroke,
+        angle: f64,
     },
     Emoji {
         at: Point,
         glyph: String,
         stroke: Stroke,
+        angle: f64,
     },
 }
 
@@ -387,16 +406,19 @@ impl Tool {
                 at: end,
                 kind: MarkKind::Check,
                 stroke,
+                angle: 0.0,
             }),
             Self::Cross => Some(Shape::Mark {
                 at: end,
                 kind: MarkKind::Cross,
                 stroke,
+                angle: 0.0,
             }),
             Self::Emoji => Some(Shape::Emoji {
                 at: end,
                 glyph: glyph.to_owned(),
                 stroke,
+                angle: 0.0,
             }),
             _ => None,
         }
@@ -754,7 +776,8 @@ mod tests {
             Some(Shape::Mark {
                 at: point(5.0, 5.0),
                 kind: MarkKind::Check,
-                stroke: STROKE
+                stroke: STROKE,
+                angle: 0.0
             })
         );
         assert_eq!(
@@ -762,7 +785,8 @@ mod tests {
             Some(Shape::Mark {
                 at: point(5.0, 5.0),
                 kind: MarkKind::Cross,
-                stroke: STROKE
+                stroke: STROKE,
+                angle: 0.0
             })
         );
         assert_eq!(
@@ -770,7 +794,8 @@ mod tests {
             Some(Shape::Emoji {
                 at: point(5.0, 5.0),
                 glyph: "🔥".to_owned(),
-                stroke: STROKE
+                stroke: STROKE,
+                angle: 0.0
             })
         );
     }

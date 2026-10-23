@@ -39,6 +39,8 @@ use document::{
 use pixels::{LoadError, Picture};
 use render::Layers;
 
+const TURN_STEP_DEGREES: f64 = 15.0;
+
 pub use document::Color;
 pub use inline::{Ending, Finish, Inline};
 pub use keys::{DrawAction, DrawKey, DrawingKeys, KeyConflict};
@@ -407,6 +409,8 @@ impl Editor {
             DrawAction::Tool(tool) => self.pick(tool),
             DrawAction::Smaller => self.size.set_value(self.size.value() - 1.0),
             DrawAction::Larger => self.size.set_value(self.size.value() + 1.0),
+            DrawAction::TurnLeft => self.turn_selected(-TURN_STEP_DEGREES),
+            DrawAction::TurnRight => self.turn_selected(TURN_STEP_DEGREES),
         }
     }
 
@@ -465,12 +469,27 @@ impl Editor {
         self.canvas.queue_draw();
     }
 
+    fn turn_selected(&self, degrees: f64) {
+        let turned = self.replace_selected(|shape| {
+            if shape.turns() {
+                shape.turned(shape.angle() + degrees)
+            } else {
+                shape.clone()
+            }
+        });
+        if turned {
+            self.canvas.queue_draw();
+        } else {
+            self.say("Select a text, check, cross or emoji to turn it.", false);
+        }
+    }
+
     fn settle_stamp(&self) {
         let last = self.document.borrow().shapes().len().checked_sub(1);
         self.pick(Tool::Select);
         self.selected.set(last);
         self.say(
-            "Placed. Scroll sizes it, arrows move it, Delete removes it. Press the tool key to place another.",
+            "Placed. Scroll sizes it, arrows move it, comma and period turn it, drag the top handle to turn it freely.",
             false,
         );
     }
