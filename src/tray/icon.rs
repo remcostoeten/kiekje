@@ -34,7 +34,7 @@ pub fn pixmaps() -> Vec<Icon> {
                 .filter_map(|bytes| match decode(bytes) {
                     Ok(icon) => Some(icon),
                     Err(error) => {
-                        eprintln!("kiekje: {error}");
+                        warn!("{error}");
                         None
                     }
                 })
@@ -102,6 +102,50 @@ pub fn blink() -> Vec<Icon> {
     static SHUT: OnceLock<Vec<Icon>> = OnceLock::new();
     SHUT.get_or_init(|| pixmaps().iter().map(shut_eyes).collect())
         .clone()
+}
+
+/// Returns the icon at every bundled size with an accent dot in the bottom right corner.
+///
+/// The tray shows it for as long as a recording runs.
+///
+/// # Examples
+///
+/// ```ignore
+/// handle.update(|item| item.pixmaps = icon::recording());
+/// ```
+pub fn recording() -> Vec<Icon> {
+    static MARKED: OnceLock<Vec<Icon>> = OnceLock::new();
+    MARKED
+        .get_or_init(|| pixmaps().iter().map(mark).collect())
+        .clone()
+}
+
+fn mark(icon: &Icon) -> Icon {
+    let width = icon.width as usize;
+    let size = width as f32;
+    let (centre, radius) = (size * 0.72, size * 0.27);
+    let mut data = icon.data.clone();
+    for (position, pixel) in data.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (x, y) = (
+            (position % width) as f32 + 0.5,
+            (position / width) as f32 + 0.5,
+        );
+        let distance = ((x - centre).powi(2) + (y - centre).powi(2)).sqrt();
+        let cover = (radius + 0.5 - distance).clamp(0.0, 1.0);
+        if cover > 0.0 {
+            let [alpha, rest @ ..] = pixel;
+            *alpha = (*alpha as f32 + (255.0 - *alpha as f32) * cover).round() as u8;
+            for (channel, accent) in rest.iter_mut().zip(ACCENT) {
+                *channel =
+                    (*channel as f32 + (accent as f32 - *channel as f32) * cover).round() as u8;
+            }
+        }
+    }
+    Icon {
+        width: icon.width,
+        height: icon.height,
+        data,
+    }
 }
 
 fn shut_eyes(icon: &Icon) -> Icon {
@@ -239,6 +283,29 @@ mod tests {
             let width = open.width as usize;
             let rows: Vec<usize> = changed.iter().map(|index| index / width).collect();
             assert!(rows.iter().max().unwrap() - rows.iter().min().unwrap() < width / 3);
+        }
+    }
+
+    #[test]
+    fn marks_only_the_bottom_right_while_recording() {
+        for (plain, marked) in pixmaps().iter().zip(recording()) {
+            let width = plain.width as usize;
+            let changed: Vec<usize> = plain
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(marked.data.as_chunks::<4>().0)
+                .enumerate()
+                .filter(|(_, (before, after))| before != after)
+                .map(|(index, _)| index)
+                .collect();
+            assert!(!changed.is_empty(), "{} px has no dot", plain.width);
+            assert!(
+                changed
+                    .iter()
+                    .all(|index| index % width > width / 3 && index / width > width / 3)
+            );
         }
     }
 

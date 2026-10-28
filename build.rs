@@ -15,6 +15,9 @@ fn main() {
     let generated = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR")).join("css");
     fs::create_dir_all(&generated).expect("OUT_DIR is writable");
     fs::write(generated.join("style.css"), flat).expect("OUT_DIR is writable");
+    let light =
+        css::flatten_light(&source).unwrap_or_else(|error| panic!("style.css light: {error}"));
+    fs::write(generated.join("style-light.css"), light).expect("OUT_DIR is writable");
     glib_build_tools::compile_resources(
         &[generated.as_path(), Path::new("resources")],
         "resources/resources.gresource.xml",

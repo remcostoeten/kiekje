@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::cmp::Reverse;
 
 use crate::capture::CaptureMode;
@@ -35,10 +36,17 @@ pub enum Kind {
     Region,
     Fullscreen,
     Window,
+    Recording,
 }
 
 impl Kind {
-    pub const ALL: [Self; 4] = [Self::Any, Self::Region, Self::Fullscreen, Self::Window];
+    pub const ALL: [Self; 5] = [
+        Self::Any,
+        Self::Region,
+        Self::Fullscreen,
+        Self::Window,
+        Self::Recording,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -46,15 +54,20 @@ impl Kind {
             Self::Region => "Region",
             Self::Fullscreen => "Screen",
             Self::Window => "Window",
+            Self::Recording => "Recording",
         }
     }
 
-    fn matches(self, mode: CaptureMode) -> bool {
+    fn matches(self, capture: &Capture) -> bool {
+        let mode = capture.mode;
         match self {
             Self::Any => true,
-            Self::Region => matches!(mode, CaptureMode::Region | CaptureMode::Repeat),
-            Self::Fullscreen => mode == CaptureMode::Fullscreen,
-            Self::Window => mode == CaptureMode::Window,
+            Self::Region => {
+                !capture.is_animated() && matches!(mode, CaptureMode::Region | CaptureMode::Repeat)
+            }
+            Self::Fullscreen => !capture.is_animated() && mode == CaptureMode::Fullscreen,
+            Self::Window => !capture.is_animated() && mode == CaptureMode::Window,
+            Self::Recording => capture.is_animated(),
         }
     }
 }
@@ -179,27 +192,45 @@ pub struct Query {
 /// ```ignore
 /// let shown = query::apply(&captures, &Query { text: "invoice".into(), ..Query::default() }, now);
 /// ```
-pub fn apply<'a>(captures: &'a [Capture], query: &Query, now_us: i64) -> Vec<&'a Capture> {
-    let needle = query.text.trim();
+pub fn apply<'a, T: Borrow<Capture>>(captures: &'a [T], query: &Query, now_us: i64) -> Vec<&'a T> {
+    let needle = fuzzy::Needle::new(query.text.trim());
+    let searching = !query.text.trim().is_empty();
     let since = query.period.since(now_us);
-    let mut shown: Vec<&Capture> = captures
+    let mut shown: Vec<&T> = captures
         .iter()
-        .filter(|capture| capture.missing == query.missing)
-        .filter(|capture| query.kind.matches(capture.mode))
-        .filter(|capture| since.is_none_or(|since| capture.created_us >= since))
-        .filter(|capture| query.dimensions.matches(capture.width, capture.height))
-        .filter(|capture| query.file_size.matches(capture.bytes))
-        .filter(|capture| !query.annotated || capture.annotated)
-        .filter(|capture| !query.unsaved || capture.unsaved)
-        .filter(|capture| needle.is_empty() || fuzzy::matches(needle, &name(capture)))
+        .filter(|item| {
+            let capture: &Capture = (*item).borrow();
+            capture.missing == query.missing
+                && query.kind.matches(capture)
+                && since.is_none_or(|since| capture.created_us >= since)
+                && query.dimensions.matches(capture.width, capture.height)
+                && query.file_size.matches(capture.bytes)
+                && (!query.annotated || capture.annotated)
+                && (!query.unsaved || capture.unsaved)
+                && (!searching
+                    || capture
+                        .path
+                        .file_name()
+                        .is_some_and(|name| needle.matches(&name.to_string_lossy())))
+        })
         .collect();
     match query.sort {
-        Sort::Newest => shown.sort_by_key(|capture| Reverse((capture.created_us, capture.id))),
-        Sort::Oldest => shown.sort_by_key(|capture| (capture.created_us, capture.id)),
-        Sort::Largest => {
-            shown.sort_by_key(|capture| Reverse((capture.bytes, capture.created_us)));
-        }
-        Sort::Name => shown.sort_by_cached_key(|capture| (name(capture), capture.id)),
+        Sort::Newest => shown.sort_by_key(|item| {
+            let capture: &Capture = (*item).borrow();
+            Reverse((capture.created_us, capture.id))
+        }),
+        Sort::Oldest => shown.sort_by_key(|item| {
+            let capture: &Capture = (*item).borrow();
+            (capture.created_us, capture.id)
+        }),
+        Sort::Largest => shown.sort_by_key(|item| {
+            let capture: &Capture = (*item).borrow();
+            Reverse((capture.bytes, capture.created_us))
+        }),
+        Sort::Name => shown.sort_by_cached_key(|item| {
+            let capture: &Capture = (*item).borrow();
+            (name(capture), capture.id)
+        }),
     }
     shown
 }
@@ -401,6 +432,35 @@ mod tests {
             ..Query::default()
         };
         assert_eq!(ids(&apply(&captures, &query, 0)), [5]);
+    }
+
+    #[test]
+    fn lists_recordings_and_their_gifs_under_their_own_kind() {
+        let mut captures = sample();
+        captures.push(capture(
+            5,
+            "clip.webm",
+            CaptureMode::Fullscreen,
+            200,
+            36 * DAY_US,
+        ));
+        captures.push(capture(
+            6,
+            "clip.gif",
+            CaptureMode::Fullscreen,
+            300,
+            37 * DAY_US,
+        ));
+        let kind = |kind| {
+            let query = Query {
+                kind,
+                ..Query::default()
+            };
+            ids(&apply(&captures, &query, 0))
+        };
+        assert_eq!(kind(Kind::Recording), [6, 5]);
+        assert_eq!(kind(Kind::Fullscreen), [4, 2]);
+        assert_eq!(kind(Kind::Any), [6, 5, 4, 3, 2, 1]);
     }
 
     #[test]

@@ -38,7 +38,9 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         .build();
     let target = Rc::downgrade(editor);
     primary.connect_pressed(move |_, _, _, _| {
-        if let Some(editor) = target.upgrade() {
+        if let Some(editor) = target.upgrade()
+            && !editor.menu_pinned.get()
+        {
             editor.close_menu();
         }
     });
@@ -47,12 +49,11 @@ pub(super) fn attach(editor: &Rc<Editor>) {
 
 impl Editor {
     fn open_menu(self: &Rc<Self>, x: f64, y: f64) {
-        let content = if self.tool.get() == Tool::Emoji {
-            self.emoji_picker("")
+        if self.tool.get() == Tool::Emoji {
+            self.open_emoji_menu("", x, y);
         } else {
-            self.menu_list()
-        };
-        self.open_menu_with(content, x, y);
+            self.open_menu_with(self.menu_list(), x, y);
+        }
     }
 
     pub(super) fn open_menu_by_key(self: &Rc<Self>) {
@@ -111,7 +112,15 @@ impl Editor {
         }
     }
 
+    pub(super) fn pin_menu(&self, pinned: bool) {
+        self.menu_pinned.set(pinned);
+        if let Some(Menu::Popover(popover)) = self.menu.borrow().as_ref() {
+            popover.set_autohide(!pinned);
+        }
+    }
+
     pub(super) fn close_menu(&self) -> bool {
+        self.menu_pinned.set(false);
         let Some(menu) = self.menu.take() else {
             return false;
         };
@@ -185,7 +194,7 @@ impl Editor {
         line.append(
             &gtk::Label::builder()
                 .label(key)
-                .css_classes(["caps"])
+                .css_classes(["section-title"])
                 .build(),
         );
         let button = gtk::Button::builder()

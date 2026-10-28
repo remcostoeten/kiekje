@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
 use fast_image_resize::images::Image;
@@ -10,9 +11,12 @@ use gtk::gdk_pixbuf::Pixbuf;
 use gtk::{gdk, glib};
 use thiserror::Error;
 
+use crate::record;
 use crate::storage;
 
 pub const EDGE: i32 = 320;
+const LOAD_EDGE: i32 = EDGE * 2;
+const SCALED_ON_LOAD: [&str; 2] = ["jpeg", "webp"];
 
 #[derive(Debug, Error)]
 pub enum ThumbError {
@@ -22,6 +26,8 @@ pub enum ThumbError {
     Decode { path: PathBuf, source: glib::Error },
     #[error("could not scale {}: {reason}", path.display())]
     Resize { path: PathBuf, reason: String },
+    #[error("could not read a frame of {}: {reason}", path.display())]
+    Poster { path: PathBuf, reason: String },
     #[error("the thumbnail of {} is unreadable: {source}", path.display())]
     Texture { path: PathBuf, source: glib::Error },
 }
@@ -49,18 +55,41 @@ pub fn dir() -> PathBuf {
 /// let png = thumbs::load(&thumbs::dir(), Path::new("/home/me/Pictures/shot.png"))?;
 /// ```
 pub fn load(cache: &Path, source: &Path) -> Result<Vec<u8>, ThumbError> {
-    let entry = cache.join(format!("{:016x}.png", key(source)?));
+    let entry = entry(cache, source)?;
     if let Ok(png) = fs::read(&entry) {
         return Ok(png);
     }
     let png = make(source)?;
     if let Err(error) = storage::write_atomic(&entry, &png) {
-        eprintln!(
-            "kiekje: thumbnail cache {} unwritable: {error}",
-            entry.display()
-        );
+        error!("thumbnail cache {} unwritable: {error}", entry.display());
     }
     Ok(png)
+}
+
+/// Returns the path of the cached thumbnail for `source`, making and writing it when it is missing.
+///
+/// Touches the disk, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let png = thumbs::cached(&thumbs::dir(), Path::new("/home/me/Pictures/shot.png"))?;
+/// ```
+pub fn cached(cache: &Path, source: &Path) -> Result<PathBuf, ThumbError> {
+    let entry = entry(cache, source)?;
+    if entry.is_file() {
+        return Ok(entry);
+    }
+    let png = make(source)?;
+    storage::write_atomic(&entry, &png).map_err(|error| ThumbError::Source {
+        path: entry.clone(),
+        source: error,
+    })?;
+    Ok(entry)
+}
+
+fn entry(cache: &Path, source: &Path) -> Result<PathBuf, ThumbError> {
+    Ok(cache.join(format!("{:016x}.png", key(source)?)))
 }
 
 /// Returns the thumbnail for `source` as a texture ready to show, decoded on the calling thread.
@@ -109,43 +138,132 @@ pub fn prune(cache: &Path, sources: &[PathBuf]) -> io::Result<usize> {
         }
         match fs::remove_file(entry.path()) {
             Ok(()) => removed += 1,
-            Err(error) => eprintln!("kiekje: could not remove thumbnail {name}: {error}"),
+            Err(error) => error!("could not remove thumbnail {name}: {error}"),
         }
     }
     Ok(removed)
 }
 
+/// Returns the width and height in pixels of a recording, read from its first frame.
+///
+/// Decodes with GStreamer and keeps the thumbnail it makes on the way, so call it off the GTK main
+/// thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let (width, height) = thumbs::video_size(Path::new("/home/me/Videos/Kiekje/clip.webm"))?;
+/// ```
+pub fn video_size(source: &Path) -> Result<(u32, u32), ThumbError> {
+    size_in(&dir(), source)
+}
+
+fn size_in(cache: &Path, source: &Path) -> Result<(u32, u32), ThumbError> {
+    let poster = poster(source, None)?;
+    let size = (
+        u32::try_from(poster.width()).unwrap_or(0),
+        u32::try_from(poster.height()).unwrap_or(0),
+    );
+    warm(cache, source, &poster);
+    Ok(size)
+}
+
+fn warm(cache: &Path, source: &Path, poster: &Pixbuf) {
+    let written = entry(cache, source).and_then(|entry| {
+        let png = render(source, poster)?;
+        storage::write_atomic(&entry, &png).map_err(|error| ThumbError::Source {
+            path: entry,
+            source: error,
+        })
+    });
+    if let Err(error) = written {
+        warn!("thumbnail not cached: {error}");
+    }
+}
+
+fn poster(source: &Path, edge: Option<u32>) -> Result<Pixbuf, ThumbError> {
+    let scratch = glib::user_cache_dir().join("kiekje").join("poster");
+    let failed = |reason: String| ThumbError::Poster {
+        path: source.to_path_buf(),
+        reason,
+    };
+    fs::create_dir_all(&scratch).map_err(|error| failed(error.to_string()))?;
+    static SERIAL: AtomicU64 = AtomicU64::new(0);
+    let png = scratch.join(format!(
+        "{:016x}-{}-{}.png",
+        key(source)?,
+        std::process::id(),
+        SERIAL.fetch_add(1, Ordering::Relaxed)
+    ));
+    let decoded = record::poster(source, &png, edge)
+        .map_err(|error| failed(error.to_string()))
+        .and_then(|()| {
+            Pixbuf::from_file(&png).map_err(|error| ThumbError::Decode {
+                path: png.clone(),
+                source: error,
+            })
+        });
+    if let Err(error) = fs::remove_file(&png)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        error!("could not remove {}: {error}", png.display());
+    }
+    decoded
+}
+
 fn make(source: &Path) -> Result<Vec<u8>, ThumbError> {
+    let pixbuf = if super::is_video(source) {
+        poster(source, Some(EDGE.unsigned_abs()))?
+    } else {
+        open(source)?
+    };
+    render(source, &pixbuf)
+}
+
+fn open(source: &Path) -> Result<Pixbuf, ThumbError> {
+    let scaled = Pixbuf::file_info(source).is_some_and(|(format, width, height)| {
+        format
+            .name()
+            .is_some_and(|name| SCALED_ON_LOAD.contains(&name.as_str()))
+            && width.max(height) > LOAD_EDGE
+    });
+    let pixbuf = if scaled {
+        Pixbuf::from_file_at_scale(source, LOAD_EDGE, LOAD_EDGE, true)
+    } else {
+        Pixbuf::from_file(source)
+    };
+    pixbuf.map_err(|error| ThumbError::Decode {
+        path: source.to_path_buf(),
+        source: error,
+    })
+}
+
+fn render(source: &Path, pixbuf: &Pixbuf) -> Result<Vec<u8>, ThumbError> {
     let invalid = |reason: String| ThumbError::Resize {
         path: source.to_path_buf(),
         reason,
     };
-    let mut pixbuf = Pixbuf::from_file(source).map_err(|error| ThumbError::Decode {
-        path: source.to_path_buf(),
-        source: error,
-    })?;
-    if !pixbuf.has_alpha() {
-        pixbuf = pixbuf
-            .add_alpha(false, 0, 0, 0)
-            .map_err(|error| invalid(error.to_string()))?;
-    }
+    let (pixel_type, color_type, channels) = if pixbuf.has_alpha() {
+        (PixelType::U8x4, png::ColorType::Rgba, 4)
+    } else {
+        (PixelType::U8x3, png::ColorType::Rgb, 3)
+    };
     let (width, height) = (
         u32::try_from(pixbuf.width()).unwrap_or(0),
         u32::try_from(pixbuf.height()).unwrap_or(0),
     );
     let stride = usize::try_from(pixbuf.rowstride()).unwrap_or(0);
-    let row = width as usize * 4;
+    let row = width as usize * channels;
     let bytes = pixbuf.read_pixel_bytes();
-    let packed: Vec<u8> = bytes
-        .chunks(stride.max(row))
-        .take(height as usize)
-        .flat_map(|line| &line[..row.min(line.len())])
-        .copied()
-        .collect();
-    let original = Image::from_vec_u8(width, height, packed, PixelType::U8x4)
+    let mut packed = Vec::with_capacity(row * height as usize);
+    for line in bytes.chunks(stride.max(row)).take(height as usize) {
+        packed.extend_from_slice(&line[..row.min(line.len())]);
+    }
+    let original = Image::from_vec_u8(width, height, packed, pixel_type)
         .map_err(|error| invalid(error.to_string()))?;
+    drop(bytes);
     let (thumb_width, thumb_height) = fit(width, height);
-    let mut thumb = Image::new(thumb_width, thumb_height, PixelType::U8x4);
+    let mut thumb = Image::new(thumb_width, thumb_height, pixel_type);
     Resizer::new()
         .resize(
             &original,
@@ -156,7 +274,7 @@ fn make(source: &Path) -> Result<Vec<u8>, ThumbError> {
 
     let mut png = Vec::new();
     let mut encoder = png::Encoder::new(&mut png, thumb_width, thumb_height);
-    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_color(color_type);
     encoder.set_compression(png::Compression::Fast);
     encoder
         .write_header()
@@ -250,6 +368,115 @@ mod tests {
         picture(&source, 1280, 640);
         let png = load(&folder.join("cache"), &source).unwrap();
         assert_eq!(size(&png), (320, 160));
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn scales_a_source_without_alpha() {
+        let folder = scratch("opaque");
+        let source = folder.join("opaque.png");
+        let mut encoder = png::Encoder::new(fs::File::create(&source).unwrap(), 640, 320);
+        encoder.set_color(png::ColorType::Rgb);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&vec![90u8; 640 * 320 * 3]).unwrap();
+        drop(writer);
+        let png = load(&folder.join("cache"), &source).unwrap();
+        assert_eq!(size(&png), (320, 160));
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn scales_a_large_jpeg_while_decoding() {
+        let folder = scratch("jpeg");
+        let source = folder.join("big.jpg");
+        let pixels = vec![120u8; 3000 * 1500 * 3];
+        jpeg_encoder::Encoder::new_file(&source, 80)
+            .unwrap()
+            .encode(&pixels, 3000, 1500, jpeg_encoder::ColorType::Rgb)
+            .unwrap();
+        let png = load(&folder.join("cache"), &source).unwrap();
+        assert_eq!(size(&png), (320, 160));
+        let small = folder.join("small.jpg");
+        jpeg_encoder::Encoder::new_file(&small, 80)
+            .unwrap()
+            .encode(
+                &vec![120u8; 100 * 50 * 3],
+                100,
+                50,
+                jpeg_encoder::ColorType::Rgb,
+            )
+            .unwrap();
+        assert_eq!(
+            size(&load(&folder.join("cache"), &small).unwrap()),
+            (100, 50)
+        );
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn returns_the_cache_entry_and_makes_it_once() {
+        let folder = scratch("cached");
+        let cache = folder.join("cache");
+        let source = folder.join("shot.png");
+        picture(&source, 640, 640);
+        let first = cached(&cache, &source).unwrap();
+        assert_eq!(size(&fs::read(&first).unwrap()), (320, 320));
+        let stamp = fs::metadata(&first).unwrap().modified().unwrap();
+        assert_eq!(cached(&cache, &source).unwrap(), first);
+        assert_eq!(fs::metadata(&first).unwrap().modified().unwrap(), stamp);
+        assert!(matches!(
+            cached(&cache, &folder.join("gone.png")),
+            Err(ThumbError::Source { .. })
+        ));
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    fn lab_clip(folder: &Path, width: u32, height: u32) -> Option<PathBuf> {
+        let file = folder.join("clip.webm");
+        let status = std::process::Command::new("gst-launch-1.0")
+            .args([
+                "-q",
+                "videotestsrc",
+                "num-buffers=10",
+                "!",
+                &format!("video/x-raw,width={width},height={height},framerate=10/1"),
+                "!",
+                "vp8enc",
+                "!",
+                "webmmux",
+                "!",
+                "filesink",
+                &format!("location={}", file.display()),
+            ])
+            .status()
+            .ok()?;
+        status.success().then_some(file)
+    }
+
+    #[test]
+    fn sizes_a_recording_and_caches_its_thumbnail() {
+        let folder = scratch("video");
+        let Some(video) = lab_clip(&folder, 1280, 720) else {
+            fs::remove_dir_all(folder).unwrap();
+            return;
+        };
+        let cache = folder.join("cache");
+        assert_eq!(size_in(&cache, &video).unwrap(), (1280, 720));
+        assert_eq!(fs::read_dir(&cache).unwrap().count(), 1);
+        assert_eq!(size(&load(&cache, &video).unwrap()), (320, 180));
+        assert_eq!(fs::read_dir(&cache).unwrap().count(), 1);
+        fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn makes_a_video_thumbnail_from_a_scaled_poster() {
+        let folder = scratch("poster");
+        let Some(video) = lab_clip(&folder, 1280, 720) else {
+            fs::remove_dir_all(folder).unwrap();
+            return;
+        };
+        let png = load(&folder.join("cache"), &video).unwrap();
+        assert_eq!(size(&png), (320, 180));
         fs::remove_dir_all(folder).unwrap();
     }
 

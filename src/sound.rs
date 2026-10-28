@@ -49,7 +49,7 @@ pub fn check() -> bool {
     *PLAYABLE.get_or_init(|| match probe() {
         Ok(()) => true,
         Err(error) => {
-            eprintln!("kiekje: no capture sound: {error}");
+            warn!("no capture sound: {error}");
             false
         }
     })
@@ -148,7 +148,7 @@ fn open() -> gtk::MediaFile {
     };
     media.connect_error_notify(|media| {
         if let Some(error) = media.error() {
-            eprintln!("kiekje: the capture sound did not play: {error}");
+            warn!("the capture sound did not play: {error}");
         }
     });
     media

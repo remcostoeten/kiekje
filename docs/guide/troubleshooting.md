@@ -58,4 +58,4 @@ It prints one line per capability, then every problem with its fix. Nothing is d
 
 ## Reporting a bug
 
-Open an issue with the bug report form on [GitHub](https://github.com/remcostoeten/kiekje/issues). Include the output of `kiekje doctor`, your desktop and its version, and the steps that trigger the bug. Run `kiekje daemon` from a terminal to capture its log.
+Open an issue with the bug report form on [GitHub](https://github.com/remcostoeten/kiekje/issues). Include the output of `kiekje doctor`, your desktop and its version, and the steps that trigger the bug. Run `kiekje daemon` from a terminal to capture its log; `KIEKJE_LOG=debug kiekje daemon` adds detail.

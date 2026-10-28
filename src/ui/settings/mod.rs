@@ -1,30 +1,34 @@
 mod about;
 mod clipboard;
 mod danger;
+mod doctor;
 mod drawing;
 mod general;
 mod zoom;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::io;
+use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
+use thiserror::Error;
 
-use crate::app::APP_ID;
 use crate::capture::Availability;
 use crate::config::{
     self, Capture, Config, ConfigError, General, Notifications, Overlay, Saving, Storage, Upload,
 };
 use crate::editor::DrawingKeys;
+use crate::ids::APP_ID;
+use crate::shortcuts::kde::KdeError;
 use crate::shortcuts::{
-    Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, Trigger, hyprland, kde,
-    record,
+    Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, hyprland, kde, record,
 };
 use crate::storage;
 use crate::ui;
-use crate::ui::widgets::{credit, group, note, problem, row};
+use crate::ui::widgets::{footer, group, keycaps, note, problem, row};
 
 pub struct Model {
     pub shortcuts: Shortcuts,
@@ -43,74 +47,174 @@ pub struct Model {
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
 
-const WINDOW_WIDTH: i32 = 780;
-const WINDOW_HEIGHT: i32 = 600;
+const WINDOW_WIDTH: i32 = 900;
+const WINDOW_HEIGHT: i32 = 640;
 
 pub(super) struct Pages {
     capture: gtk::Box,
     shortcuts: gtk::Box,
     saving: gtk::Box,
     general: gtk::Box,
+    doctor: gtk::Box,
     about: gtk::Box,
 }
 
 impl Pages {
     fn new(stack: &gtk::Stack) -> Self {
         Self {
-            capture: page(stack, "capture", "Capture"),
-            shortcuts: page(stack, "shortcuts", "Shortcuts"),
-            saving: page(stack, "saving", "Saving"),
-            general: page(stack, "general", "General"),
-            about: page(stack, "about", "About"),
+            capture: page(
+                stack,
+                "capture",
+                "Capture",
+                "How the selection overlay and the magnifier behave.",
+            ),
+            shortcuts: page(
+                stack,
+                "shortcuts",
+                "Shortcuts",
+                "Global keys, and the keys you press inside the overlay and the editor.",
+            ),
+            saving: page(
+                stack,
+                "saving",
+                "Saving",
+                "Where captures go, what they are called and how they are encoded.",
+            ),
+            general: page(
+                stack,
+                "general",
+                "General",
+                "Notifications, startup, updates and sharing.",
+            ),
+            doctor: page(
+                stack,
+                "doctor",
+                "Doctor",
+                "Every check the doctor runs on this session, with the fix for what is wrong.",
+            ),
+            about: page(
+                stack,
+                "about",
+                "About",
+                "The version, where Kiekje keeps its files, and the reset buttons.",
+            ),
         }
     }
 }
 
-fn page(stack: &gtk::Stack, name: &str, title: &str) -> gtk::Box {
+fn page(stack: &gtk::Stack, name: &str, title: &str, subtitle: &str) -> gtk::Box {
+    let header = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(3)
+        .css_classes(["page-header"])
+        .build();
+    header.append(
+        &gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .css_classes(["page-title"])
+            .build(),
+    );
+    header.append(
+        &gtk::Label::builder()
+            .label(subtitle)
+            .xalign(0.0)
+            .wrap(true)
+            .css_classes(["page-subtitle"])
+            .build(),
+    );
     let page = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
         .css_classes(["page"])
         .build();
-    page.append(
-        &gtk::Label::builder()
-            .label(title)
-            .xalign(0.0)
-            .css_classes(["title"])
-            .build(),
-    );
     let scroller = gtk::ScrolledWindow::builder()
         .child(&page)
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
         .css_classes(["main"])
         .build();
-    stack.add_titled(&scroller, Some(name), title);
+    let outer = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .css_classes(["main"])
+        .build();
+    outer.append(&header);
+    outer.append(&scroller);
+    stack.add_titled(&outer, Some(name), title);
     page
+}
+
+fn nav_content(icon_name: &str, title: &str) -> gtk::Box {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(9)
+        .build();
+    content.append(
+        &gtk::Image::builder()
+            .icon_name(icon_name)
+            .pixel_size(16)
+            .build(),
+    );
+    content.append(
+        &gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .hexpand(true)
+            .build(),
+    );
+    content
+}
+
+fn brand() -> gtk::Box {
+    let brand = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(9)
+        .css_classes(["brand"])
+        .build();
+    let mark = gtk::Box::builder()
+        .halign(gtk::Align::Start)
+        .valign(gtk::Align::Center)
+        .css_classes(["brand-mark"])
+        .build();
+    mark.append(
+        &gtk::Image::builder()
+            .icon_name("kiekje-region-symbolic")
+            .pixel_size(12)
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build(),
+    );
+    brand.append(&mark);
+    brand.append(&gtk::Label::new(Some("Kiekje")));
+    brand.append(
+        &gtk::Label::builder()
+            .label(about::VERSION)
+            .hexpand(true)
+            .xalign(1.0)
+            .css_classes(["brand-version"])
+            .build(),
+    );
+    brand
 }
 
 fn sidebar(stack: &gtk::Stack) -> gtk::Box {
     let sidebar = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(2)
+        .spacing(1)
         .css_classes(["sidebar"])
         .build();
-    sidebar.append(
-        &gtk::Label::builder()
-            .label("Settings")
-            .xalign(0.0)
-            .css_classes(["caps", "brand"])
-            .build(),
-    );
+    sidebar.append(&brand());
     let mut leader: Option<gtk::ToggleButton> = None;
-    for (name, title) in [
-        ("capture", "Capture"),
-        ("shortcuts", "Shortcuts"),
-        ("saving", "Saving"),
-        ("general", "General"),
-        ("about", "About"),
+    for (name, title, icon_name) in [
+        ("capture", "Capture", "kiekje-region-symbolic"),
+        ("shortcuts", "Shortcuts", "kiekje-keyboard-symbolic"),
+        ("saving", "Saving", "kiekje-download-symbolic"),
+        ("general", "General", "kiekje-sliders-symbolic"),
+        ("doctor", "Doctor", "kiekje-check-symbolic"),
+        ("about", "About", "kiekje-info-symbolic"),
     ] {
         let button = gtk::ToggleButton::builder()
-            .child(&gtk::Label::builder().label(title).xalign(0.0).build())
+            .child(&nav_content(icon_name, title))
             .active(leader.is_none())
             .css_classes(["nav"])
             .build();
@@ -132,14 +236,21 @@ fn sidebar(stack: &gtk::Stack) -> gtk::Box {
             .vexpand(true)
             .build(),
     );
+    let gallery = nav_content("kiekje-gallery-symbolic", "Gallery");
+    gallery.append(
+        &gtk::Image::builder()
+            .icon_name("kiekje-open-symbolic")
+            .pixel_size(16)
+            .build(),
+    );
     sidebar.append(
         &gtk::Button::builder()
-            .child(&gtk::Label::builder().label("Gallery").xalign(0.0).build())
+            .child(&gallery)
             .action_name("app.gallery")
             .css_classes(["nav"])
             .build(),
     );
-    sidebar.append(&credit());
+    sidebar.append(&footer());
     sidebar
 }
 
@@ -212,20 +323,24 @@ pub fn show(
             (ShortcutAction::Window, Availability::Unavailable(reason)) => Some(reason),
             _ => None,
         };
-        let label = match reason {
-            Some(_) => "Unavailable".to_owned(),
-            None => trigger_text(&model.host, &model.shortcuts, &model.bound, action),
+        let face = match reason {
+            Some(_) => Face::Unavailable,
+            None => trigger_face(&model.host, &model.shortcuts, &model.bound, action),
         };
         let trigger = gtk::Button::builder()
-            .label(label)
             .sensitive(editable && reason.is_none())
             .css_classes(["trigger"])
             .build();
+        set_trigger(&trigger, action, &face);
         let reset = gtk::Button::builder()
             .label("Reset")
             .visible(editable && reason.is_none())
             .css_classes(["ghost", "optional"])
             .build();
+        reset.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Reset {}",
+            action.description()
+        ))]);
         if reason.is_some() {
             unavailable.push(action);
         }
@@ -315,6 +430,7 @@ pub fn show(
         | danger::Danger::ClearColours
         | danger::Danger::ClearThumbnails => on_cleared(),
     });
+    doctor::append(&pages.doctor);
     about::append(&pages.about);
     danger::append(&pages.about, &editor.host, on_done);
 
@@ -375,7 +491,7 @@ impl Editor {
         self.recording.set(Some(action));
         self.complain("");
         if let Some(button) = self.buttons.get(action.id()) {
-            button.set_label("Press keys");
+            set_trigger(button, action, &Face::Waiting);
             button.add_css_class("recording");
         }
     }
@@ -396,7 +512,8 @@ impl Editor {
                 continue;
             }
             if let Some(button) = self.buttons.get(action.id()) {
-                button.set_label(&trigger_text(&self.host, &shortcuts, &bound, action));
+                let face = trigger_face(&self.host, &shortcuts, &bound, action);
+                set_trigger(button, action, &face);
             }
             if let Some(reset) = self.resets.get(action.id()) {
                 let changed = *shortcuts.slot(action) != action.default_slot();
@@ -423,7 +540,7 @@ impl Editor {
             editor.saving.set(false);
             match saved {
                 Ok(Ok(shortcuts)) => {
-                    let label = slot_text(shortcuts.slot(action));
+                    let label = slot_face(shortcuts.slot(action)).text();
                     editor
                         .bound
                         .borrow_mut()
@@ -434,9 +551,9 @@ impl Editor {
                     editor.complain("");
                     (editor.on_saved)(&editor.shortcuts.borrow());
                 }
-                Ok(Err(message)) => {
+                Ok(Err(error)) => {
                     editor.stop();
-                    editor.complain(&message);
+                    editor.complain(&error.to_string());
                 }
                 Err(_) => {
                     editor.stop();
@@ -447,10 +564,30 @@ impl Editor {
     }
 }
 
-fn store(action: ShortcutAction, slot: Slot, host: &ShortcutHost) -> Result<Shortcuts, String> {
+#[derive(Debug, Error)]
+enum StoreError {
+    #[error("{0}.")]
+    KdeCheck(KdeError),
+    #[error("{trigger} is already set for {owner}.")]
+    Conflict {
+        trigger: String,
+        owner: &'static str,
+    },
+    #[error(transparent)]
+    Config(ConfigError),
+    #[error("Saved to the config, but KDE kept the old shortcut: {0}")]
+    KdeKept(KdeError),
+    #[error(
+        "Saved to the config, but {} could not be written: {source}",
+        storage::tilde(path)
+    )]
+    HyprlandInclude { path: PathBuf, source: io::Error },
+}
+
+fn store(action: ShortcutAction, slot: Slot, host: &ShortcutHost) -> Result<Shortcuts, StoreError> {
     let on_kde = *host == ShortcutHost::Kde;
     if on_kde && let Some(trigger) = slot.trigger() {
-        kde::check(APP_ID, trigger).map_err(|error| format!("{error}."))?;
+        kde::check(APP_ID, trigger).map_err(StoreError::KdeCheck)?;
     }
     let trigger = slot.trigger().cloned();
     let shortcuts =
@@ -461,26 +598,23 @@ fn store(action: ShortcutAction, slot: Slot, host: &ShortcutHost) -> Result<Shor
                 } else {
                     source.first
                 };
-                format!(
-                    "{} is already set for {}.",
-                    source.trigger.label(),
-                    owner.description()
-                )
+                StoreError::Conflict {
+                    trigger: source.trigger.label(),
+                    owner: owner.description(),
+                }
             }
-            other => other.to_string(),
+            other => StoreError::Config(other),
         })?;
     if on_kde {
-        kde::set(APP_ID, action, trigger.as_ref()).map_err(|error| {
-            format!("Saved to the config, but KDE kept the old shortcut: {error}")
-        })?;
+        kde::set(APP_ID, action, trigger.as_ref()).map_err(StoreError::KdeKept)?;
     }
     if *host == ShortcutHost::Hyprland {
         let include = hyprland::include_path();
-        hyprland::write_include(&include, APP_ID, &shortcuts).map_err(|error| {
-            format!(
-                "Saved to the config, but {} could not be written: {error}",
-                storage::tilde(&include)
-            )
+        hyprland::write_include(&include, APP_ID, &shortcuts).map_err(|source| {
+            StoreError::HyprlandInclude {
+                path: include.clone(),
+                source,
+            }
         })?;
     }
     Ok(shortcuts)
@@ -510,28 +644,82 @@ fn host_note(host: &ShortcutHost) -> String {
     }
 }
 
-fn trigger_text(
+const NOT_SET: &str = "Not set";
+const OFF: &str = "Off";
+
+enum Face {
+    Keys(String),
+    NotSet,
+    Off,
+    Unavailable,
+    Waiting,
+}
+
+impl Face {
+    fn text(&self) -> String {
+        match self {
+            Self::Keys(keys) => keys.clone(),
+            Self::NotSet => NOT_SET.to_owned(),
+            Self::Off => OFF.to_owned(),
+            Self::Unavailable => "Unavailable".to_owned(),
+            Self::Waiting => "Press keys".to_owned(),
+        }
+    }
+
+    fn from_label(label: &str) -> Self {
+        match label {
+            NOT_SET => Self::NotSet,
+            OFF => Self::Off,
+            keys => Self::Keys(keys.to_owned()),
+        }
+    }
+
+    fn widget(&self) -> gtk::Widget {
+        let widget: gtk::Widget = match self {
+            Self::Keys(keys) => keycaps(keys).upcast(),
+            note => gtk::Label::builder()
+                .label(note.text())
+                .css_classes(["trigger-note"])
+                .build()
+                .upcast(),
+        };
+        widget.set_halign(gtk::Align::End);
+        widget.set_hexpand(true);
+        widget
+    }
+}
+
+fn set_trigger(button: &gtk::Button, action: ShortcutAction, face: &Face) {
+    button.set_child(Some(&face.widget()));
+    button.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{}: {}",
+        action.description(),
+        face.text()
+    ))]);
+}
+
+fn trigger_face(
     host: &ShortcutHost,
     shortcuts: &Shortcuts,
     bound: &[(ShortcutAction, String)],
     action: ShortcutAction,
-) -> String {
+) -> Face {
     match host {
-        ShortcutHost::Desktop { .. } | ShortcutHost::Kde => bound_text(bound, action),
-        _ => slot_text(shortcuts.slot(action)),
+        ShortcutHost::Desktop { .. } | ShortcutHost::Kde => bound_face(bound, action),
+        _ => slot_face(shortcuts.slot(action)),
     }
 }
 
-fn bound_text(bound: &[(ShortcutAction, String)], action: ShortcutAction) -> String {
+fn bound_face(bound: &[(ShortcutAction, String)], action: ShortcutAction) -> Face {
     bound
         .iter()
         .find(|(bound, _)| *bound == action)
-        .map_or_else(|| "Not set".to_owned(), |(_, label)| label.clone())
+        .map_or(Face::NotSet, |(_, label)| Face::from_label(label))
 }
 
-fn slot_text(slot: &Slot) -> String {
+fn slot_face(slot: &Slot) -> Face {
     slot.trigger()
-        .map_or_else(|| "Off".to_owned(), Trigger::label)
+        .map_or(Face::Off, |trigger| Face::Keys(trigger.label()))
 }
 
 fn modifiers(state: gdk::ModifierType) -> Modifiers {
@@ -558,4 +746,23 @@ fn key_name(controller: &gtk::EventControllerKey, keyval: gdk::Key, keycode: u32
         .name()
         .map(|name| name.to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_two_status_words_as_notes_and_everything_else_as_keys() {
+        assert!(matches!(Face::from_label("Not set"), Face::NotSet));
+        assert!(matches!(Face::from_label("Off"), Face::Off));
+        assert!(matches!(Face::from_label("Super+S"), Face::Keys(keys) if keys == "Super+S"));
+    }
+
+    #[test]
+    fn writes_each_face_as_the_text_a_screen_reader_announces() {
+        assert_eq!(Face::Keys("Shift+Print".to_owned()).text(), "Shift+Print");
+        assert_eq!(Face::NotSet.text(), "Not set");
+        assert_eq!(Face::Waiting.text(), "Press keys");
+    }
 }

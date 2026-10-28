@@ -4,8 +4,7 @@ use std::thread;
 
 use gtk::{gdk, glib};
 
-use crate::backends::portal::bounding_box;
-use crate::capture::mapping::{PixelRect, SelectionPlan, density};
+use crate::capture::mapping::{PixelRect, SelectionPlan, bounding_box, density};
 use crate::capture::{Frame, LogicalRect, PixelFormat};
 use crate::storage::{ImageFormat, Quality};
 
@@ -265,13 +264,31 @@ pub fn encode_rgba(image: &Image, format: ImageFormat, quality: Quality) -> io::
     }
 }
 
+/// Encodes an image that `into_rgba` already converted as a PNG for the clipboard.
+///
+/// Uses the cheap Sub filter, so it encodes faster than `encode_rgba` and the bytes are larger.
+/// Use it when the PNG is only offered to other clients and never written to disk.
+///
+/// # Examples
+///
+/// ```ignore
+/// let png = encode_clipboard_png(&into_rgba(image))?;
+/// ```
+pub fn encode_clipboard_png(image: &Image) -> io::Result<Vec<u8>> {
+    png_with_filter(image, png::Filter::Sub)
+}
+
 fn png_bytes(image: &Image) -> io::Result<Vec<u8>> {
+    png_with_filter(image, png::Filter::Paeth)
+}
+
+fn png_with_filter(image: &Image, filter: png::Filter) -> io::Result<Vec<u8>> {
     let mut png = Vec::new();
     let mut encoder = png::Encoder::new(&mut png, image.width, image.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_compression(png::Compression::Fast);
-    encoder.set_filter(png::Filter::Paeth);
+    encoder.set_filter(filter);
     encoder
         .write_header()
         .and_then(|mut writer| writer.write_image_data(&image.data))
@@ -355,6 +372,22 @@ mod tests {
         assert!(png.starts_with(b"\x89PNG"));
         let jpeg = encode(solid(8, 4), ImageFormat::Jpeg, Quality::default()).unwrap();
         assert!(jpeg.starts_with(&[0xFF, 0xD8]));
+    }
+
+    #[test]
+    fn encodes_a_clipboard_png_that_decodes_to_the_same_pixels() {
+        let mut image = solid(5, 3);
+        for (index, byte) in image.data.iter_mut().enumerate() {
+            *byte = (index * 7) as u8;
+        }
+        let bytes = encode_clipboard_png(&image).unwrap();
+        let mut reader = png::Decoder::new(std::io::Cursor::new(bytes))
+            .read_info()
+            .unwrap();
+        let mut decoded = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut decoded).unwrap();
+        assert_eq!((info.width, info.height), (5, 3));
+        assert_eq!(&decoded[..info.buffer_size()], &image.data[..]);
     }
 
     #[test]

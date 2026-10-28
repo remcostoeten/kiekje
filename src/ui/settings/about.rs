@@ -12,7 +12,7 @@ use crate::ui::files;
 use crate::ui::widgets::{group, note, path_row, row};
 use crate::update::{self, Available, Outcome, Version, state};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(super) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(super) fn append(page: &gtk::Box) {
     let header = gtk::Box::builder()
@@ -88,7 +88,7 @@ fn copy_report(button: &gtk::Button, status: &gtk::Label) {
     let button = button.clone();
     let status = status.clone();
     glib::spawn_future_local(async move {
-        let message = match doctor_report().await {
+        let message = match super::doctor::report().await {
             Ok(report) => {
                 button.clipboard().set_text(&report);
                 format!(
@@ -102,18 +102,6 @@ fn copy_report(button: &gtk::Button, status: &gtk::Label) {
         status.set_label(&message);
         status.set_visible(true);
     });
-}
-
-async fn doctor_report() -> Result<String, glib::Error> {
-    let binary = std::env::current_exe()
-        .map_err(|error| glib::Error::new(gio::IOErrorEnum::NotFound, &error.to_string()))?;
-    let launcher = gio::SubprocessLauncher::new(
-        gio::SubprocessFlags::STDOUT_PIPE | gio::SubprocessFlags::STDERR_MERGE,
-    );
-    launcher.setenv("NO_COLOR", "1", true);
-    let process = launcher.spawn(&[binary.as_os_str(), "doctor".as_ref()])?;
-    let (stdout, _) = process.communicate_utf8_future(None).await?;
-    Ok(stdout.map(|text| text.to_string()).unwrap_or_default())
 }
 
 struct Updates {
@@ -183,7 +171,7 @@ fn check_now(updates: Rc<Updates>) {
                 updates.say(&format!("Kiekje {VERSION} is the newest release."));
             }
             Ok(Err(error)) => {
-                eprintln!("kiekje: could not check for updates: {error}");
+                error!("could not check for updates: {error}");
                 updates.say("Could not check for updates.");
             }
             Err(_) => updates.say("Could not check for updates."),

@@ -6,10 +6,11 @@ use gtk::{gio, glib};
 
 use super::{Model, Pages};
 use crate::capture::CaptureMode;
-use crate::config::{self, AfterSelection, Config, Folder, SlowPointer};
+use crate::config::{self, AfterSelection, Config, Folder, SlowPointer, Theme};
 use crate::storage::{
     self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
 };
+use crate::ui::set_theme;
 use crate::ui::widgets::{group, note, problem, row, switch};
 use crate::upload::{self, Expiry};
 
@@ -50,6 +51,7 @@ pub(super) struct General {
     window_snap: gtk::Switch,
     hints: gtk::Switch,
     autostart: gtk::Switch,
+    light_theme: gtk::Switch,
     updates: gtk::Switch,
     upload: gtk::Switch,
     expiry: gtk::DropDown,
@@ -192,6 +194,14 @@ pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
     let saving_problem = problem();
     kind.footer(&saving_problem);
 
+    let appearance = group(&pages.general, "Appearance");
+    let light_theme = switch(preferences.theme == Theme::Light);
+    appearance.add(row(
+        "Light theme",
+        Some("Switches every Kiekje window between the dark and the light look."),
+        Some(&light_theme),
+    ));
+
     let alerts = group(&pages.general, "Notifications");
     let enabled = switch(notifications.enabled);
     alerts.add(row(
@@ -268,6 +278,7 @@ pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
         window_snap,
         hints,
         autostart,
+        light_theme,
         updates,
         upload,
         expiry,
@@ -391,6 +402,23 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             &sender,
             Page::General,
             Box::new(move |config| config.notifications.sound = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.light_theme.connect_active_notify(move |check| {
+        let theme = if check.is_active() {
+            Theme::Light
+        } else {
+            Theme::Dark
+        };
+        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+            return;
+        }
+        send(
+            &sender,
+            Page::General,
+            Box::new(move |config| config.general.theme = theme),
         );
     });
     let weak = Rc::downgrade(general);
@@ -570,7 +598,7 @@ fn connect_autostart(general: &Rc<General>) {
             return;
         }
         if requests.try_send(check.is_active()).is_err() {
-            eprintln!("kiekje: the autostart worker stopped, the change was not applied");
+            error!("the autostart worker stopped, the change was not applied");
         }
     });
 
@@ -670,7 +698,7 @@ fn pick_folder(button: &gtk::Button, general: Weak<General>, changes: Changes) {
 
 fn send(changes: &Changes, page: Page, change: Change) {
     if changes.try_send((page, change)).is_err() {
-        eprintln!("kiekje: the settings worker stopped, a change was not saved");
+        error!("the settings worker stopped, a change was not saved");
     }
 }
 
@@ -720,6 +748,7 @@ impl General {
     }
 
     fn saved(&self, config: &Config) {
+        set_theme(config.general.theme);
         for page in [Page::Capture, Page::Saving, Page::General] {
             self.complain(page, "");
         }
@@ -751,6 +780,8 @@ impl General {
             .set_selected(slow_index(config.overlay.slow_pointer));
         self.window_snap.set_active(config.overlay.window_snap);
         self.hints.set_active(config.overlay.hints);
+        self.light_theme
+            .set_active(config.general.theme == Theme::Light);
         self.updates.set_active(config.general.check_for_updates);
         self.upload.set_active(config.upload.enabled);
         self.expiry_row.set_sensitive(config.upload.enabled);

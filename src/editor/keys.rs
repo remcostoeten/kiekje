@@ -225,7 +225,7 @@ impl DrawingKeys {
     /// # Examples
     ///
     /// ```ignore
-    /// if let Some(conflict) = keys.conflict() { eprintln!("kiekje: {conflict}"); }
+    /// if let Some(conflict) = keys.conflict() { warn!("{conflict}"); }
     /// ```
     pub fn conflict(&self) -> Option<KeyConflict> {
         let bound: Vec<(DrawAction, DrawKey)> = DrawAction::ALL

@@ -13,7 +13,11 @@ Both features landed in 0.1.0-alpha.6. The recording pipeline is lab tested agai
 kiekje record
 ```
 
-`kiekje record`, Record screen in the tray menu or the capture menu starts a recording. Your desktop's own ScreenCast picker chooses a screen or a window. Run the command again, or pick Stop recording, to stop and save. The file is WebM (VP8) in `~/Videos/Kiekje`, and a notification offers Open and Show in folder.
+`kiekje record`, Record screen in the tray menu or the capture menu starts a recording. Your desktop's own ScreenCast picker chooses a screen or a window. Run the command again, or pick Stop recording, to stop and save. The file is WebM (VP8) in `~/Videos/Kiekje`, and a notification offers Open, Show in folder and Export GIF. A finished recording also appears in the gallery with a poster frame as its thumbnail, a Video badge and its own Recording filter. Edit, Pin, Copy image and Upload are off for recordings.
+
+## GIF export
+
+**Export as GIF** (<kbd>Ctrl</kbd>+<kbd>G</kbd>) on a recording in the gallery, or Export GIF on the Recording saved notification, writes a looping GIF next to the recording. The GIF runs at 10 frames per second, is at most 800 px wide and is cut after 30 seconds. While it runs the gallery footer shows a spinner and a notification says the export started; when it is done a GIF saved notification shows the result with Open and Show in folder, and the gallery selects the new file. GIFs carry a GIF badge, are listed under the Recording filter next to their source, and can be uploaded; Edit, Pin and Copy image are off for them. One export runs at a time.
 
 Recording goes through the ScreenCast portal and a GStreamer pipeline with `pipewiresrc`. GStreamer is loaded at runtime with `dlopen`, like the capture sound, so it stays optional.
 
@@ -25,7 +29,7 @@ Recording goes through the ScreenCast portal and a GStreamer pipeline with `pipe
 
 Without them the recording fails with a notification naming the package, and `kiekje doctor` shows the same under `recording`.
 
-Next on the list: a region crop, MP4 with H.264 through VA-API, pause and resume, microphone and desktop audio through PipeWire, GIF export, and recordings in the gallery. None of that exists yet.
+Next on the list: a region crop, MP4 with H.264 through VA-API, pause and resume, and microphone and desktop audio through PipeWire. None of that exists yet.
 
 ## Temporary upload links
 

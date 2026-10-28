@@ -4,6 +4,8 @@ pub mod portal;
 pub mod windows;
 pub mod wlroots;
 
+use std::cell::OnceCell;
+
 use crate::capture::{BackendChoice, BackendKind, Capture, CaptureError, Frame, MonitorInfo};
 use detect::{Environment, WLR_SCREENCOPY};
 
@@ -21,6 +23,24 @@ pub trait CaptureBackend {
         monitors: &[MonitorInfo],
         include_cursor: bool,
     ) -> Result<Vec<Frame>, CaptureError>;
+
+    /// Captures only `wanted`, which is part of the desktop laid out by `all`.
+    ///
+    /// Backends that grab the whole desktop at once use `all` to size what they grab.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let frames = backend.capture_some(&all, &wanted, false)?;
+    /// ```
+    fn capture_some(
+        &self,
+        _all: &[MonitorInfo],
+        wanted: &[MonitorInfo],
+        include_cursor: bool,
+    ) -> Result<Vec<Frame>, CaptureError> {
+        self.capture(wanted, include_cursor)
+    }
 }
 
 /// Returns the backend that implements `kind`.
@@ -64,23 +84,42 @@ pub fn candidates(choice: BackendChoice, environment: &Environment) -> Vec<Backe
         .collect()
 }
 
-/// Captures all monitors with the first available backend for `choice`, moving to the next
-/// one when a backend is unavailable or refuses access.
+/// Captures the `wanted` monitors of the desktop laid out by `all` with the first available
+/// backend for `choice`, moving to the next one when a backend is unavailable or refuses access.
+///
+/// Pass the same slice twice to capture every monitor.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let capture = capture(BackendChoice::Auto, &monitors, false)?;
+/// let capture = capture_some(BackendChoice::Auto, &monitors, &monitors, false)?;
 /// ```
-pub fn capture(
+pub fn capture_some(
     choice: BackendChoice,
-    monitors: &[MonitorInfo],
+    all: &[MonitorInfo],
+    wanted: &[MonitorInfo],
     include_cursor: bool,
 ) -> Result<Capture, CaptureError> {
     let mut skipped = Vec::new();
-    let mut kinds = candidates(choice, &detect::probe()).into_iter().peekable();
+    let mut found = candidates(choice, &detect::probe_compositor());
+    if choice.allows(BackendKind::Portal) {
+        found.push(BackendKind::Portal);
+    }
+    let portal_present = OnceCell::new();
+    let has_portal = || {
+        *portal_present.get_or_init(|| {
+            detect::session_bus()
+                .ok()
+                .and_then(|connection| detect::portal_version(&connection, "Screenshot"))
+                .is_some()
+        })
+    };
+    let mut kinds = found.into_iter().peekable();
     while let Some(kind) = kinds.next() {
-        match backend(kind).capture(monitors, include_cursor) {
+        if kind == BackendKind::Portal && !has_portal() {
+            continue;
+        }
+        match backend(kind).capture_some(all, wanted, include_cursor) {
             Ok(frames) => {
                 return Ok(Capture {
                     backend: kind,
@@ -89,7 +128,12 @@ pub fn capture(
                     windows: Vec::new(),
                 });
             }
-            Err(error) if kinds.peek().is_some() && error.allows_fallback() => {
+            Err(error)
+                if kinds
+                    .peek()
+                    .is_some_and(|next| *next != BackendKind::Portal || has_portal())
+                    && error.allows_fallback() =>
+            {
                 skipped.push(format!("{kind}: {error}"));
             }
             Err(error) => return Err(error),

@@ -41,7 +41,7 @@ impl Group {
 /// capture.add(row("Edit before saving", Some("Enter accepts, Esc cancels."), Some(&switch(on))));
 /// ```
 pub fn group(page: &gtk::Box, title: &str) -> Group {
-    page.append(&caps(title));
+    page.append(&section_title(title));
     let container = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .css_classes(["group"])
@@ -94,6 +94,7 @@ pub fn path_row(
         .label(value)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
+        .tooltip_text(value)
         .css_classes(["subtitle", "value"])
         .build();
     build_row(title, Some(subtitle), control)
@@ -128,6 +129,9 @@ fn build_row(
     content.append(&text);
     if let Some(control) = control {
         control.set_valign(gtk::Align::Center);
+        if let Some(switch) = control.as_ref().downcast_ref::<gtk::Switch>() {
+            switch.update_property(&[gtk::accessible::Property::Label(title)]);
+        }
         content.append(control);
     }
     gtk::ListBoxRow::builder()
@@ -149,11 +153,11 @@ pub fn switch(active: bool) -> gtk::Switch {
     gtk::Switch::builder().active(active).build()
 }
 
-fn caps(text: &str) -> gtk::Label {
+fn section_title(text: &str) -> gtk::Label {
     gtk::Label::builder()
         .label(text)
         .xalign(0.0)
-        .css_classes(["caps"])
+        .css_classes(["section-title"])
         .build()
 }
 

@@ -23,6 +23,9 @@ pub enum Notice {
     CaptureFailed {
         reason: String,
     },
+    ClipboardFailed {
+        reason: String,
+    },
     UpdateAvailable {
         version: String,
         url: String,
@@ -32,7 +35,22 @@ pub enum Notice {
     RecordingSaved {
         path: PathBuf,
     },
+    RecordingPartial {
+        path: PathBuf,
+        reason: String,
+    },
     RecordingFailed {
+        reason: String,
+    },
+    GifExporting {
+        path: PathBuf,
+    },
+    GifSaved {
+        path: PathBuf,
+        width: u32,
+        height: u32,
+    },
+    GifFailed {
         reason: String,
     },
 }
@@ -47,15 +65,18 @@ pub enum Target {
 pub enum NoticeAction {
     Open,
     ShowInFolder,
+    ExportGif,
 }
 
 impl NoticeAction {
-    pub const ALL: [Self; 2] = [Self::Open, Self::ShowInFolder];
+    pub const ALL: [Self; 3] = [Self::Open, Self::ShowInFolder, Self::ExportGif];
+    pub const FILE: [Self; 2] = [Self::Open, Self::ShowInFolder];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Open => "default",
             Self::ShowInFolder => "show-in-folder",
+            Self::ExportGif => "export-gif",
         }
     }
 
@@ -63,6 +84,7 @@ impl NoticeAction {
         match self {
             Self::Open => "Open",
             Self::ShowInFolder => "Show in folder",
+            Self::ExportGif => "Export GIF",
         }
     }
 
@@ -97,16 +119,20 @@ impl Notice {
     /// ```
     pub fn target(&self) -> Option<Target> {
         match self {
-            Self::Saved { path, .. } | Self::RecordingSaved { path } => {
-                Some(Target::File(path.clone()))
-            }
+            Self::Saved { path, .. }
+            | Self::RecordingSaved { path }
+            | Self::RecordingPartial { path, .. }
+            | Self::GifSaved { path, .. } => Some(Target::File(path.clone())),
             Self::UpdateAvailable { url, .. } => Some(Target::Link(url.clone())),
             Self::Copied { .. }
             | Self::SaveFailed { .. }
             | Self::CaptureFailed { .. }
+            | Self::ClipboardFailed { .. }
             | Self::MonitorLost
             | Self::RecordingStarted
-            | Self::RecordingFailed { .. } => None,
+            | Self::RecordingFailed { .. }
+            | Self::GifExporting { .. }
+            | Self::GifFailed { .. } => None,
         }
     }
 
@@ -142,7 +168,7 @@ impl Notice {
                     body: escape(&format!("{name}\n{width} x {height}{clipboard}")),
                     icon: "camera-photo",
                     image: Some(path.clone()),
-                    actions: NoticeAction::ALL.to_vec(),
+                    actions: NoticeAction::FILE.to_vec(),
                     urgency: Urgency::Normal,
                 }
             }
@@ -171,6 +197,14 @@ impl Notice {
             }
             Self::CaptureFailed { reason } => Content {
                 summary: "Screenshot failed",
+                body: escape(reason),
+                icon: "dialog-error",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Critical,
+            },
+            Self::ClipboardFailed { reason } => Content {
+                summary: "Screenshot not copied",
                 body: escape(reason),
                 icon: "dialog-error",
                 image: None,
@@ -207,16 +241,22 @@ impl Notice {
             },
             Self::RecordingSaved { path } => Content {
                 summary: "Recording saved",
-                body: escape(
-                    &path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
-                ),
+                body: escape(&format!(
+                    "{}\nExport GIF makes a looping GIF of the first 30 seconds.",
+                    file_name(path)
+                )),
                 icon: "video-x-generic",
                 image: None,
                 actions: NoticeAction::ALL.to_vec(),
                 urgency: Urgency::Normal,
+            },
+            Self::RecordingPartial { path, reason } => Content {
+                summary: "Recording ended early",
+                body: escape(&format!("{} was kept. {reason}", file_name(path))),
+                icon: "dialog-warning",
+                image: None,
+                actions: NoticeAction::FILE.to_vec(),
+                urgency: Urgency::Critical,
             },
             Self::RecordingFailed { reason } => Content {
                 summary: "Recording failed",
@@ -226,8 +266,45 @@ impl Notice {
                 actions: Vec::new(),
                 urgency: Urgency::Critical,
             },
+            Self::GifExporting { path } => Content {
+                summary: "Exporting GIF",
+                body: escape(&format!(
+                    "{}\nThis takes a moment; the GIF lands next to the recording.",
+                    file_name(path)
+                )),
+                icon: "image-x-generic",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Normal,
+            },
+            Self::GifSaved {
+                path,
+                width,
+                height,
+            } => Content {
+                summary: "GIF saved",
+                body: escape(&format!("{}\n{width} x {height}", file_name(path))),
+                icon: "image-x-generic",
+                image: Some(path.clone()),
+                actions: NoticeAction::FILE.to_vec(),
+                urgency: Urgency::Normal,
+            },
+            Self::GifFailed { reason } => Content {
+                summary: "GIF not made",
+                body: escape(reason),
+                icon: "dialog-error",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Critical,
+            },
         }
     }
+}
+
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn escape(text: &str) -> String {
@@ -258,23 +335,67 @@ mod tests {
             content.image,
             Some(PathBuf::from("/shots/kiekje-region.png"))
         );
-        assert_eq!(content.actions, NoticeAction::ALL.to_vec());
+        assert_eq!(content.actions, NoticeAction::FILE.to_vec());
     }
 
     #[test]
-    fn opens_a_saved_recording_without_a_preview_image() {
+    fn offers_a_gif_export_on_a_saved_recording() {
         let notice = Notice::RecordingSaved {
             path: PathBuf::from("/videos/kiekje-recording.webm"),
         };
         let content = notice.content();
         assert_eq!(content.summary, "Recording saved");
-        assert_eq!(content.body, "kiekje-recording.webm");
+        assert!(content.body.starts_with("kiekje-recording.webm\n"));
         assert_eq!(content.image, None);
-        assert_eq!(content.actions, NoticeAction::ALL.to_vec());
+        assert_eq!(
+            content.actions,
+            vec![
+                NoticeAction::Open,
+                NoticeAction::ShowInFolder,
+                NoticeAction::ExportGif
+            ]
+        );
         assert_eq!(
             notice.target(),
             Some(Target::File(PathBuf::from("/videos/kiekje-recording.webm")))
         );
+    }
+
+    #[test]
+    fn shows_a_saved_gif_with_its_image_and_size() {
+        let notice = Notice::GifSaved {
+            path: PathBuf::from("/videos/kiekje-recording.gif"),
+            width: 800,
+            height: 450,
+        };
+        let content = notice.content();
+        assert_eq!(content.summary, "GIF saved");
+        assert_eq!(content.body, "kiekje-recording.gif\n800 x 450");
+        assert_eq!(
+            content.image,
+            Some(PathBuf::from("/videos/kiekje-recording.gif"))
+        );
+        assert_eq!(content.actions, NoticeAction::FILE.to_vec());
+        assert_eq!(
+            notice.target(),
+            Some(Target::File(PathBuf::from("/videos/kiekje-recording.gif")))
+        );
+    }
+
+    #[test]
+    fn announces_an_export_without_actions_and_a_failure_as_critical() {
+        let exporting = Notice::GifExporting {
+            path: PathBuf::from("/videos/kiekje-recording.webm"),
+        };
+        assert_eq!(exporting.content().summary, "Exporting GIF");
+        assert!(exporting.content().actions.is_empty());
+        assert_eq!(exporting.target(), None);
+        let failed = Notice::GifFailed {
+            reason: "no frames".into(),
+        }
+        .content();
+        assert_eq!(failed.urgency, Urgency::Critical);
+        assert_eq!(failed.body, "no frames");
     }
 
     #[test]

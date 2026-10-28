@@ -66,9 +66,9 @@ What to keep or adapt:
 | Tray popup | Our own layer-shell popover on left click, styled like the app; native SNI menu on right click as a fallback (section 10) |
 | Capture on KDE | `zbus` to `org.kde.KWin.ScreenShot2` (raw pixels over a pipe fd); portal as fallback |
 | Capture on wlroots / Hyprland | `wayland-client` + `smithay-client-toolkit`: `ext-image-copy-capture`, then `wlr-screencopy`; window capture through `hyprland-toplevel-export` |
-| Capture on GNOME | Screenshot portal through `ashpd` |
-| Capture on X11 | `x11rb` with the MIT-SHM extension |
-| Global shortcuts | Per platform: GlobalShortcuts portal (`ashpd`), Hyprland managed `bind` include, KDE portal, `XGrabKey` on X11, CLI fallback everywhere |
+| Capture on GNOME | Screenshot portal over `zbus` |
+| Capture on X11 | KWin on Plasma X11. Other X11 sessions have no backend yet; `x11rb` with the MIT-SHM extension is planned |
+| Global shortcuts | Per platform: GlobalShortcuts portal over `zbus`, Hyprland managed `bind` include, KDE portal, `XGrabKey` on X11 (planned), CLI fallback everywhere |
 | Tray | `ksni` (StatusNotifierItem) on its own thread, sends commands only; never builds windows |
 | Clipboard | GDK clipboard owned by the long-running tray process (no `wl-copy`) |
 | Encoding | `png` with a fast filter as the default; lossless WebP and JPEG as options |
@@ -84,7 +84,7 @@ What to keep or adapt:
 Why this stack beats the alternatives:
 
 - **Qt 6 / QML** is the most native fit for KDE and has `LayerShellQt`. The catch is the language:
-  - With C++, you lose the Rust crates that make the backends small: `ashpd`, `zbus`, `smithay-client-toolkit` and `x11rb`.
+  - With C++, you lose the Rust crates that make the backends small: `zbus` and `smithay-client-toolkit`, plus `x11rb` if an X11 backend lands.
   - With Rust through `cxx-qt`, you add a second build system and a much thinner ecosystem.
   - I would only pick Qt if a Breeze-native look on KDE is a hard requirement. The cost is that GTK4 + libadwaita looks like a GNOME app on Plasma, not like Breeze.
 - **Tauri / Wails** have three problems for this app:
@@ -106,7 +106,7 @@ S = supported, F = fallback, U = unavailable, ? = unverified
 | **Sway** | S: screencopy | S | F: no standard window capture; select a window's rectangle from the frozen frame through `ext-foreign-toplevel-list` / IPC geometry (?) | S: layer-shell | F: CLI commands bound in the Sway config | F: Waybar or swaybar tray | S | S: portal (xdg-desktop-portal-wlr) |
 | **GNOME Wayland (Ubuntu, Fedora, Omakub)** | S: portal; first use asks for permission, then it persists (Docs, ?) | S: frozen frame from the portal; overlay is a fullscreen toplevel per monitor, not layer-shell (U) | F: portal interactive mode only, which is GNOME's own UI, not our overlay | F: fullscreen window; no stacking guarantees above other fullscreen apps (?) | S: GlobalShortcuts portal on GNOME 48+ (Docs, ?); F: CLI + GNOME custom shortcut | F: needs the AppIndicator extension (Ubuntu ships it, Fedora does not) | S | S: portal |
 | **Plasma on Fedora, Kubuntu, Debian, openSUSE** | Same as primary, but depends on the Plasma version. Debian stable ships an older Plasma (?) | same | same | same | same | S | S | S |
-| **X11 (Xfce, Cinnamon, MATE, Plasma X11, GNOME Xorg)** | S: XShm | S: fullscreen override-redirect windows | S: `_NET_ACTIVE_WINDOW` + XGetImage | S | S: XGrabKey | S: SNI or XEmbed (?) | S | F: ffmpeg x11grab or GStreamer `ximagesrc` |
+| **X11 (Xfce, Cinnamon, MATE, Plasma X11, GNOME Xorg)** | S on Plasma X11 through KWin; U elsewhere (XShm planned) | S on Plasma X11; U elsewhere | U: no window source yet | S: fullscreen window | S on Plasma X11 (kglobalaccel); F elsewhere: CLI command (XGrabKey planned) | S: SNI or XEmbed (?) | S | F: ffmpeg x11grab or GStreamer `ximagesrc` |
 
 Runtime detection reads `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, the Wayland registry globals, D-Bus names (`org.kde.KWin`, portal interface versions) and the `HYPRLAND_INSTANCE_SIGNATURE` variable. It never guesses from which binaries are installed. Each missing capability maps to a doctor entry that names the exact package or setting to fix.
 
@@ -138,8 +138,8 @@ src/
   backends/
     kwin/         screenshot2 over D-Bus
     wlroots/      ext-image-copy-capture, wlr-screencopy, hyprland-toplevel-export
-    portal/       screenshot, screencast, global-shortcuts (ashpd)
-    x11/          xshm, xgrabkey
+    portal/       screenshot, screencast, global-shortcuts (zbus)
+    x11/          xshm, xgrabkey (planned, not built)
   overlay/        layer-shell surfaces, selection, keyboard
   shortcuts/      model, recorder, validation, per-platform registrars
   tray/           ksni, sends commands only
@@ -231,9 +231,9 @@ Port the Wails tool set (`cheese-wails/frontend/src/editor/*`) to a GTK snapshot
 
 | Feature | Cost | Notes |
 |---|---|---|
-| Recording | Large | Started: ScreenCast portal, `pipewiresrc`, VP8 in WebM to `~/Videos/Kiekje`, GStreamer loaded with `dlopen` so it stays optional. Next: region crop, MP4 (H.264, VA-API), pause/resume, mic and desktop audio through PipeWire, recordings in the gallery |
+| Recording | Large | Started: ScreenCast portal, recordings in the gallery with a poster-frame thumbnail, `pipewiresrc`, VP8 in WebM to `~/Videos/Kiekje`, GStreamer loaded with `dlopen` so it stays optional. Next: region crop, MP4 (H.264, VA-API), pause/resume, mic and desktop audio through PipeWire |
 | Temporary upload | Small | Started: opt-in, Litterbox with 1 to 72 hour expiry, link to the clipboard. Next: right after a capture or recording |
-| GIF export | Medium | From a recording, with the `gif` crate; fps and width capped |
+| GIF export | Medium | Done: from a recording in the gallery, `gif` crate, 10 fps, 800 px wide, 30 s cap. Lab tested on a generated WebM; needs a real recording |
 | Color picker | Small | |
 | Ruler | Small | |
 | OCR | Medium | |
@@ -277,7 +277,7 @@ The look:
 - Depth from layered greys mixed from `--fg` into `--bg` (`--surface`, `--raised`, `--raised-hi`), solid 1px strokes and a faint inset top highlight, following Remcorder's control center. Settings sections sit in raised groups, filters in segmented controls, and the primary button is a solid accent fill. Dashed lines stay for empty states only.
 - A dot grid behind headers, short ease-out motion.
 
-Kiekje is dark only, which follows your "dark, neutral UI" requirement. It uses the dark token column only.
+Kiekje has a dark and a light theme, chosen with `[general] theme` and defaulting to dark. The token table in `docs/project/design.md` lists both columns.
 
 ### What GTK can render
 
@@ -286,7 +286,7 @@ Kiekje is dark only, which follows your "dark, neutral UI" requirement. It uses 
 | Design feature | GTK 4.22 |
 |---|---|
 | CSS variables (`--accent`, `var()`) | OK. GTK's parser needs a space after the colon: `--accent:#fe5101` fails, `--accent: #fe5101` works |
-| `color-mix()` for tints, hover washes and the focus ring | OK, also with `var()` inside |
+| `color-mix()` for tints, hover and focus washes | OK, also with `var()` inside |
 | Dashed borders, radius, `box-shadow` | OK |
 | Dot grid (`radial-gradient` + `background-size`) | OK |
 | Uppercase mono labels (`text-transform`, `letter-spacing`) | OK |
@@ -339,7 +339,7 @@ This is new work for Phase 1: about 1 extra day for the popover, plus testing on
 
 ### Design acceptance checks
 
-- Every screen keyboard-navigable with a visible accent focus ring.
+- Every screen keyboard-navigable with a visible focus tint (background and text colour, no outline).
 - Contrast: the muted text `#8a8a8a` on `#0a0a0a` has a contrast ratio of about 5.7:1, which meets WCAG AA. I worked that out, I didn't measure it.
 - With reduced motion enabled (`gtk-enable-animations=false` or the media query), no movement animations remain.
 - Screenshots of the popover, gallery and settings on Plasma, Hyprland and GNOME look the same apart from the system-drawn parts listed above.

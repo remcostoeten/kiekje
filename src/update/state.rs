@@ -97,7 +97,7 @@ pub fn update(path: &Path, change: impl FnOnce(&mut State)) -> Result<State, Sta
     // The guarded value is (), so a panic in another writer leaves nothing inconsistent.
     let _writing = WRITES.lock().unwrap_or_else(PoisonError::into_inner);
     let mut state = load_from(path).unwrap_or_else(|error| {
-        eprintln!("kiekje: replacing the update state: {error}");
+        warn!("replacing the update state: {error}");
         State::default()
     });
     change(&mut state);

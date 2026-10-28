@@ -75,7 +75,7 @@ pub fn locate(dirs: &[PathBuf]) -> Vec<Result<PathBuf, FontError>> {
 ///
 /// ```ignore
 /// for error in fonts::register() {
-///     eprintln!("kiekje: {error}");
+///     warn!("{error}");
 /// }
 /// ```
 pub fn register() -> Vec<FontError> {

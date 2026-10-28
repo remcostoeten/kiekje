@@ -86,7 +86,7 @@ pub fn detect() -> Option<ClipboardManager> {
             .filter(|name| detect::name_has_owner(&connection, name))
             .collect(),
         Err(error) => {
-            eprintln!("kiekje: no session bus to look for a clipboard manager: {error}");
+            warn!("no session bus to look for a clipboard manager: {error}");
             Vec::new()
         }
     };

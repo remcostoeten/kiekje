@@ -24,6 +24,8 @@ cargo fmt --all && cargo clippy --all-targets --all-features -- -D warnings     
 
 CI runs fmt, clippy and test. All three must pass before a change is done.
 
+`tools/check.sh` runs the quick checks before you push: `Cargo.lock` is current, `packaging/flatpak/cargo-sources.json` matches it, and rustfmt is clean. After changing a dependency, regenerate the sources with `flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json`. `tools/check.sh --full` adds clippy and the tests with two jobs, and `tools/check.sh --install-hook` runs the quick checks on every `git push`. A separate Audit workflow runs `cargo deny` against `deny.toml` on dependency changes and weekly; it reports but does not block a merge.
+
 `lab/kiekje-lab` drives the same checks on VMs and headless sessions and writes each run to `lab-results/<os>_<desktop>-<version>_<virt>/<timestamp>/`. The [lab results](/project/lab-results#lab-cli) page lists its commands.
 
 ## Pull requests
@@ -36,7 +38,7 @@ CI runs fmt, clippy and test. All three must pass before a change is done.
 ## Code style in short
 
 - No comments except a one-line workaround reason, a one-line explanation of an opaque expression or regex, or a `TODO`. Public functions in shared modules get a rustdoc block with a one-line summary and an `# Examples` section.
-- `thiserror` enums per module for errors callers branch on, `anyhow` only at the app edge. Never detect an error by its message text.
+- `thiserror` enums per module for errors callers branch on, no `anyhow`; the app edge prints the typed enums. Never detect an error by its message text.
 - No `unwrap` or `expect` outside tests and startup invariants. No empty error handling.
 - Finite states are enums, never strings.
 - Unit tests sit inline under `#[cfg(test)]` and are named by behavior, such as `maps_selection_across_fractional_scale`.

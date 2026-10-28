@@ -139,7 +139,7 @@ impl Shortcuts {
     ///
     /// ```ignore
     /// if let Some(conflict) = shortcuts.conflict() {
-    ///     eprintln!("kiekje: {conflict}");
+    ///     warn!("{conflict}");
     /// }
     /// ```
     pub fn conflict(&self) -> Option<Conflict> {

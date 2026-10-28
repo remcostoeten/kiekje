@@ -60,8 +60,8 @@ pub async fn reveal(path: impl AsRef<Path>) {
         Err(error) => Err(error),
     };
     if let Err(error) = shown {
-        println!(
-            "kiekje: no file manager service ({}), opening the folder",
+        info!(
+            "no file manager service ({}), opening the folder",
             error.message()
         );
         if let Some(folder) = path.parent() {
@@ -74,6 +74,6 @@ async fn launch(uri: &str) {
     if let Err(error) =
         gio::AppInfo::launch_default_for_uri_future(uri, gio::AppLaunchContext::NONE).await
     {
-        eprintln!("kiekje: could not open {uri}: {error}");
+        error!("could not open {uri}: {error}");
     }
 }

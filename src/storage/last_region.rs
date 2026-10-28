@@ -94,7 +94,7 @@ pub fn save_to(path: &Path, region: LogicalRect) -> Result<(), LastRegionError> 
 /// ```
 pub fn load() -> Option<LogicalRect> {
     load_from(&path()).unwrap_or_else(|error| {
-        eprintln!("kiekje: ignoring the last region: {error}");
+        warn!("ignoring the last region: {error}");
         None
     })
 }

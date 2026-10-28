@@ -4,19 +4,54 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 
 const SITE: &str = "https://remcostoeten.com";
+const SOURCE: &str = "https://github.com/remcostoeten/kiekje";
 const HEART: i32 = 12;
 const BEAT_US: f64 = 1_400_000.0;
 
-/// A "Made with love" sign-off with a beating heart that opens Remco's site.
+/// The sidebar footer: a source code link above a "Made with love" sign-off.
 ///
 /// The heart stays still when the desktop turns animations off.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// sidebar.append(&credit());
+/// sidebar.append(&footer());
 /// ```
-pub fn credit() -> gtk::Button {
+pub fn footer() -> gtk::Box {
+    let footer = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .css_classes(["credit-footer"])
+        .build();
+    footer.append(&source());
+    footer.append(&credit());
+    footer
+}
+
+fn source() -> gtk::Button {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    content.append(&word("Source code on GitHub"));
+    content.append(
+        &gtk::Image::builder()
+            .icon_name("kiekje-open-symbolic")
+            .pixel_size(12)
+            .build(),
+    );
+    let button = gtk::Button::builder()
+        .child(&content)
+        .tooltip_text(SOURCE)
+        .css_classes(["nav", "credit"])
+        .build();
+    button.update_property(&[gtk::accessible::Property::Label(
+        "Source code on GitHub, opens github.com/remcostoeten/kiekje",
+    )]);
+    open_on_click(&button, SOURCE);
+    button
+}
+
+fn credit() -> gtk::Button {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
@@ -32,15 +67,23 @@ pub fn credit() -> gtk::Button {
     button.update_property(&[gtk::accessible::Property::Label(
         "Made with love by Remco Stoeten, opens remcostoeten.com",
     )]);
-    button.connect_clicked(|button| {
-        let window = button.root().and_downcast::<gtk::Window>();
-        gtk::UriLauncher::new(SITE).launch(window.as_ref(), None::<&gio::Cancellable>, |opened| {
-            if let Err(error) = opened {
-                eprintln!("kiekje: {SITE} did not open: {error}");
-            }
-        });
-    });
+    open_on_click(&button, SITE);
     button
+}
+
+fn open_on_click(button: &gtk::Button, url: &'static str) {
+    button.connect_clicked(move |button| {
+        let window = button.root().and_downcast::<gtk::Window>();
+        gtk::UriLauncher::new(url).launch(
+            window.as_ref(),
+            None::<&gio::Cancellable>,
+            move |opened| {
+                if let Err(error) = opened {
+                    warn!("{url} did not open: {error}");
+                }
+            },
+        );
+    });
 }
 
 fn word(text: &str) -> gtk::Label {
@@ -73,7 +116,7 @@ fn heart() -> gtk::DrawingArea {
         cr.translate(-cx, -cy);
         trace_heart(cr, f64::from(width), f64::from(height));
         if let Err(error) = cr.fill() {
-            eprintln!("kiekje: the heart was not drawn: {error}");
+            warn!("the heart was not drawn: {error}");
         }
     });
     area.add_tick_callback(|area, _| {

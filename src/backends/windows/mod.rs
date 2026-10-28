@@ -3,11 +3,14 @@ pub mod kwin;
 
 use std::fmt;
 use std::io;
+use std::sync::OnceLock;
 
 use thiserror::Error;
 
 use super::detect::{self, Environment};
 use crate::capture::{Availability, LogicalRect};
+
+static DETECTED: OnceLock<WindowSourceKind> = OnceLock::new();
 
 pub const UNAVAILABLE: &str = "this desktop does not report where its windows are; window capture works on Plasma 6 and Hyprland";
 
@@ -93,10 +96,18 @@ pub fn choose(hyprland_socket: bool, environment: &Environment) -> Option<Window
 /// let kind = windows::detect();
 /// ```
 pub fn detect() -> Option<WindowSourceKind> {
-    match hyprland::socket_path() {
+    if let Some(kind) = DETECTED.get() {
+        return Some(*kind);
+    }
+    let kind = match hyprland::socket_path() {
         Some(_) => Some(WindowSourceKind::Hyprland),
         None => choose(false, &detect::probe_compositor()),
+    };
+    if let Some(kind) = kind {
+        // A losing race stores the same kind, so the result is ignored.
+        let _ = DETECTED.set(kind);
     }
+    kind
 }
 
 /// Whether window capture works in this session, with the reason when it does not.

@@ -178,7 +178,7 @@ fn slider(
     group.append(
         &gtk::Label::builder()
             .label(name)
-            .css_classes(["caps"])
+            .css_classes(["section-title"])
             .build(),
     );
     let scale = gtk::Scale::builder()
@@ -335,7 +335,7 @@ fn swatch(color: Color, group: &mut Option<gtk::ToggleButton>) -> gtk::ToggleBut
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.25);
         cr.set_line_width(1.0);
         if let Err(error) = filled.and_then(|()| cr.stroke()) {
-            eprintln!("kiekje: a colour swatch was not drawn: {error}");
+            warn!("a colour swatch was not drawn: {error}");
         }
     });
     let button = gtk::ToggleButton::builder()

@@ -8,6 +8,7 @@ mod keys;
 mod menu;
 mod pixels;
 mod render;
+mod save_as;
 mod select;
 mod shapes;
 mod stamp;
@@ -25,7 +26,7 @@ use std::time::Duration;
 use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
 
-use crate::capture::CaptureMode;
+use crate::capture::{CaptureMode, Frame};
 use crate::config;
 use crate::library::{self, Library, NewCapture};
 use crate::output::{self, Image};
@@ -82,6 +83,7 @@ struct Loaded {
 }
 
 type EndCallback = Box<dyn FnOnce(Ending)>;
+type SuspendCallback = Box<dyn Fn(bool)>;
 
 enum Host {
     Window(glib::WeakRef<gtk::Window>),
@@ -90,6 +92,7 @@ enum Host {
 
 struct Editor {
     host: Host,
+    suspend: RefCell<Option<SuspendCallback>>,
     mode: CaptureMode,
     original: RefCell<Option<PathBuf>>,
     picture: Arc<Picture>,
@@ -101,7 +104,11 @@ struct Editor {
     emoji: RefCell<String>,
     emoji_button: gtk::Button,
     recent_emoji: RefCell<Vec<String>>,
+    keep_emoji_open: Cell<bool>,
+    menu_pinned: Cell<bool>,
     stamp_at: Cell<Option<Point>>,
+    keyboard_cursor: Cell<bool>,
+    keyboard_drawing: Cell<bool>,
     size: gtk::Adjustment,
     opacity: gtk::Adjustment,
     keys: DrawingKeys,
@@ -193,7 +200,7 @@ pub fn open(app: &gtk::Application, source: Source) {
             Ok(Err(error)) => format!("The capture could not be opened: {error}"),
             Err(_) => "The loading worker stopped".to_owned(),
         };
-        eprintln!("kiekje: {failure}");
+        warn!("{failure}");
         loading.set_label(&failure);
         loading.add_css_class("problem");
     });
@@ -202,12 +209,14 @@ pub fn open(app: &gtk::Application, source: Source) {
 enum Input {
     File(PathBuf),
     Image(Image),
+    Frame(Arc<Vec<Frame>>, usize),
 }
 
 fn prepare(input: Input) -> Result<Prepared, LoadError> {
     let picture = match input {
         Input::File(path) => Picture::from_image(&pixels::decode(&path)?),
         Input::Image(image) => Picture::from_image(&image),
+        Input::Frame(frames, index) => Picture::from_frame(&frames[index]),
     };
     let hidden = picture.mosaic(pixels::block_size(picture.width, picture.height));
     Ok(Prepared {
@@ -284,6 +293,7 @@ impl Editor {
             .build();
         let editor = Rc::new(Self {
             host,
+            suspend: RefCell::new(None),
             mode,
             original: RefCell::new(original),
             picture: Arc::new(picture),
@@ -295,7 +305,11 @@ impl Editor {
             emoji: RefCell::new(DEFAULT_EMOJI.to_owned()),
             emoji_button: toolbar::emoji_action(DEFAULT_EMOJI),
             recent_emoji: RefCell::new(Vec::new()),
+            keep_emoji_open: Cell::new(false),
+            menu_pinned: Cell::new(false),
             stamp_at: Cell::new(None),
+            keyboard_cursor: Cell::new(false),
+            keyboard_drawing: Cell::new(false),
             size: gtk::Adjustment::new(
                 f64::from(drawing.size),
                 f64::from(MIN_SIZE_PX),
@@ -397,7 +411,7 @@ impl Editor {
                     config.drawing.size = drawing.size;
                     config.drawing.opacity = drawing.opacity;
                 }) {
-                    eprintln!("kiekje: could not remember the drawing style: {error}");
+                    error!("could not remember the drawing style: {error}");
                 }
             });
         });
@@ -503,6 +517,7 @@ impl Editor {
     }
 
     fn cancel_draft(&self) -> bool {
+        self.keyboard_drawing.set(false);
         let had = !self.draft.borrow().is_empty();
         self.draft.borrow_mut().clear();
         self.canvas.queue_draw();
@@ -558,12 +573,24 @@ impl Editor {
     }
 
     fn key(self: &Rc<Self>, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
+        if self.busy.get() {
+            return glib::Propagation::Proceed;
+        }
+        if self
+            .entry
+            .state_flags()
+            .contains(gtk::StateFlags::FOCUS_WITHIN)
+        {
+            return glib::Propagation::Proceed;
+        }
         let control = state.contains(gdk::ModifierType::CONTROL_MASK);
         let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
         let alt = state.contains(gdk::ModifierType::ALT_MASK);
         let letter = key.to_lower().name().unwrap_or_default();
         let step = if shift { 10.0 } else { 1.0 };
         let handled = match (control, letter.as_str()) {
+            (false, "Page_Up") if self.canvas.has_focus() => self.cycle_shape(true),
+            (false, "Page_Down") if self.canvas.has_focus() => self.cycle_shape(false),
             (false, "Delete" | "BackSpace") => self.delete_selected(),
             (false, "Left") => {
                 self.nudge(-step, 0.0)
@@ -603,6 +630,9 @@ impl Editor {
             (true, "s") if shift && self.is_inline() => self.conclude(Finish::SaveAs),
             (true, "s") => self.save(),
             (true, "p") if self.is_inline() => self.conclude(Finish::Pin),
+            (false, "Return" | "KP_Enter") if self.keyboard_drawing.get() => {
+                self.place_stamp();
+            }
             (false, "Return" | "KP_Enter") if self.is_inline() => self.conclude(Finish::Accept),
             (false, "Escape") => {
                 if !(self.close_menu()
@@ -615,7 +645,7 @@ impl Editor {
                 }
             }
             (false, "s") if self.is_inline() => self.pick(Tool::Crop),
-            (false, "space") => {
+            (false, "space") if self.canvas.has_focus() => {
                 if !self.place_stamp() {
                     return glib::Propagation::Proceed;
                 }
@@ -644,7 +674,11 @@ impl Editor {
         }
         self.discard.set(true);
         self.say(
-            "The annotations are not saved or copied. Close again to discard them.",
+            if self.is_inline() {
+                "The capture is not saved or copied. Cancel again to discard it."
+            } else {
+                "The annotations are not saved or copied. Close again to discard them."
+            },
             true,
         );
         glib::Propagation::Stop
@@ -655,6 +689,9 @@ impl Editor {
     }
 
     fn dismiss(&self) {
+        if self.busy.get() {
+            return;
+        }
         match &self.host {
             Host::Window(window) => {
                 if let Some(window) = window.upgrade() {
@@ -662,7 +699,10 @@ impl Editor {
                 }
             }
             Host::Inline(ending) => {
-                self.finish_text(false);
+                self.finish_text(true);
+                if self.close_request() == glib::Propagation::Stop {
+                    return;
+                }
                 if let Some(end) = ending.take() {
                     end(Ending::Canceled);
                 }
@@ -817,7 +857,7 @@ fn write(
         library.insert(&capture)
     });
     if let Err(error) = recorded {
-        eprintln!("kiekje: the edited capture is saved but not in the library: {error}");
+        warn!("the edited capture is saved but not in the library: {error}");
     }
     Ok(path)
 }

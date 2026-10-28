@@ -90,7 +90,7 @@ impl Clipboard {
             .name("kiekje-clipboard".into())
             .spawn(move || {
                 if let Err(error) = worker.serve() {
-                    eprintln!("kiekje: clipboard thread stopped: {error}");
+                    error!("clipboard thread stopped: {error}");
                 }
             })?;
 
@@ -288,7 +288,7 @@ impl Dispatch<ExtDataControlSourceV1, Arc<Vec<u8>>> for State {
                 thread::spawn(move || match File::from(fd).write_all(&png) {
                     Ok(()) => {}
                     Err(error) if error.kind() == ErrorKind::BrokenPipe => {}
-                    Err(error) => eprintln!("kiekje: clipboard transfer failed: {error}"),
+                    Err(error) => error!("clipboard transfer failed: {error}"),
                 });
             }
             ext_data_control_source_v1::Event::Cancelled => source.destroy(),

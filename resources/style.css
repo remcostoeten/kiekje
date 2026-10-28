@@ -1,23 +1,59 @@
 :root {
-  --bg: #0a0a0a;
-  --fg: #ededed;
-  --muted: #8a8a8a;
+  --bg: #090908;
+  --deep: #050504;
+  --surface: #111110;
+  --raised: #161615;
+  --raised-hi: #1e1e1c;
+  --stroke: #1b1b19;
+  --stroke-hi: #252523;
+  --stroke-top: #323230;
+  --fg: #efeeea;
+  --muted: #a3a099;
+  --faint: #6b6962;
   --accent: #fe5101;
+  --accent-fill: #fe5101;
+  --accent-text: #ff8a52;
+  --on-accent: #ffffff;
+  --danger: #e5484d;
+  --warn: #e3b25d;
+  --ok: #5cc48e;
   --line: color-mix(in srgb, var(--fg) 16%, transparent);
-  --surface: color-mix(in srgb, var(--fg) 4%, var(--bg));
-  --raised: color-mix(in srgb, var(--fg) 7%, var(--bg));
-  --raised-hi: color-mix(in srgb, var(--fg) 11%, var(--bg));
-  --stroke: color-mix(in srgb, var(--fg) 11%, var(--bg));
-  --stroke-hi: color-mix(in srgb, var(--fg) 18%, var(--bg));
-  --specular: inset 0 1px color-mix(in srgb, var(--fg) 6%, transparent);
-  --wash: color-mix(in srgb, var(--fg) 6%, transparent);
+  --specular: none;
+  --lift: 0 18px 40px -8px rgba(0, 0, 0, 0.7);
+  --wash: color-mix(in srgb, var(--fg) 5%, transparent);
   --accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
-  --focus-wash: color-mix(in srgb, var(--fg) 10%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 45%, transparent);
+  --focus-wash: color-mix(in srgb, var(--fg) 9%, transparent);
   --accent-strong: color-mix(in srgb, var(--accent) 24%, transparent);
-  --radius: 8px;
-  --radius-lg: 12px;
+  --accent-focus: color-mix(in srgb, var(--accent) 34%, transparent);
+  --danger-wash: color-mix(in srgb, var(--danger) 12%, transparent);
+  --danger-line: color-mix(in srgb, var(--danger) 40%, transparent);
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
   --sans: "Geist", "Inter", sans-serif;
   --mono: "Geist Mono", "JetBrains Mono", monospace;
+}
+
+:root.light {
+  --bg: #f8f6f2;
+  --deep: #f1eee8;
+  --surface: #fffdf9;
+  --raised: #f3f0ea;
+  --raised-hi: #e8e3d9;
+  --stroke: #e6e0d5;
+  --stroke-hi: #d7d0c3;
+  --stroke-top: #c2baab;
+  --fg: #1d1b17;
+  --muted: #686256;
+  --faint: #857e71;
+  --accent: #fe5101;
+  --accent-fill: #f04c00;
+  --accent-text: #c23d00;
+  --danger: #c43d36;
+  --warn: #a66b10;
+  --ok: #2a8655;
+  --lift: 0 14px 32px -10px rgba(0, 0, 0, 0.2);
 }
 
 window.kiekje-popover {
@@ -25,110 +61,276 @@ window.kiekje-popover {
 }
 
 .popover-panel {
-  background-color: var(--surface);
+  background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
   font-size: 13px;
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--specular);
-  padding: 12px;
+  border: 1px solid var(--stroke-hi);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--lift);
+  padding: 0;
 }
 
-.caps {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--muted);
+.section-title {
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--faint);
 }
 
 .panel button {
   background: none;
   background-color: var(--raised);
   color: var(--fg);
-  border: 1px solid var(--stroke);
+  font-size: 12.5px;
+  border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
   box-shadow: var(--specular);
-  padding: 8px 10px;
-  transition: background-color 120ms ease-out, transform 120ms ease-out;
+  padding: 0 11px;
+  min-height: 28px;
+  transition: background-color 100ms ease-out, color 100ms ease-out;
 }
 
 .panel button:hover {
   background-color: var(--raised-hi);
-  border-color: var(--stroke-hi);
 }
 
 .panel button:active {
-  transform: scale(0.98);
+  background-color: var(--surface);
 }
 
 .panel button:disabled {
-  color: var(--muted);
+  color: var(--faint);
 }
 
 .panel,
-.panel * {
+.panel *,
+.pin,
+.pin *,
+popover.menu *,
+popover.context-menu * {
   outline: none;
 }
 
 .panel button:focus-visible {
-  border-style: solid;
-  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--fg) 15%, var(--raised));
 }
 
 .panel button.primary {
-  border: 1px solid color-mix(in srgb, var(--fg) 30%, var(--accent));
-  background-color: var(--accent);
-  box-shadow: inset 0 1px color-mix(in srgb, var(--fg) 18%, transparent);
+  border: 1px solid var(--accent-fill);
+  background-color: var(--accent-fill);
+  color: var(--on-accent);
+  box-shadow: none;
 }
 
-.panel button.primary:hover,
+.panel button.primary:hover {
+  background-color: color-mix(in srgb, var(--on-accent) 10%, var(--accent-fill));
+}
+
 .panel button.primary:focus-visible {
-  background-color: color-mix(in srgb, var(--fg) 12%, var(--accent));
+  background-color: color-mix(in srgb, var(--on-accent) 22%, var(--accent-fill));
 }
 
 .panel button.ghost {
   background-color: transparent;
   border-color: transparent;
+  color: var(--muted);
   box-shadow: none;
 }
 
 .panel button.ghost:hover {
   background-color: var(--wash);
+  color: var(--fg);
+}
+
+.panel button.ghost:focus-visible {
+  background-color: var(--focus-wash);
+  color: var(--fg);
 }
 
 .action-label {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-family: var(--sans);
+  font-size: 13px;
 }
 
 .shortcut {
-  font-family: var(--mono);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+.keycaps {
+  min-height: 0;
+}
+
+.keycap {
+  font-family: var(--sans);
   font-size: 11px;
+  font-weight: 500;
   color: var(--muted);
+  background-color: var(--raised);
+  border: 1px solid var(--stroke-hi);
+  border-radius: 4px;
+  box-shadow: inset 0 -1px rgba(0, 0, 0, 0.3);
+  min-width: 18px;
+  min-height: 18px;
+  padding: 0 5px;
+}
+
+.popover-panel .pop-filter {
+  border-bottom: 1px solid var(--stroke);
+  padding: 0 12px;
+  min-height: 42px;
+  color: var(--faint);
+}
+
+.popover-panel .pop-filter entry {
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  outline: none;
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13px;
+  min-height: 0;
+  padding: 0;
+}
+
+.popover-panel .pop-filter:focus-within image {
+  color: var(--accent-text);
+}
+
+.popover-panel .pop-list {
+  padding: 6px;
+}
+
+.popover-panel .pop-list .section-title {
+  padding: 8px 8px 4px;
+}
+
+.panel button.act {
+  background: none;
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  box-shadow: none;
+  color: var(--muted);
+  min-height: 34px;
+  padding: 0 8px;
+}
+
+.panel button.act .action-label {
+  color: inherit;
+}
+
+.panel button.act image {
+  color: var(--faint);
+}
+
+.panel button.act.selected {
+  background-color: var(--accent-strong);
+  color: var(--fg);
+}
+
+.panel button.act.selected image {
+  color: var(--accent-text);
+}
+
+.panel button.act.selected .keycap {
+  background-color: color-mix(in srgb, var(--accent) 22%, var(--raised));
+  color: var(--fg);
+}
+
+.panel button.act:hover {
+  background-color: var(--wash);
+  color: var(--fg);
+}
+
+.panel button.act:focus-visible {
+  background-color: var(--focus-wash);
+  color: var(--fg);
+}
+
+.panel button.act.selected:hover {
+  background-color: var(--accent-strong);
+}
+
+.panel button.act.selected:focus-visible {
+  background-color: var(--accent-focus);
+}
+
+.panel button.act.recording image {
+  color: var(--danger);
+}
+
+.panel button.act:disabled {
+  color: var(--faint);
+}
+
+.popover-panel .no-match {
+  color: var(--faint);
+  padding: 18px 8px;
+}
+
+.popover-panel .recent {
+  padding: 2px 12px 12px;
+}
+
+.popover-panel .recent .section-title {
+  padding: 8px 0;
 }
 
 .panel button.thumbnail {
-  padding: 0;
+  padding: 2px;
   min-width: 64px;
   min-height: 44px;
+  border-radius: var(--radius);
+  border-color: var(--stroke-hi);
+}
+
+.panel button.thumbnail picture {
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.panel button.thumbnail:hover {
+  background-color: var(--accent-strong);
+}
+
+.panel button.thumbnail:focus-visible {
+  background-color: var(--accent-focus);
 }
 
 .empty-recent {
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
-  padding: 12px;
-  color: var(--muted);
+  border: 1px dashed var(--stroke-top);
+  border-radius: var(--radius-lg);
+  padding: 14px 12px;
+  color: var(--faint);
 }
 
-.panel separator.rule {
-  background: none;
+.popover-panel .pop-foot {
   border-top: 1px solid var(--stroke);
-  min-height: 0;
-  margin: 4px 0;
+  padding: 6px;
+}
+
+.panel button.ghost.quit:hover {
+  color: var(--danger);
+}
+
+.popover-panel .pop-hints {
+  background-color: var(--deep);
+  border-top: 1px solid var(--stroke);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  padding: 8px 12px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.popover-panel .pop-hints .keycap {
+  font-size: 10.5px;
+  min-width: 16px;
+  min-height: 16px;
 }
 
 window.settings-window {
@@ -144,33 +346,41 @@ window.settings-window {
 }
 
 .note {
-  color: var(--muted);
+  color: var(--faint);
 }
 
 .problem {
   color: var(--fg);
-  border-left: 2px solid var(--accent);
+  border-left: 2px solid var(--danger);
   padding-left: 8px;
 }
 
-.settings button:not(.trigger) > label,
-.editor button:not(.chip) > label {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+.settings .page-header {
+  padding: 22px 32px 14px;
+}
+
+.settings .page-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.settings .page-subtitle {
+  color: var(--muted);
+  font-size: 12.5px;
 }
 
 .settings .page {
-  padding: 20px 24px 28px;
+  padding: 6px 32px 40px;
 }
 
-.settings .caps {
-  margin: 8px 4px 0;
+.settings .section-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 12px 2px 0;
 }
 
 .settings .group {
-  background-color: var(--raised);
+  background-color: var(--surface);
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
   box-shadow: var(--specular);
@@ -184,8 +394,8 @@ window.settings-window {
 .settings .group row.pref {
   background: none;
   background-color: transparent;
-  padding: 12px 16px;
-  min-height: 0;
+  padding: 11px 14px;
+  min-height: 30px;
 }
 
 .settings .group row.pref:not(:first-child),
@@ -195,27 +405,32 @@ window.settings-window {
 
 .settings .group row.pref:disabled .row-title,
 .settings .group row.pref:disabled .subtitle {
-  color: var(--muted);
+  color: var(--faint);
   opacity: 0.6;
 }
 
+.settings .pref .row-title {
+  font-weight: 450;
+}
+
 .settings .pref .subtitle {
-  color: var(--muted);
+  color: var(--faint);
   font-size: 12px;
 }
 
 .settings .group .footer {
-  padding: 10px 16px;
+  padding: 9px 14px;
+  font-size: 12px;
 }
 
 .settings .group .footer.problem {
   border-left: none;
-  padding-left: 16px;
-  color: var(--accent);
+  padding-left: 14px;
+  color: var(--danger);
 }
 
 .settings .group button {
-  background-color: var(--raised-hi);
+  background-color: var(--raised);
 }
 
 .settings .group button.ghost {
@@ -223,7 +438,7 @@ window.settings-window {
 }
 
 .settings .group entry {
-  background-color: var(--surface);
+  background-color: var(--bg);
 }
 
 .settings button.optional:disabled {
@@ -238,77 +453,108 @@ window.settings-window {
 .settings entry {
   font-family: var(--mono);
   font-size: 12px;
-  padding: 0 8px;
+  padding: 0 10px;
 }
 
-.settings switch {
+.settings switch,
+.emoji-picker switch {
   background: none;
-  background-color: var(--raised-hi);
-  border: 1px solid var(--stroke-hi);
+  background-color: var(--stroke-hi);
+  border: 1px solid transparent;
   border-radius: 999px;
   box-shadow: var(--specular);
-  min-width: 38px;
-  min-height: 22px;
+  min-width: 32px;
+  min-height: 18px;
   padding: 0;
-  transition: background-color 150ms ease-out, border-color 150ms ease-out;
+  transition: background-color 140ms ease-out;
 }
 
-.settings switch > slider {
+.settings switch > slider,
+.emoji-picker switch > slider {
   background: none;
   background-color: var(--muted);
   border: none;
   border-radius: 999px;
   box-shadow: none;
-  min-width: 16px;
-  min-height: 16px;
+  min-width: 12px;
+  min-height: 12px;
   margin: 2px;
-  transition: background-color 150ms ease-out;
+  transition: background-color 140ms ease-out;
 }
 
-.settings switch > image {
+.settings switch > image,
+.emoji-picker switch > image {
   color: transparent;
   -gtk-icon-size: 0;
 }
 
-.settings switch:checked {
-  background-color: var(--accent);
-  border-color: color-mix(in srgb, var(--fg) 30%, var(--accent));
+.settings switch:hover,
+.emoji-picker switch:hover {
+  background-color: var(--stroke-top);
 }
 
-.settings switch:checked > slider {
+.settings switch:checked,
+.emoji-picker switch:checked {
+  background-color: var(--accent-fill);
+}
+
+.settings switch:checked > slider,
+.emoji-picker switch:checked > slider {
+  background-color: var(--on-accent);
+}
+
+.settings switch:checked:hover,
+.emoji-picker switch:checked:hover {
+  background-color: color-mix(in srgb, var(--on-accent) 10%, var(--accent-fill));
+}
+
+.settings switch:focus-visible,
+.emoji-picker switch:focus-visible {
+  background-color: var(--stroke-top);
+}
+
+.settings switch:focus-visible > slider,
+.emoji-picker switch:focus-visible > slider {
   background-color: var(--fg);
 }
 
-.settings switch:focus-visible {
-  border-color: var(--accent);
-  background-color: var(--focus-wash);
+.settings switch:checked:focus-visible,
+.emoji-picker switch:checked:focus-visible {
+  background-color: color-mix(in srgb, var(--on-accent) 22%, var(--accent-fill));
 }
 
-.settings switch:checked:focus-visible {
-  background-color: color-mix(in srgb, var(--fg) 12%, var(--accent));
-}
-
-.settings switch:disabled {
+.settings switch:disabled,
+.emoji-picker switch:disabled {
   opacity: 0.5;
 }
 
 .settings .about {
-  margin: 4px 4px 8px;
+  margin: 4px 2px 8px;
 }
 
 .panel button.trigger {
-  font-family: var(--mono);
   font-size: 12px;
-  min-width: 140px;
+  min-width: 132px;
+  padding: 0 8px;
+  background-color: var(--bg);
+}
+
+.panel button.trigger .trigger-note {
+  color: var(--faint);
+  font-size: 12px;
 }
 
 .panel button.trigger.recording {
-  border: 1px solid var(--accent);
-  background-color: var(--accent-wash);
+  background-color: var(--accent-strong);
+}
+
+.panel button.trigger.recording .trigger-note {
+  color: var(--accent-text);
 }
 
 .panel button.compact {
-  padding: 2px 6px;
+  padding: 0 8px;
+  min-height: 24px;
 }
 
 .gallery gridview,
@@ -377,11 +623,10 @@ window.settings-window {
 }
 
 .panel button.chip {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
   padding: 4px 10px;
+  min-height: 24px;
   color: var(--muted);
   background-color: transparent;
   border-color: transparent;
@@ -395,7 +640,6 @@ window.settings-window {
 }
 
 .panel button.chip:focus-visible {
-  border-color: transparent;
   color: var(--fg);
   background-color: var(--focus-wash);
 }
@@ -403,7 +647,6 @@ window.settings-window {
 .panel button.chip:checked {
   color: var(--fg);
   background-color: var(--accent-wash);
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
 .panel .segmented {
@@ -415,19 +658,22 @@ window.settings-window {
 
 .panel .segmented button.chip:checked {
   background-color: var(--raised-hi);
-  border-color: var(--stroke-hi);
-  box-shadow: var(--specular);
 }
 
-.panel .segmented button.chip:checked:hover,
+.panel .segmented button.chip:checked:hover {
+  background-color: color-mix(in srgb, var(--fg) 8%, var(--raised-hi));
+}
+
 .panel .segmented button.chip:checked:focus-visible {
-  background-color: var(--raised-hi);
-  border-color: var(--accent);
+  background-color: color-mix(in srgb, var(--fg) 15%, var(--raised-hi));
 }
 
-.panel button.chip:checked:hover,
-.panel button.chip:checked:focus-visible {
+.panel button.chip:checked:hover {
   background-color: var(--accent-strong);
+}
+
+.panel button.chip:checked:focus-visible {
+  background-color: var(--accent-focus);
 }
 
 .gallery entry,
@@ -442,15 +688,13 @@ window.settings-window {
 
 .gallery entry:focus-within,
 .settings entry:focus-within {
-  border-color: var(--accent);
+  background-color: var(--raised-hi);
 }
 
 .gallery dropdown > button,
 .settings dropdown > button {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
   padding: 4px 10px;
 }
 
@@ -471,9 +715,12 @@ window.settings-window {
   border-radius: var(--radius);
 }
 
-.gallery popover.menu modelbutton:hover,
-.gallery popover.menu modelbutton:focus-visible {
+.gallery popover.menu modelbutton:hover {
   background-color: var(--accent-wash);
+}
+
+.gallery popover.menu modelbutton:focus-visible {
+  background-color: var(--accent-strong);
 }
 
 .panel.editor {
@@ -495,8 +742,7 @@ window.settings-window {
 }
 
 .editor .canvas:focus-visible {
-  border-style: solid;
-  border-color: var(--accent);
+  background-color: var(--deep);
 }
 
 .editor.inline .canvas {
@@ -533,7 +779,7 @@ window.settings-window {
 }
 
 .overlay-hints .keycap {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
   color: var(--fg);
   background-color: var(--raised-hi);
@@ -543,10 +789,8 @@ window.settings-window {
 }
 
 .overlay-hints .hint {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -567,21 +811,32 @@ window.settings-window {
 }
 
 .editor entry:focus-within {
-  border-style: solid;
-  border-color: var(--accent);
+  background-color: var(--raised-hi);
 }
 
 .panel button.danger {
   min-width: 96px;
+  color: var(--danger);
+  background-color: transparent;
+  border-color: var(--danger-line);
+}
+
+.panel button.danger:hover {
+  background-color: var(--danger-wash);
+}
+
+.panel button.danger:focus-visible {
+  background-color: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
 .panel button.danger.armed {
-  border: 1px solid var(--accent);
-  background-color: var(--accent-wash);
+  background-color: var(--danger);
+  color: var(--bg);
+  font-weight: 600;
 }
 
 .settings .about-name {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
 }
 
@@ -590,24 +845,49 @@ window.settings-window {
 }
 
 .panel .sidebar {
-  background-color: var(--bg);
-  min-width: 180px;
-  padding: 20px 12px;
+  background-color: var(--deep);
+  min-width: 208px;
+  padding: 12px 10px 10px;
   border-right: 1px solid var(--stroke);
 }
 
 .panel .brand {
   color: var(--fg);
-  margin: 0 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 2px 8px 14px;
+}
+
+.panel .brand-mark {
+  background-color: var(--accent-fill);
+  color: var(--on-accent);
+  border-radius: var(--radius);
+  min-width: 20px;
+  min-height: 20px;
+}
+
+.panel .brand-version {
+  color: var(--faint);
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .panel .main {
-  background-color: var(--surface);
+  background-color: var(--bg);
+  padding: 0;
+}
+
+.gallery .main {
   padding: 20px;
 }
 
+.gallery entry {
+  font-family: var(--sans);
+  font-size: 13px;
+}
+
 .panel .title {
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 600;
 }
 
@@ -615,14 +895,30 @@ window.settings-window {
   margin-top: 0;
 }
 
+.gallery .status spinner {
+  min-width: 14px;
+  min-height: 14px;
+  color: var(--accent);
+}
+
+.gallery .failure-banner {
+  border: 1px solid var(--danger-line);
+  border-radius: var(--radius);
+  background-color: var(--danger-wash);
+  padding: 8px 10px;
+}
+
+.gallery .failure-banner label:focus-visible {
+  background-color: var(--focus-wash);
+}
+
 .gallery .badge {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 500;
   color: var(--fg);
   background-color: var(--accent-wash);
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  border: 1px solid var(--accent-line);
   border-radius: var(--radius);
   padding: 1px 6px;
 }
@@ -632,28 +928,36 @@ window.settings-window {
   border-color: transparent;
   box-shadow: none;
   border-radius: var(--radius);
-  padding: 6px 8px;
+  padding: 0 8px;
+  min-height: 30px;
   color: var(--muted);
-  transition: color 150ms ease-out, background-color 150ms ease-out;
+  transition: color 100ms ease-out, background-color 100ms ease-out;
 }
 
-.panel button.nav > label {
+.panel button.nav > label,
+.panel button.nav > box > label {
   font-family: var(--sans);
   font-size: 13px;
-  letter-spacing: 0;
-  text-transform: none;
+}
+
+.panel button.nav image {
+  color: var(--faint);
+}
+
+.panel .credit-footer {
+  margin-top: 8px;
+  border-top: 1px solid var(--stroke);
 }
 
 .panel button.nav.credit {
-  margin-top: 4px;
-  padding: 4px 8px;
+  padding: 4px 6px;
+  min-height: 0;
+  border-radius: 0;
 }
 
 .panel button.nav.credit > box > label {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--faint);
 }
 
 .panel .heart {
@@ -667,12 +971,14 @@ window.settings-window {
 
 .panel button.nav:checked {
   background-color: var(--raised-hi);
-  box-shadow: var(--specular);
   color: var(--fg);
 }
 
+.panel button.nav:checked image {
+  color: var(--accent-text);
+}
+
 .panel button.nav:focus-visible {
-  border-color: transparent;
   color: var(--fg);
   background-color: var(--focus-wash);
 }
@@ -683,8 +989,7 @@ window.settings-window {
 }
 
 .panel button.nav:checked:focus-visible {
-  background-color: var(--raised-hi);
-  border-color: var(--accent);
+  background-color: var(--accent-strong);
   color: var(--fg);
 }
 
@@ -700,17 +1005,11 @@ window.kiekje-pin {
   border: 1px solid var(--line);
 }
 
-.pin:focus-within {
-  border-color: var(--accent);
-}
-
 .pin-toast {
   background-color: var(--bg);
   color: var(--fg);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
   border: 1px solid var(--stroke);
   border-radius: var(--radius);
   padding: 4px 8px;
@@ -729,9 +1028,12 @@ window.kiekje-pin popover.menu modelbutton {
   border-radius: var(--radius);
 }
 
-window.kiekje-pin popover.menu modelbutton:hover,
-window.kiekje-pin popover.menu modelbutton:focus-visible {
+window.kiekje-pin popover.menu modelbutton:hover {
   background-color: var(--accent-wash);
+}
+
+window.kiekje-pin popover.menu modelbutton:focus-visible {
+  background-color: var(--accent-strong);
 }
 
 .editor .head {
@@ -771,13 +1073,14 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
 .panel .palette button.chip.icon:checked {
   color: var(--fg);
   background-color: var(--accent-wash);
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
-  box-shadow: none;
 }
 
-.panel .palette button.chip.icon:checked:hover,
-.panel .palette button.chip.icon:checked:focus-visible {
+.panel .palette button.chip.icon:checked:hover {
   background-color: var(--accent-strong);
+}
+
+.panel .palette button.chip.icon:checked:focus-visible {
+  background-color: var(--accent-focus);
 }
 
 .panel .palette button.chip.icon:disabled {
@@ -793,15 +1096,20 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
   border-radius: 999px;
 }
 
-.panel .palette button.chip.swatch:checked {
-  background-color: transparent;
-  border-color: color-mix(in srgb, var(--fg) 85%, transparent);
-  box-shadow: none;
+.panel .palette button.chip.swatch:hover {
+  background-color: var(--wash);
 }
 
-.panel .palette button.chip.swatch:checked:hover,
+.panel .palette button.chip.swatch:checked {
+  background-color: color-mix(in srgb, var(--fg) 30%, transparent);
+}
+
 .panel .palette button.chip.swatch:focus-visible {
-  background-color: var(--wash);
+  background-color: color-mix(in srgb, var(--fg) 20%, transparent);
+}
+
+.panel .palette button.chip.swatch:checked:focus-visible {
+  background-color: color-mix(in srgb, var(--fg) 42%, transparent);
 }
 
 .editor .stroke-option {
@@ -843,7 +1151,6 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
 
 .editor scale:focus-visible > trough > slider {
   background-color: var(--accent);
-  outline: 2px solid var(--focus-wash);
 }
 
 popover.context-menu > contents {
@@ -873,14 +1180,20 @@ popover.context-menu > contents {
   min-width: 200px;
 }
 
-.context-list button.menu-item:hover,
-.context-list button.menu-item:focus-visible {
+.context-list button.menu-item:hover {
   background-color: var(--wash);
-  border-color: var(--stroke);
+}
+
+.context-list button.menu-item:focus-visible {
+  background-color: var(--focus-wash);
 }
 
 .context-list button.menu-item.current {
   background-color: var(--accent-wash);
+}
+
+.context-list button.menu-item.current:focus-visible {
+  background-color: var(--accent-strong);
 }
 
 .context-list button.menu-item:disabled {
@@ -909,12 +1222,10 @@ popover.context-menu > contents {
 
 .emoji-picker flowboxchild:hover {
   background-color: var(--wash);
-  border-color: var(--stroke);
 }
 
 .emoji-picker flowboxchild:focus-visible {
-  background-color: var(--accent-wash);
-  border-color: var(--accent);
+  background-color: var(--accent-strong);
 }
 
 .emoji-picker label.emoji-choice {

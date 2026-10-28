@@ -6,8 +6,8 @@ use gtk::glib;
 use thiserror::Error;
 
 use super::write_atomic;
-use crate::app::APP_ID;
 use crate::desktop_file::quote_exec;
+use crate::ids::APP_ID;
 
 const PACKAGED_COMMAND: &str = "kiekje";
 

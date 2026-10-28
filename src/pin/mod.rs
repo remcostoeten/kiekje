@@ -9,7 +9,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
-use crate::app::{gdk_monitors, monitor_info};
+use crate::capture::monitors::{gdk_monitors, monitor_info};
 use crate::capture::{CaptureMode, LogicalRect, PixelFormat};
 use crate::config;
 use crate::library::{self, Library, NewCapture};
@@ -20,7 +20,6 @@ use crate::ui;
 
 const ACTIONS: &str = "pin";
 const DRAG_THRESHOLD: f64 = 4.0;
-const NUDGE: f64 = 10.0;
 const TOAST: Duration = Duration::from_millis(1400);
 
 thread_local! {
@@ -259,9 +258,16 @@ fn show(
     frame.set_cursor_from_name(Some("grab"));
     frame.set_child(Some(&picture));
     frame.add_overlay(&toast);
-    frame.update_property(&[gtk::accessible::Property::Label(
-        "Pinned capture. Drag to move, scroll or plus and minus to zoom, Escape to close.",
-    )]);
+    let instructions = match stacking {
+        Stacking::Layer => {
+            "Pinned capture. Arrows move one pixel, Shift and arrows move ten pixels. Drag to move, plus and minus zoom, Page Up and Page Down change opacity, Escape closes. Shift+F10 opens actions."
+        }
+        Stacking::Toplevel => {
+            "Pinned capture. Keyboard movement is unavailable on this desktop; use your window manager's move command or drag to move. Plus and minus zoom, Page Up and Page Down change opacity, Escape closes. Shift+F10 opens actions."
+        }
+    };
+    frame.update_property(&[gtk::accessible::Property::Label(instructions)]);
+    frame.set_tooltip_text(Some(instructions));
     window.set_child(Some(&frame));
     let menu = menu(&frame);
 
@@ -421,6 +427,13 @@ fn connect_keys(pin: &Rc<Pin>) {
         let control = state.contains(gdk::ModifierType::CONTROL_MASK);
         let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
         let name = key.to_lower().name().unwrap_or_default();
+        if state.intersects(gdk::ModifierType::ALT_MASK | gdk::ModifierType::SUPER_MASK) {
+            return glib::Propagation::Proceed;
+        }
+        if !control && let Some((dx, dy)) = keyboard_movement(pin.stacking, name.as_str(), shift) {
+            pin.nudge(dx, dy);
+            return glib::Propagation::Stop;
+        }
         match (control, name.as_str()) {
             (false, "Escape") => pin.window.close(),
             (true, "c") => pin.run(Action::Copy),
@@ -434,10 +447,8 @@ fn connect_keys(pin: &Rc<Pin>) {
             (_, "0" | "KP_0") => pin.run(Action::ActualSize),
             (false, "Menu") => pin.popup_centered(),
             (false, "F10") if shift => pin.popup_centered(),
-            (false, "Left") => pin.nudge(-NUDGE, 0.0),
-            (false, "Right") => pin.nudge(NUDGE, 0.0),
-            (false, "Up") => pin.nudge(0.0, -NUDGE),
-            (false, "Down") => pin.nudge(0.0, NUDGE),
+            (false, "Page_Up") => pin.change_opacity(0.1),
+            (false, "Page_Down") => pin.change_opacity(-0.1),
             _ => return glib::Propagation::Proceed,
         }
         glib::Propagation::Stop
@@ -450,7 +461,31 @@ fn show_menu(menu: &gtk::PopoverMenu, x: f64, y: f64) {
     menu.popup();
 }
 
+fn keyboard_movement(stacking: Stacking, key: &str, shift: bool) -> Option<(f64, f64)> {
+    if stacking != Stacking::Layer {
+        return None;
+    }
+    let step = if shift { 10.0 } else { 1.0 };
+    match key {
+        "Left" => Some((-step, 0.0)),
+        "Right" => Some((step, 0.0)),
+        "Up" => Some((0.0, -step)),
+        "Down" => Some((0.0, step)),
+        _ => None,
+    }
+}
+
+fn adjusted_opacity(current: f64, delta: f64) -> f64 {
+    (current + delta).clamp(0.2, 1.0)
+}
+
 impl Pin {
+    fn change_opacity(&self, delta: f64) {
+        let opacity = adjusted_opacity(self.window.opacity(), delta);
+        self.window.set_opacity(opacity);
+        self.say(&format!("Opacity {:.0}%", opacity * 100.0));
+    }
+
     fn size(&self) -> (i32, i32) {
         geometry::scaled(self.base, self.zoom.get())
     }
@@ -567,7 +602,7 @@ impl Pin {
                 Ok(file) => file.path(),
                 Err(error) if error.matches(gtk::DialogError::Dismissed) => return,
                 Err(error) => {
-                    eprintln!("kiekje: the save dialog failed: {error}");
+                    error!("the save dialog failed: {error}");
                     pin.say("Not saved");
                     return;
                 }
@@ -580,11 +615,11 @@ impl Pin {
             let written = gio::spawn_blocking(move || write(&texture, &path)).await;
             match written {
                 Ok(Ok(path)) => {
-                    println!("kiekje: saved the pin to {}", path.display());
+                    info!("saved the pin to {}", path.display());
                     pin.say("Saved");
                 }
                 Ok(Err(error)) => {
-                    eprintln!("kiekje: the pin was not saved: {error}");
+                    warn!("the pin was not saved: {error}");
                     pin.say("Not saved");
                 }
                 Err(_) => pin.say("Not saved: the save worker stopped"),
@@ -632,7 +667,7 @@ fn write(texture: &gdk::Texture, path: &Path) -> std::io::Result<PathBuf> {
     };
     if let Err(error) = Library::open(&library::path()).and_then(|library| library.insert(&capture))
     {
-        eprintln!("kiekje: the pin is saved but not in the library: {error}");
+        warn!("the pin is saved but not in the library: {error}");
     }
     Ok(saved)
 }
@@ -647,5 +682,46 @@ fn rgba(texture: &gdk::Texture) -> Image {
         stride,
         format: PixelFormat::Rgba,
         data: bytes.to_vec(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moves_layer_pins_by_one_pixel_or_ten_with_shift() {
+        assert_eq!(
+            keyboard_movement(Stacking::Layer, "Left", false),
+            Some((-1.0, 0.0))
+        );
+        assert_eq!(
+            keyboard_movement(Stacking::Layer, "Right", true),
+            Some((10.0, 0.0))
+        );
+        assert_eq!(
+            keyboard_movement(Stacking::Layer, "Up", false),
+            Some((0.0, -1.0))
+        );
+        assert_eq!(
+            keyboard_movement(Stacking::Layer, "Down", true),
+            Some((0.0, 10.0))
+        );
+    }
+
+    #[test]
+    fn leaves_toplevel_movement_to_the_window_manager() {
+        for key in ["Left", "Right", "Up", "Down"] {
+            assert_eq!(keyboard_movement(Stacking::Toplevel, key, false), None);
+            assert_eq!(keyboard_movement(Stacking::Toplevel, key, true), None);
+        }
+        assert_eq!(keyboard_movement(Stacking::Layer, "Escape", false), None);
+    }
+
+    #[test]
+    fn keeps_opacity_visible_and_bounded() {
+        assert_eq!(adjusted_opacity(0.2, -0.1), 0.2);
+        assert_eq!(adjusted_opacity(1.0, 0.1), 1.0);
+        assert!((adjusted_opacity(0.5, 0.1) - 0.6).abs() < f64::EPSILON);
     }
 }

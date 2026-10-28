@@ -1,0 +1,36 @@
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant comes in through zbus, which has no maintained replacement yet" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names comes in through zbus, which has no maintained replacement yet" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive comes in through zbus, which has no maintained replacement yet" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "IJG",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
