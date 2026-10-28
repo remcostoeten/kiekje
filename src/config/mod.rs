@@ -44,6 +44,24 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 pub struct General {
     pub check_for_updates: bool,
+    pub theme: Theme,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl Theme {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -343,7 +361,7 @@ pub fn load() -> Config {
     match load_from(&path()) {
         Ok(config) => config.unwrap_or_default(),
         Err(error) => {
-            eprintln!("kiekje: using the default config: {error}");
+            warn!("using the default config: {error}");
             Config::default()
         }
     }
@@ -751,6 +769,15 @@ mod tests {
         let older = parse("[overlay]\nmagnifier = true", Path::new("config.toml")).unwrap();
         assert_eq!(older.overlay.magnifier_pixels, 15);
         assert_eq!(older.overlay.slow_pointer, SlowPointer::Eighth);
+    }
+
+    #[test]
+    fn defaults_to_the_dark_theme_and_reads_light() {
+        assert_eq!(Config::default().general.theme, Theme::Dark);
+        let light = parse("[general]\ntheme = \"light\"", Path::new("config.toml")).unwrap();
+        assert_eq!(light.general.theme, Theme::Light);
+        assert_eq!(light.general.theme.toggled(), Theme::Dark);
+        assert!(parse("[general]\ntheme = \"sepia\"", Path::new("config.toml")).is_err());
     }
 
     #[test]

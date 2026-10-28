@@ -4,6 +4,23 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+## [0.1.0-alpha.9] - 2026-10-28
+
+### Added
+
+- A "Crisp tool" redesign of every window: warm graphite surfaces, one orange accent, Geist in sentence case, and new symbolic icons. The tray popover is a command palette with keycaps.
+- A light theme, switched with `[general] theme = "light"` or the Light theme switch on the General settings page.
+- Recordings appear in the gallery with a poster frame, and Export as GIF (Ctrl+G) writes a looping GIF next to the recording.
+- `KIEKJE_LOG=error|warn|info|debug` filters the daemon log, and lines read `kiekje: [module] message`.
+- A dependency audit workflow runs `cargo deny`.
+
+### Changed
+
+- Hover, focus, selection and checked states no longer add an outline or recolour a border.
+- Capturing across monitors grabs only the monitors a selection touches.
+- The application code is split into focused modules.
+- `rustls-webpki` and `webpki-roots` are updated for RUSTSEC-2026-0381 and RUSTSEC-2026-0382, which affect the update check and uploads.
+
 ## [0.1.0-alpha.8] - 2026-10-23
 
 ### Added
@@ -122,7 +139,8 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 First alpha: region capture with an overlay, a gallery, an editor with shapes, text and crop, a tray, and settings.
 
-[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.8...HEAD
+[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.9...HEAD
+[0.1.0-alpha.9]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.9
 [0.1.0-alpha.8]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.6

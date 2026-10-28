@@ -1,4 +1,4 @@
-use super::LogicalRect;
+use super::{LogicalRect, MonitorInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PixelRect {
@@ -140,6 +140,25 @@ pub fn plan_selection(
     })
 }
 
+/// Lists the indices of the monitors whose logical rectangle a selection touches.
+///
+/// Planning a selection only ever looks at the monitors it touches, so capturing just these
+/// gives the same plan as capturing every monitor.
+///
+/// # Examples
+///
+/// ```ignore
+/// let touched = touched_monitors(region, &[left, right]);
+/// ```
+pub fn touched_monitors(selection: LogicalRect, monitors: &[LogicalRect]) -> Vec<usize> {
+    monitors
+        .iter()
+        .enumerate()
+        .filter(|(_, logical)| logical.intersection(selection).is_some())
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// Pixels per logical pixel of a frame, measured horizontally.
 ///
 /// # Examples
@@ -240,6 +259,32 @@ pub fn rect_from_drag(start: (f64, f64), end: (f64, f64)) -> LogicalRect {
     }
 }
 
+/// Returns the smallest logical rectangle that contains every monitor.
+///
+/// # Examples
+///
+/// ```ignore
+/// let bounds = bounding_box(&monitors).unwrap();
+/// ```
+pub fn bounding_box(monitors: &[MonitorInfo]) -> Option<LogicalRect> {
+    let left = monitors.iter().map(|monitor| monitor.logical.x).min()?;
+    let top = monitors.iter().map(|monitor| monitor.logical.y).min()?;
+    let right = monitors
+        .iter()
+        .map(|monitor| monitor.logical.x + monitor.logical.width)
+        .max()?;
+    let bottom = monitors
+        .iter()
+        .map(|monitor| monitor.logical.y + monitor.logical.height)
+        .max()?;
+    Some(LogicalRect {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +296,48 @@ mod tests {
             width,
             height,
         }
+    }
+
+    #[test]
+    fn plans_the_same_selection_from_only_the_touched_monitors() {
+        let all = [
+            (rect(0, 0, 1920, 1080), (1920, 1080)),
+            (rect(1920, 0, 1280, 720), (2560, 1440)),
+            (rect(3200, 0, 1000, 1000), (1000, 1000)),
+        ];
+        let logical: Vec<LogicalRect> = all.iter().map(|(rect, _)| *rect).collect();
+        for selection in [
+            rect(100, 100, 400, 300),
+            rect(1800, 100, 400, 300),
+            rect(1900, 0, 1400, 700),
+            rect(2000, 10, 100, 100),
+            rect(0, 0, 4200, 1000),
+        ] {
+            let touched = touched_monitors(selection, &logical);
+            let subset: Vec<_> = touched.iter().map(|index| all[*index]).collect();
+            let full = plan_selection(selection, &all);
+            let partial = plan_selection(selection, &subset);
+            match (full, partial) {
+                (
+                    Some(SelectionPlan::Crop { frame_index, rect }),
+                    Some(SelectionPlan::Crop {
+                        frame_index: kept,
+                        rect: same,
+                    }),
+                ) => {
+                    assert_eq!(touched[kept], frame_index);
+                    assert_eq!(rect, same);
+                }
+                (full, partial) => assert_eq!(full, partial),
+            }
+        }
+    }
+
+    #[test]
+    fn touches_no_monitor_for_a_selection_off_every_screen() {
+        let monitors = [rect(0, 0, 100, 100), rect(100, 0, 100, 100)];
+        assert!(touched_monitors(rect(500, 500, 10, 10), &monitors).is_empty());
+        assert_eq!(touched_monitors(rect(90, 0, 20, 10), &monitors), vec![0, 1]);
     }
 
     #[test]
@@ -474,6 +561,30 @@ mod tests {
         assert_eq!(
             rect_from_drag((50.4, 40.0), (10.6, 20.2)),
             rect(10, 20, 41, 20)
+        );
+    }
+
+    fn monitor(name: &str, x: i32, y: i32, width: i32, height: i32) -> MonitorInfo {
+        MonitorInfo {
+            connector: name.into(),
+            logical: rect(x, y, width, height),
+        }
+    }
+
+    #[test]
+    fn bounding_box_handles_negative_origins() {
+        let monitors = [
+            monitor("A", -1024, 0, 1024, 768),
+            monitor("B", 0, -200, 1920, 1080),
+        ];
+        assert_eq!(
+            bounding_box(&monitors),
+            Some(LogicalRect {
+                x: -1024,
+                y: -200,
+                width: 2944,
+                height: 1080
+            })
         );
     }
 }

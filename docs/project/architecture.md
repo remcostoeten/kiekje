@@ -14,7 +14,7 @@ Kiekje is one Rust binary with a GTK 4 interface and direct protocol and D-Bus b
 | Core | Rust, edition 2024, one binary. `GtkApplication` for the single instance and D-Bus remote actions |
 | UI | GTK 4 without libadwaita. One app stylesheet, `resources/style.css`, compiled in with GResource |
 | Overlay and popover | `gtk4-layer-shell` on KWin, Hyprland and Sway. Fullscreen toplevels on GNOME and X11 |
-| Capture | KWin `org.kde.KWin.ScreenShot2` over `zbus`; `ext-image-copy-capture` and `wlr-screencopy` through `smithay-client-toolkit`; `hyprland-toplevel-export` for windows; xdg-desktop-portal through `ashpd`; `x11rb` with MIT-SHM on hold |
+| Capture | KWin `org.kde.KWin.ScreenShot2` over `zbus`; `ext-image-copy-capture` and `wlr-screencopy` through `smithay-client-toolkit`; `hyprland-toplevel-export` for windows; xdg-desktop-portal over `zbus`; `x11rb` with MIT-SHM on hold |
 | Shortcuts | GlobalShortcuts portal, kglobalaccel, a managed Hyprland include, CLI fallback everywhere |
 | Tray | `ksni` on its own thread. It only sends commands to the GTK main loop and never creates widgets |
 | Clipboard | GDK, owned by the long-running daemon. `ext_data_control_manager_v1` where the compositor offers it |
@@ -31,9 +31,12 @@ Not in the stack, by decision: a webview, Tauri, Wails, Qt, libadwaita, and subp
 ```text
 src/
   main.rs
-  app/          single instance, action routing, lifecycle
+  cli.rs        argument parsing for the CLI commands
+  ids.rs        the application id
+  log.rs        error, warn, info and debug macros, filtered by KIEKJE_LOG
+  app/          session state and action routing; startup, shortcuts, tray, panels, capture flow, delivery, saving, recording
   capture/      request, frame, monitor layout, coordinate mapping
-  backends/     kwin/, wlroots/, portal/, x11/, windows/ (window geometry)
+  backends/     kwin/, wlroots/, portal/, windows/ (window geometry)
   overlay/      layer-shell surfaces, selection, keyboard, magnifier, window snap
   editor/       annotation canvas and tools
   pin/          floating pinned captures

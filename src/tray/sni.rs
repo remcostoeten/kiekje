@@ -41,7 +41,7 @@ pub struct Item {
 impl Item {
     fn send(&self, command: TrayCommand) {
         if self.commands.send_blocking(command).is_err() {
-            eprintln!("kiekje: tray command dropped, the app is shutting down");
+            warn!("tray command dropped, the app is shutting down");
         }
     }
 }
@@ -108,7 +108,7 @@ impl TrayGuard for SniGuard {
             .update(|item| item.recording = recording)
             .is_none()
         {
-            eprintln!("kiekje: the tray is gone, its recording state was not updated");
+            warn!("the tray is gone, its recording state was not updated");
         }
     }
 }
@@ -127,6 +127,9 @@ impl Tray for Item {
     }
 
     fn icon_name(&self) -> String {
+        if self.recording {
+            return String::new();
+        }
         match self.pose {
             Some(_) => String::new(),
             None => icon::NAME.into(),
@@ -134,10 +137,11 @@ impl Tray for Item {
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        match self.pose {
-            Some(Pose::Shutter(index)) => icon::frame(index),
-            Some(Pose::Blink) => icon::blink(),
-            None => icon::pixmaps(),
+        match (self.pose, self.recording) {
+            (Some(Pose::Shutter(index)), _) => icon::frame(index),
+            (_, true) => icon::recording(),
+            (Some(Pose::Blink), false) => icon::blink(),
+            (None, false) => icon::pixmaps(),
         }
     }
 

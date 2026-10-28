@@ -5,13 +5,14 @@ use std::path::PathBuf;
 
 use gtk::prelude::*;
 
-use crate::app::{APP_ID, gdk_monitors, monitor_info};
 use crate::backends::detect::{self, Environment, LAYER_SHELL};
 use crate::backends::windows::{self, WindowSourceKind};
 use crate::backends::{Capabilities, backend, candidates};
+use crate::capture::monitors::{gdk_monitors, monitor_info};
 use crate::capture::{BackendChoice, BackendKind};
 use crate::config::{self, Config};
 use crate::desktop_file;
+use crate::ids::APP_ID;
 use crate::overlay;
 use crate::pin::{self, Stacking};
 use crate::record;
@@ -84,17 +85,17 @@ struct Report {
     overlay: Option<Overlay>,
     pins: Option<Stacking>,
     monitors: Vec<Monitor>,
-    bus: Result<Bus, String>,
+    bus: Result<Bus, zbus::Error>,
     available: Vec<(BackendKind, Capabilities)>,
     kwin_present: bool,
     kwin_access: Option<KwinAccess>,
     window_snap: Option<WindowSourceKind>,
     config_path: PathBuf,
-    config: Result<Option<Config>, String>,
+    config: Result<Option<Config>, config::ConfigError>,
     hyprland: Option<HyprlandBinds>,
     fonts: Vec<Result<PathBuf, FontError>>,
     clipboard_manager: Option<ClipboardManager>,
-    recording: Result<(), String>,
+    recording: Result<(), record::GstError>,
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -133,16 +134,14 @@ fn collect() -> Report {
         Vec::new()
     };
 
-    let bus = detect::session_bus()
-        .map(|connection| Bus {
-            daemon_running: detect::name_has_owner(&connection, APP_ID),
-            tray_host: detect::name_has_owner(&connection, TRAY_WATCHER),
-            portals: PORTALS
-                .iter()
-                .map(|interface| (*interface, detect::portal_version(&connection, interface)))
-                .collect(),
-        })
-        .map_err(|error| error.to_string());
+    let bus = detect::session_bus().map(|connection| Bus {
+        daemon_running: detect::name_has_owner(&connection, APP_ID),
+        tray_host: detect::name_has_owner(&connection, TRAY_WATCHER),
+        portals: PORTALS
+            .iter()
+            .map(|interface| (*interface, detect::portal_version(&connection, interface)))
+            .collect(),
+    });
 
     let config_path = config::path();
     let available = candidates(BackendChoice::Auto, &environment)
@@ -161,13 +160,7 @@ fn collect() -> Report {
         kwin_present: environment.has_kwin(),
         kwin_access: environment.has_kwin().then(kwin_access),
         window_snap: windows::choose(windows::hyprland::socket_path().is_some(), &environment),
-        config: config::load_from(&config_path).map_err(|error| {
-            error
-                .to_string()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        }),
+        config: config::load_from(&config_path),
         config_path,
         hyprland: std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").map(|_| hyprland_binds()),
         fonts: fonts::locate(&fonts::search_dirs()),
@@ -358,7 +351,14 @@ fn problems(report: &Report) -> Vec<Problem> {
     if let Err(error) = &report.config {
         found.push(Problem {
             severity: Severity::Warning,
-            message: format!("The config can't be used, so defaults apply: {error}"),
+            message: format!(
+                "The config can't be used, so defaults apply: {}",
+                error
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
             fix: Some(format!(
                 "fix {} or delete it to get the defaults back",
                 storage::tilde(&report.config_path)
@@ -621,7 +621,7 @@ mod tests {
     fn says_why_recording_is_unavailable() {
         assert!(render(&report(), &PLAIN).contains("recording         ScreenCast portal, WebM"));
         let mut bare = report();
-        bare.recording = Err("GStreamer is not installed".into());
+        bare.recording = Err(record::GstError::NotInstalled);
         assert!(
             render(&bare, &PLAIN)
                 .contains("recording         unavailable, GStreamer is not installed")
@@ -689,10 +689,13 @@ mod tests {
     #[test]
     fn warns_about_an_invalid_config() {
         let mut invalid = report();
-        invalid.config = Err("unknown token `{weekday}`".into());
+        invalid.config = Err(config::ConfigError::Migrate {
+            path: PathBuf::from("/etc/kiekje/config.toml"),
+            source: config::MigrateError::Newer(9),
+        });
         let text = render(&invalid, &PLAIN);
         assert!(text.contains("/etc/kiekje/config.toml (invalid)"));
-        assert!(text.contains("! The config can't be used, so defaults apply: unknown token"));
+        assert!(text.contains("! The config can't be used, so defaults apply: /etc/kiekje/config.toml: version 9 is newer"));
         assert!(text.contains("fix /etc/kiekje/config.toml or delete it"));
     }
 

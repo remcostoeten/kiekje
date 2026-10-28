@@ -11,7 +11,34 @@ use std::collections::HashMap;
 /// assert_eq!(css.trim(), "label { color: #ffffff; }");
 /// ```
 pub fn flatten(source: &str) -> Result<String, String> {
-    let (tokens, body) = split_root(source)?;
+    flatten_theme(source, false)
+}
+
+/// Flattens the sheet like [`flatten`] with the `:root.light` tokens laid over the `:root` ones.
+///
+/// Every token in `:root.light` must also exist in `:root`.
+///
+/// # Examples
+///
+/// ```ignore
+/// let css = flatten_light(":root { --fg: #fff; }\n:root.light { --fg: #000; }\nlabel { color: var(--fg); }")?;
+/// assert_eq!(css.trim(), "label { color: #000; }");
+/// ```
+pub fn flatten_light(source: &str) -> Result<String, String> {
+    flatten_theme(source, true)
+}
+
+fn flatten_theme(source: &str, light: bool) -> Result<String, String> {
+    let (source, overrides) = split_light(source)?;
+    let (mut tokens, body) = split_root(&source)?;
+    if light {
+        for (name, value) in overrides {
+            if !tokens.contains_key(&name) {
+                return Err(format!("`{name}` in :root.light is not defined in :root"));
+            }
+            tokens.insert(name, value);
+        }
+    }
     let mut resolved = HashMap::new();
     for name in tokens.keys() {
         resolve_token(name, &tokens, &mut resolved, &mut Vec::new())?;
@@ -19,6 +46,44 @@ pub fn flatten(source: &str) -> Result<String, String> {
     let text = substitute(&body, &resolved)?;
     mix_all(&text)
 }
+
+fn split_light(source: &str) -> Result<(String, HashMap<String, String>), String> {
+    let Some(start) = source.find(LIGHT_SELECTOR) else {
+        return Ok((source.to_string(), HashMap::new()));
+    };
+    let open = source[start..]
+        .find('{')
+        .map(|offset| start + offset)
+        .ok_or(":root.light has no block")?;
+    let close = source[open..]
+        .find('}')
+        .map(|offset| open + offset)
+        .ok_or(":root.light block is not closed")?;
+    let overrides = declarations(&source[open + 1..close], LIGHT_SELECTOR)?;
+    let rest = source[close + 1..].trim_start_matches(['\n', '\r']);
+    Ok((format!("{}{rest}", &source[..start]), overrides))
+}
+
+fn declarations(block: &str, owner: &str) -> Result<HashMap<String, String>, String> {
+    let mut tokens = HashMap::new();
+    for declaration in block.split(';') {
+        let declaration = declaration.trim();
+        if declaration.is_empty() {
+            continue;
+        }
+        let (name, value) = declaration
+            .split_once(':')
+            .ok_or_else(|| format!("bad {owner} declaration `{declaration}`"))?;
+        let name = name.trim();
+        if !name.starts_with("--") {
+            return Err(format!("`{name}` in {owner} is not a custom property"));
+        }
+        tokens.insert(name.to_string(), value.trim().to_string());
+    }
+    Ok(tokens)
+}
+
+const LIGHT_SELECTOR: &str = ":root.light";
 
 fn split_root(source: &str) -> Result<(HashMap<String, String>, String), String> {
     let Some(start) = source.find(":root") else {
@@ -32,21 +97,7 @@ fn split_root(source: &str) -> Result<(HashMap<String, String>, String), String>
         .find('}')
         .map(|offset| open + offset)
         .ok_or(":root block is not closed")?;
-    let mut tokens = HashMap::new();
-    for declaration in source[open + 1..close].split(';') {
-        let declaration = declaration.trim();
-        if declaration.is_empty() {
-            continue;
-        }
-        let (name, value) = declaration
-            .split_once(':')
-            .ok_or_else(|| format!("bad :root declaration `{declaration}`"))?;
-        let name = name.trim();
-        if !name.starts_with("--") {
-            return Err(format!("`{name}` in :root is not a custom property"));
-        }
-        tokens.insert(name.to_string(), value.trim().to_string());
-    }
+    let tokens = declarations(&source[open + 1..close], ":root")?;
     let rest = source[close + 1..].trim_start_matches(['\n', '\r']);
     Ok((tokens, format!("{}{rest}", &source[..start])))
 }
@@ -249,6 +300,25 @@ mod tests {
             css,
             "b { border-radius: 8px; box-shadow: inset 0 1px rgba(255, 255, 255, 0.06); }"
         );
+    }
+
+    #[test]
+    fn light_tokens_replace_root_tokens_and_leave_the_dark_sheet_alone() {
+        let source = ":root { --bg: #000; --fg: #fff; }\n:root.light { --bg: #fff; --fg: #000; }\nbox { background-color: var(--fg); }\n";
+        assert_eq!(
+            flatten(source).unwrap(),
+            "box { background-color: #fff; }\n"
+        );
+        assert_eq!(
+            flatten_light(source).unwrap(),
+            "box { background-color: #000; }\n"
+        );
+    }
+
+    #[test]
+    fn rejects_light_tokens_missing_from_root() {
+        let source = ":root { --fg: #fff; }\n:root.light { --bg: #000; }\nb { color: var(--fg); }";
+        assert!(flatten_light(source).is_err());
     }
 
     #[test]

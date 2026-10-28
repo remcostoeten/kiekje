@@ -10,6 +10,8 @@ use crate::storage;
 pub mod query;
 pub mod thumbs;
 
+const VIDEO_EXTENSIONS: [&str; 2] = ["webm", "mp4"];
+const GIF_EXTENSION: &str = "gif";
 const COLOUR_LIMIT: i64 = 200;
 const EMOJI_LIMIT: i64 = 32;
 
@@ -70,6 +72,41 @@ pub struct NewCapture {
     pub annotated: bool,
 }
 
+impl Capture {
+    /// Reports whether this entry is a recording rather than an image.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if capture.is_video() { return; }
+    /// ```
+    pub fn is_video(&self) -> bool {
+        is_video(&self.path)
+    }
+
+    /// Reports whether this entry is a GIF exported from a recording.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let badge = if capture.is_gif() { "GIF" } else { "" };
+    /// ```
+    pub fn is_gif(&self) -> bool {
+        is_gif(&self.path)
+    }
+
+    /// Reports whether this entry moves: a recording or a GIF, as opposed to a still image.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let editable = !capture.is_animated();
+    /// ```
+    pub fn is_animated(&self) -> bool {
+        self.is_video() || self.is_gif()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Colour {
     pub id: i64,
@@ -125,6 +162,36 @@ pub enum LibraryError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+/// Reports whether `path` is a recording, judged by its extension.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(library::is_video(Path::new("clip.webm")));
+/// ```
+pub fn is_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            VIDEO_EXTENSIONS
+                .iter()
+                .any(|video| extension.eq_ignore_ascii_case(video))
+        })
+}
+
+/// Reports whether `path` is a GIF, judged by its extension.
+///
+/// # Examples
+///
+/// ```ignore
+/// assert!(library::is_gif(Path::new("clip.gif")));
+/// ```
+pub fn is_gif(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(GIF_EXTENSION))
 }
 
 /// Reports whether an unsaved capture made at `created_us` is past its `keep_days` at `now_us`.
@@ -195,6 +262,7 @@ impl Library {
         let connection = Connection::open(path)?;
         connection.busy_timeout(std::time::Duration::from_secs(2))?;
         use_wal(&connection)?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
         let mut library = Self { connection };
         library.migrate()?;
         Ok(library)
@@ -355,7 +423,7 @@ impl Library {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
-                    eprintln!("kiekje: kept the unsaved capture {path}: {error}");
+                    warn!("kept the unsaved capture {path}: {error}");
                     continue;
                 }
             }
@@ -503,20 +571,25 @@ impl Library {
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
                 .collect::<Result<_, _>>()?
         };
+        let flips: Vec<(i64, String, bool)> = entries
+            .into_iter()
+            .filter_map(|(id, path, missing)| {
+                let gone = !Path::new(&path).is_file();
+                (gone != missing).then_some((id, path, gone))
+            })
+            .collect();
+        if flips.is_empty() {
+            return Ok(0);
+        }
         let transaction = self.connection.transaction()?;
-        let mut changed = 0;
-        for (id, path, missing) in entries {
-            let gone = !Path::new(&path).is_file();
-            if gone != missing {
-                transaction.execute(
-                    "UPDATE captures SET missing = ?1 WHERE id = ?2 AND path = ?3",
-                    params![gone, id, path],
-                )?;
-                changed += 1;
-            }
+        for (id, path, gone) in &flips {
+            transaction.execute(
+                "UPDATE captures SET missing = ?1 WHERE id = ?2 AND path = ?3",
+                params![gone, id, path],
+            )?;
         }
         transaction.commit()?;
-        Ok(changed)
+        Ok(flips.len())
     }
 
     /// Records a colour picked from the screen and returns its id.
@@ -655,7 +728,7 @@ fn row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Capture>> {
     let path: String = row.get(1)?;
     let bytes: i64 = row.get(5)?;
     let Some(mode) = CaptureMode::parse(&mode) else {
-        eprintln!("kiekje: skipped library entry {path} with unknown mode {mode}");
+        warn!("skipped library entry {path} with unknown mode {mode}");
         return Ok(None);
     };
     Ok(Some(Capture {
@@ -695,6 +768,16 @@ mod tests {
             unsaved: false,
             annotated: false,
         }
+    }
+
+    #[test]
+    fn recognises_recordings_by_extension() {
+        assert!(is_video(Path::new("/v/clip.webm")));
+        assert!(is_video(Path::new("/v/CLIP.MP4")));
+        assert!(!is_video(Path::new("/p/shot.png")));
+        assert!(!is_video(Path::new("/p/webm")));
+        assert!(is_gif(Path::new("/v/clip.GIF")));
+        assert!(!is_gif(Path::new("/v/clip.webm")));
     }
 
     #[test]
@@ -787,6 +870,21 @@ mod tests {
         assert_eq!(library.check_missing().unwrap(), 1);
         assert_eq!(names(&library), ["new.png", "mid.png", "old.png"]);
         assert_eq!(library.present().unwrap().len(), 3);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn checks_for_missing_files_without_writing_when_nothing_changed() {
+        let folder = scratch("quiet-check");
+        let mut library = Library::open(&folder.join("library.db")).unwrap();
+        std::fs::write(folder.join("a.png"), b"png").unwrap();
+        library.insert(&capture(&folder.join("a.png"), 1)).unwrap();
+        let other = Library::open(&folder.join("library.db")).unwrap();
+        other.connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(library.check_missing().unwrap(), 0);
+        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+        other.connection.execute_batch("ROLLBACK").unwrap();
         std::fs::remove_dir_all(folder).unwrap();
     }
 

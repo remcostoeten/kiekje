@@ -510,7 +510,7 @@ impl Document {
     /// ```
     pub fn apply(&mut self, edit: Edit) {
         if !edit.valid_for(self.shapes.len()) {
-            eprintln!("kiekje: dropped an edit for a shape that no longer exists");
+            warn!("dropped an edit for a shape that no longer exists");
             return;
         }
         if self.saved > self.done.len() {

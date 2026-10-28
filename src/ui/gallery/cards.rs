@@ -92,16 +92,32 @@ fn factory(gallery: &Rc<Gallery>, shape: Shape) -> gtk::SignalListItemFactory {
             return;
         };
         let details = gallery.details.borrow();
-        let capture = details.get(&path);
+        let capture = details.get(path.as_str());
         name.set_label(
             &capture
                 .and_then(|capture| capture.path.file_name())
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         );
-        meta.set_label(&capture.map(meta_text).unwrap_or_default());
-        badge.set_visible(capture.is_some_and(|capture| capture.unsaved && !capture.missing));
-        item.set_accessible_label(&name.label());
+        name.set_tooltip_text(Some(&name.label()));
+        meta.set_label(
+            &capture
+                .map(|capture| meta_text(capture))
+                .unwrap_or_default(),
+        );
+        match capture.and_then(|capture| badge_text(capture)) {
+            Some((label, tooltip)) => {
+                badge.set_label(label);
+                badge.set_tooltip_text(Some(tooltip));
+                badge.set_visible(true);
+            }
+            None => badge.set_visible(false),
+        }
+        let accessible_name = match capture.and_then(|capture| badge_text(capture)) {
+            Some((badge, _)) => format!("{}, {badge}", name.label()),
+            None => name.label().to_string(),
+        };
+        item.set_accessible_label(&accessible_name);
         drop(details);
         gallery.thumbnail(item, &picture, path);
     });
@@ -121,7 +137,7 @@ fn open_at(model: Option<gtk::SelectionModel>, position: u32) {
         if let Err(error) =
             gio::AppInfo::launch_default_for_uri_future(&uri, gio::AppLaunchContext::NONE).await
         {
-            eprintln!("kiekje: could not open {uri}: {error}");
+            error!("could not open {uri}: {error}");
         }
     });
 }
@@ -169,10 +185,8 @@ fn item_widget(shape: Shape) -> gtk::Box {
     );
     text.append(
         &gtk::Label::builder()
-            .label("Unsaved")
             .halign(gtk::Align::Start)
             .visible(false)
-            .tooltip_text("Kept in the cache and deleted after a few days. Keep moves it to the capture folder.")
             .css_classes(["badge"])
             .build(),
     );
@@ -261,6 +275,10 @@ fn meta_text(capture: &Capture) -> String {
         .map(String::from)
         .unwrap_or_default();
     let size = size_text(capture.bytes);
+    if capture.width == 0 || capture.height == 0 {
+        let kind = kind_text(&capture.path).unwrap_or_default();
+        return format!("{kind} {size}  {date}");
+    }
     match kind_text(&capture.path) {
         Some(kind) => format!(
             "{} × {}  {kind} {size}  {date}",
@@ -268,6 +286,25 @@ fn meta_text(capture: &Capture) -> String {
         ),
         None => format!("{} × {}  {size}  {date}", capture.width, capture.height),
     }
+}
+
+fn badge_text(capture: &Capture) -> Option<(&'static str, &'static str)> {
+    if capture.unsaved && !capture.missing {
+        return Some((
+            "Unsaved",
+            "Kept in the cache and deleted after a few days. Keep moves it to the capture folder.",
+        ));
+    }
+    if capture.is_gif() {
+        return Some(("GIF", "A looping GIF exported from a recording."));
+    }
+    if capture.is_video() {
+        return Some((
+            "Video",
+            "A screen recording. Export as GIF (Ctrl+G) makes a looping GIF of it.",
+        ));
+    }
+    None
 }
 
 fn kind_text(path: &Path) -> Option<String> {
@@ -308,6 +345,27 @@ mod tests {
         assert_eq!(size_text(245_300), "245 KB");
         assert_eq!(size_text(3_450_000), "3.5 MB");
         assert_eq!(size_text(12_000_000_000_000), "12000 GB");
+    }
+
+    #[test]
+    fn badges_unsaved_captures_gifs_and_recordings() {
+        let capture = |path: &str, unsaved: bool| Capture {
+            id: 1,
+            path: path.into(),
+            mode: crate::capture::CaptureMode::Fullscreen,
+            width: 1,
+            height: 1,
+            bytes: 1,
+            created_us: 0,
+            missing: false,
+            unsaved,
+            annotated: false,
+        };
+        let label = |path: &str, unsaved: bool| badge_text(&capture(path, unsaved)).map(|b| b.0);
+        assert_eq!(label("/p/shot.png", false), None);
+        assert_eq!(label("/p/shot.png", true), Some("Unsaved"));
+        assert_eq!(label("/v/clip.gif", false), Some("GIF"));
+        assert_eq!(label("/v/clip.webm", false), Some("Video"));
     }
 
     #[test]

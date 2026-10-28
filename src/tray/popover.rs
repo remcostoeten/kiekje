@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -6,16 +6,19 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
+use crate::capture::monitors::{gdk_monitors, monitor_info};
 use crate::capture::{Availability, CaptureMode, LogicalRect};
+use crate::fuzzy::Needle;
 use crate::library::{self, Library, thumbs};
 use crate::overlay;
 use crate::ui;
+use crate::ui::widgets::{keycap, keycaps};
 
 const RECENT_COUNT: usize = 4;
-const THUMBNAIL_WIDTH: i32 = 64;
+const THUMBNAIL_WIDTH: i32 = 70;
 const THUMBNAIL_HEIGHT: i32 = 44;
 const MARGIN: i32 = 8;
-const PANEL_WIDTH: i32 = 320;
+const PANEL_WIDTH: i32 = 328;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
@@ -122,16 +125,21 @@ pub fn show(
         .title("Kiekje")
         .css_classes(["kiekje-popover"])
         .build();
-    let monitors = crate::app::gdk_monitors();
+    let monitors = gdk_monitors();
     let rects: Vec<LogicalRect> = monitors
         .iter()
-        .map(|monitor| crate::app::monitor_info(monitor).logical)
+        .map(|monitor| monitor_info(monitor).logical)
         .collect();
     let placement = place(click, &rects);
 
     let on_pick: PickCallback = Rc::new(on_pick);
     let picked = Rc::new(RefCell::new(None::<Pick>));
-    let (panel, recent) = panel(&window, &content, &on_pick, &picked);
+    let Built {
+        panel,
+        recent,
+        entry,
+        palette,
+    } = build(&window, &content, &on_pick, &picked);
     window.set_child(Some(&panel));
     if overlay::uses_layer_shell() {
         cover(&window, monitors.get(placement.monitor));
@@ -142,15 +150,30 @@ pub fn show(
     }
 
     let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let key_window = window.downgrade();
-    keys.connect_key_pressed(move |_, key, _, _| {
-        if key != gdk::Key::Escape {
-            return glib::Propagation::Proceed;
+    let key_entry = entry.clone();
+    let key_palette = palette.clone();
+    keys.connect_key_pressed(move |_, key, _, _| match key {
+        gdk::Key::Down => {
+            key_palette.step(true);
+            glib::Propagation::Stop
         }
-        if let Some(window) = key_window.upgrade() {
-            window.close();
+        gdk::Key::Up => {
+            key_palette.step(false);
+            glib::Propagation::Stop
         }
-        glib::Propagation::Stop
+        gdk::Key::Escape => {
+            if key_entry.text().is_empty() {
+                if let Some(window) = key_window.upgrade() {
+                    window.close();
+                }
+            } else {
+                key_entry.set_text("");
+            }
+            glib::Propagation::Stop
+        }
+        _ => glib::Propagation::Proceed,
     });
     window.add_controller(keys);
 
@@ -168,6 +191,7 @@ pub fn show(
     });
 
     window.present();
+    entry.grab_focus();
     load_recent(&recent);
     window
 }
@@ -221,87 +245,272 @@ fn close_on_outside_click(window: &gtk::Window, panel: &gtk::Box) {
     window.add_controller(click);
 }
 
-fn panel(
+struct Built {
+    panel: gtk::Box,
+    recent: gtk::Box,
+    entry: gtk::Entry,
+    palette: Rc<Palette>,
+}
+
+struct ActionRow {
+    button: gtk::Button,
+    title: &'static str,
+    section: usize,
+}
+
+struct Palette {
+    rows: Vec<ActionRow>,
+    headers: Vec<gtk::Label>,
+    no_match: gtk::Label,
+    selected: Cell<Option<usize>>,
+}
+
+impl Palette {
+    fn select(&self, index: Option<usize>) {
+        for row in &self.rows {
+            row.button.remove_css_class("selected");
+        }
+        if let Some(row) = index.and_then(|index| self.rows.get(index)) {
+            row.button.add_css_class("selected");
+        }
+        self.selected.set(index);
+    }
+
+    fn pickable(&self) -> Vec<usize> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.button.is_visible() && row.button.is_sensitive())
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn step(&self, forward: bool) {
+        let pickable = self.pickable();
+        let Some(last) = pickable.len().checked_sub(1) else {
+            return;
+        };
+        let at = self
+            .selected
+            .get()
+            .and_then(|current| pickable.iter().position(|&index| index == current));
+        let next = match (at, forward) {
+            (Some(at), true) => (at + 1).min(last),
+            (Some(at), false) => at.saturating_sub(1),
+            (None, true) => 0,
+            (None, false) => last,
+        };
+        self.select(Some(pickable[next]));
+    }
+
+    fn filter(&self, query: &str) {
+        let needle = Needle::new(query);
+        let everything = query.trim().is_empty();
+        for row in &self.rows {
+            row.button
+                .set_visible(everything || needle.matches(row.title));
+        }
+        for (section, header) in self.headers.iter().enumerate() {
+            header.set_visible(
+                self.rows
+                    .iter()
+                    .any(|row| row.section == section && row.button.is_visible()),
+            );
+        }
+        self.no_match
+            .set_visible(self.rows.iter().all(|row| !row.button.is_visible()));
+        self.select(self.pickable().first().copied());
+    }
+
+    fn activate(&self) {
+        let picked = self.selected.get().and_then(|index| self.rows.get(index));
+        if let Some(row) = picked
+            && row.button.is_sensitive()
+        {
+            row.button.emit_clicked();
+        }
+    }
+}
+
+fn build(
     window: &gtk::Window,
     content: &Content,
     on_pick: &PickCallback,
     picked: &Rc<RefCell<Option<Pick>>>,
-) -> (gtk::Box, gtk::Box) {
+) -> Built {
     let panel = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
         .width_request(PANEL_WIDTH)
         .css_classes(["panel", "popover-panel"])
         .build();
-    panel.append(&caps("Kiekje"));
 
-    let actions = [
-        (CaptureMode::Region, "Capture region", "primary"),
-        (CaptureMode::Fullscreen, "Capture every screen", "outline"),
-        (CaptureMode::Window, "Capture window", "outline"),
-        (CaptureMode::Repeat, "Repeat last region", "outline"),
-    ];
-    for (mode, label, kind) in actions {
-        let shortcut = content
+    let filter = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .css_classes(["pop-filter"])
+        .build();
+    filter.append(&icon("kiekje-search-symbolic"));
+    let entry = gtk::Entry::builder()
+        .placeholder_text("Search actions")
+        .has_frame(false)
+        .hexpand(true)
+        .build();
+    entry.update_property(&[gtk::accessible::Property::Label("Search actions")]);
+    filter.append(&entry);
+    filter.append(&keycap("Esc"));
+    panel.append(&filter);
+
+    let list = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(1)
+        .css_classes(["pop-list"])
+        .build();
+    let mut rows = Vec::new();
+    let mut headers = Vec::new();
+
+    let capture_header = section_title("Capture");
+    list.append(&capture_header);
+    headers.push(capture_header);
+    let shortcut_of = |mode: CaptureMode| {
+        content
             .shortcuts
             .iter()
             .find(|(bound, _)| *bound == mode)
-            .map(|(_, trigger)| trigger.as_str());
-        let button = action_button(label, shortcut, kind);
-        connect_pick(&button, window, picked, Pick::Capture(mode));
-        if let (CaptureMode::Window, Availability::Unavailable(reason)) = (mode, content.window) {
+            .map(|(_, trigger)| trigger.as_str())
+    };
+    let capture_actions = [
+        (
+            "Capture region",
+            "kiekje-region-symbolic",
+            shortcut_of(CaptureMode::Region),
+            Pick::Capture(CaptureMode::Region),
+        ),
+        (
+            "Annotate region",
+            "kiekje-pen-symbolic",
+            None,
+            Pick::Annotate,
+        ),
+        (
+            "Capture every screen",
+            "kiekje-screens-symbolic",
+            shortcut_of(CaptureMode::Fullscreen),
+            Pick::Capture(CaptureMode::Fullscreen),
+        ),
+        (
+            "Capture window",
+            "kiekje-window-symbolic",
+            shortcut_of(CaptureMode::Window),
+            Pick::Capture(CaptureMode::Window),
+        ),
+        (
+            "Repeat last region",
+            "kiekje-repeat-symbolic",
+            shortcut_of(CaptureMode::Repeat),
+            Pick::Capture(CaptureMode::Repeat),
+        ),
+    ];
+    for (title, icon_name, shortcut, pick) in capture_actions {
+        let button = action(icon_name, title, shortcut);
+        connect_pick(&button, window, picked, pick);
+        if let (Pick::Capture(CaptureMode::Window), Availability::Unavailable(reason)) =
+            (pick, content.window)
+        {
             button.set_sensitive(false);
             button.set_tooltip_text(Some(reason));
         }
-        panel.append(&button);
-        if mode == CaptureMode::Region {
-            let annotate = action_button("Annotate region", None, "outline");
-            connect_pick(&annotate, window, picked, Pick::Annotate);
-            panel.append(&annotate);
-        }
+        list.append(&button);
+        rows.push(ActionRow {
+            button,
+            title,
+            section: 0,
+        });
     }
-    let record_label = if content.recording {
-        "Stop recording"
-    } else {
-        "Record screen"
-    };
-    let record = action_button(record_label, None, "outline");
-    connect_pick(&record, window, picked, Pick::Record);
-    panel.append(&record);
 
+    let record_header = section_title("Record");
+    list.append(&record_header);
+    headers.push(record_header);
+    let (record_title, record_icon) = if content.recording {
+        ("Stop recording", "kiekje-stop-symbolic")
+    } else {
+        ("Record screen", "kiekje-record-symbolic")
+    };
+    let record = action(record_icon, record_title, None);
+    if content.recording {
+        record.add_css_class("recording");
+    }
+    connect_pick(&record, window, picked, Pick::Record);
+    list.append(&record);
+    rows.push(ActionRow {
+        button: record,
+        title: record_title,
+        section: 1,
+    });
+
+    let no_match = gtk::Label::builder()
+        .label("No matching actions")
+        .visible(false)
+        .css_classes(["no-match"])
+        .build();
+    list.append(&no_match);
+    panel.append(&list);
+
+    let palette = Rc::new(Palette {
+        rows,
+        headers,
+        no_match,
+        selected: Cell::new(None),
+    });
+    for (index, row) in palette.rows.iter().enumerate() {
+        let motion = gtk::EventControllerMotion::new();
+        let hovered = palette.clone();
+        motion.connect_enter(move |_, _, _| hovered.select(Some(index)));
+        row.button.add_controller(motion);
+    }
+    palette.select(palette.pickable().first().copied());
+    let changed = palette.clone();
+    entry.connect_changed(move |entry| changed.filter(&entry.text()));
+    let activated = palette.clone();
+    entry.connect_activate(move |_| activated.activate());
+
+    let recent_block = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .css_classes(["recent"])
+        .build();
     let recent_header = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
         .build();
-    let recent_label = caps("Recent");
+    let recent_label = section_title("Recent");
     recent_label.set_hexpand(true);
     recent_header.append(&recent_label);
-    let gallery = action_button("Gallery", None, "ghost");
+    let gallery = ghost("kiekje-open-symbolic", "Gallery");
     gallery.add_css_class("compact");
-    gallery.set_hexpand(false);
     connect_pick(&gallery, window, picked, Pick::Gallery);
     recent_header.append(&gallery);
-    panel.append(&recent_header);
+    recent_block.append(&recent_header);
     let recent = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
         .homogeneous(true)
         .build();
-    panel.append(&recent_strip(&recent));
+    recent_block.append(&recent_strip(&recent));
+    panel.append(&recent_block);
 
-    panel.append(&rule());
     let footer = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .spacing(6)
-        .homogeneous(true)
+        .spacing(2)
+        .css_classes(["pop-foot"])
         .build();
-    let folder = action_button("Folder", None, "ghost");
+    let folder = ghost("kiekje-folder-symbolic", "Folder");
     connect_pick(&folder, window, picked, Pick::OpenCaptures);
     footer.append(&folder);
-    let settings = action_button("Settings", None, "ghost");
+    let settings = ghost("kiekje-sliders-symbolic", "Settings");
     connect_pick(&settings, window, picked, Pick::Settings);
     footer.append(&settings);
-    let quit = action_button("Quit", None, "ghost");
+    footer.append(&gtk::Box::builder().hexpand(true).build());
+    let quit = ghost("kiekje-power-symbolic", "Quit");
+    quit.add_css_class("quit");
     let quit_pick = on_pick.clone();
     let quit_window = window.downgrade();
     quit.connect_clicked(move |_| {
@@ -312,7 +521,14 @@ fn panel(
     });
     footer.append(&quit);
     panel.append(&footer);
-    (panel, recent)
+    panel.append(&hints());
+
+    Built {
+        panel,
+        recent,
+        entry,
+        palette,
+    }
 }
 
 fn connect_pick(
@@ -331,26 +547,48 @@ fn connect_pick(
     });
 }
 
-fn caps(text: &str) -> gtk::Label {
+fn section_title(text: &str) -> gtk::Label {
     gtk::Label::builder()
         .label(text)
         .xalign(0.0)
-        .css_classes(["caps"])
+        .css_classes(["section-title"])
         .build()
 }
 
-fn rule() -> gtk::Separator {
-    gtk::Separator::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .css_classes(["rule"])
-        .build()
+fn icon(name: &str) -> gtk::Image {
+    gtk::Image::builder().icon_name(name).pixel_size(16).build()
 }
 
-fn action_button(label: &str, shortcut: Option<&str>, kind: &str) -> gtk::Button {
-    let row = gtk::Box::builder()
+fn hints() -> gtk::Box {
+    let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(12)
+        .css_classes(["pop-hints"])
         .build();
+    for (keys, what) in [
+        (&["↑", "↓"][..], "move"),
+        (&["↵"][..], "run"),
+        (&["Esc"][..], "close"),
+    ] {
+        let group = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(5)
+            .build();
+        for key in keys {
+            group.append(&keycap(key));
+        }
+        group.append(&gtk::Label::new(Some(what)));
+        bar.append(&group);
+    }
+    bar
+}
+
+fn action(icon_name: &str, label: &str, shortcut: Option<&str>) -> gtk::Button {
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(10)
+        .build();
+    row.append(&icon(icon_name));
     row.append(
         &gtk::Label::builder()
             .label(label)
@@ -360,17 +598,29 @@ fn action_button(label: &str, shortcut: Option<&str>, kind: &str) -> gtk::Button
             .build(),
     );
     if let Some(shortcut) = shortcut {
-        row.append(
-            &gtk::Label::builder()
-                .label(shortcut)
-                .css_classes(["shortcut"])
-                .build(),
-        );
+        row.append(&keycaps(shortcut));
     }
-    gtk::Button::builder()
+    let button = gtk::Button::builder()
         .child(&row)
-        .css_classes([kind])
-        .build()
+        .css_classes(["act"])
+        .build();
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button
+}
+
+fn ghost(icon_name: &str, label: &str) -> gtk::Button {
+    let row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    row.append(&icon(icon_name));
+    row.append(&gtk::Label::new(Some(label)));
+    let button = gtk::Button::builder()
+        .child(&row)
+        .css_classes(["ghost"])
+        .build();
+    button.update_property(&[gtk::accessible::Property::Label(label)]);
+    button
 }
 
 fn recent_strip(row: &gtk::Box) -> gtk::ScrolledWindow {
@@ -392,7 +642,7 @@ fn load_recent(row: &gtk::Box) {
                 .filter_map(|path| match thumbs::texture(&cache, &path) {
                     Ok(texture) => Some((path, texture)),
                     Err(error) => {
-                        eprintln!("kiekje: no thumbnail: {error}");
+                        warn!("no thumbnail: {error}");
                         None
                     }
                 })
@@ -403,7 +653,7 @@ fn load_recent(row: &gtk::Box) {
             return;
         };
         let thumbnails = loaded.unwrap_or_else(|_| {
-            eprintln!("kiekje: the thumbnail worker stopped");
+            error!("the thumbnail worker stopped");
             Vec::new()
         });
         if thumbnails.is_empty() {
@@ -439,6 +689,9 @@ fn thumbnail_button(path: PathBuf, texture: &gdk::Texture) -> gtk::Button {
         .tooltip_text(name.as_str())
         .css_classes(["thumbnail"])
         .build();
+    button.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Open recent capture {name}"
+    ))]);
     button.connect_clicked(move |button| {
         let uri = gio::File::for_path(&path).uri();
         if let Some(window) = button.root().and_downcast::<gtk::Window>() {
@@ -448,7 +701,7 @@ fn thumbnail_button(path: PathBuf, texture: &gdk::Texture) -> gtk::Button {
             if let Err(error) =
                 gio::AppInfo::launch_default_for_uri_future(&uri, gio::AppLaunchContext::NONE).await
             {
-                eprintln!("kiekje: could not open {uri}: {error}");
+                error!("could not open {uri}: {error}");
             }
         });
     });
@@ -463,7 +716,7 @@ fn recent_captures() -> Vec<PathBuf> {
             .filter(|path| path.is_file())
             .collect(),
         Err(error) => {
-            eprintln!("kiekje: recent captures unavailable: {error}");
+            warn!("recent captures unavailable: {error}");
             Vec::new()
         }
     }

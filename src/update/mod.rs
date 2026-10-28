@@ -130,7 +130,7 @@ pub fn check_now(state_path: &Path) -> Result<Outcome, UpdateError> {
         }
     });
     if let Err(error) = recorded {
-        eprintln!("kiekje: the update check result was not stored: {error}");
+        warn!("the update check result was not stored: {error}");
     }
     Ok(found)
 }
@@ -173,10 +173,10 @@ pub fn automatic(config_path: &Path, state_path: &Path) -> Automatic {
         };
     });
     if let Err(error) = &found {
-        eprintln!("kiekje: could not check for updates: {error}");
+        error!("could not check for updates: {error}");
     }
     if let Err(error) = recorded {
-        eprintln!("kiekje: the update check result was not stored: {error}");
+        warn!("the update check result was not stored: {error}");
     }
     result
 }

@@ -1,6 +1,10 @@
+#[macro_use]
+mod log;
+
 mod app;
 mod backends;
 mod capture;
+mod cli;
 mod clipboard;
 mod config;
 mod desktop_file;
@@ -8,6 +12,7 @@ mod doctor;
 mod editor;
 mod fuzzy;
 mod help;
+mod ids;
 mod library;
 mod mascot;
 mod notify;
@@ -24,14 +29,11 @@ mod ui;
 mod update;
 mod upload;
 
-use std::path::PathBuf;
-use std::time::Duration;
-
 use gtk::glib;
 
-use app::{Command, Request};
+use app::Command;
 use backends::windows;
-use capture::{Availability, BackendChoice, CaptureMode};
+use cli::{check_available, is_help_request, parse_capture, parse_pin};
 use help::Topic;
 
 fn main() -> glib::ExitCode {
@@ -49,13 +51,13 @@ fn main() -> glib::ExitCode {
                 match check_available(request.mode, || windows::availability(windows::detect())) {
                     Ok(()) => app::run(Command::Capture(request)),
                     Err(message) => {
-                        eprintln!("kiekje: {message}");
+                        warn!("{message}");
                         glib::ExitCode::FAILURE
                     }
                 }
             }
             Err(message) => {
-                help::print_error(&message, Topic::Capture);
+                help::print_error(&message.to_string(), Topic::Capture);
                 glib::ExitCode::FAILURE
             }
         },
@@ -66,7 +68,7 @@ fn main() -> glib::ExitCode {
         Some("pin") => match parse_pin(&arguments[1..]) {
             Ok(path) => app::run(Command::Pin(path)),
             Err(message) => {
-                help::print_error(&message, Topic::Overview);
+                help::print_error(&message.to_string(), Topic::Overview);
                 glib::ExitCode::FAILURE
             }
         },
@@ -110,178 +112,9 @@ fn main() -> glib::ExitCode {
 fn pin_mmap_threshold() {
     const THRESHOLD: libc::c_int = 128 * 1024;
     if unsafe { libc::mallopt(libc::M_MMAP_THRESHOLD, THRESHOLD) } == 0 {
-        eprintln!("kiekje: could not pin the mmap threshold");
+        error!("could not pin the mmap threshold");
     }
 }
 
 #[cfg(not(target_env = "gnu"))]
 fn pin_mmap_threshold() {}
-
-const MAX_DELAY_SECONDS: u64 = 60;
-
-fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, String> {
-    let mut request = Request {
-        mode: CaptureMode::Region,
-        backend: BackendChoice::Auto,
-        save: true,
-        edit: false,
-        delay: Duration::ZERO,
-        trigger_us,
-    };
-    let mut remaining = arguments.iter();
-    while let Some(argument) = remaining.next() {
-        match argument.as_str() {
-            "--no-save" => request.save = false,
-            "--edit" => request.edit = true,
-            "--backend" => {
-                let value = remaining.next().ok_or("--backend needs a value")?;
-                request.backend =
-                    BackendChoice::parse(value).ok_or(format!("unknown backend `{value}`"))?;
-            }
-            "--delay" => {
-                let value = remaining.next().ok_or("--delay needs a value")?;
-                request.delay = parse_delay(value)?;
-            }
-            value => {
-                request.mode = CaptureMode::parse(value).ok_or(format!("unknown mode `{value}`"))?
-            }
-        }
-    }
-    Ok(request)
-}
-
-fn check_available(mode: CaptureMode, window: impl FnOnce() -> Availability) -> Result<(), String> {
-    if mode != CaptureMode::Window {
-        return Ok(());
-    }
-    match window() {
-        Availability::Available => Ok(()),
-        Availability::Unavailable(reason) => {
-            Err(format!("window capture is unavailable: {reason}"))
-        }
-    }
-}
-
-fn parse_delay(value: &str) -> Result<Duration, String> {
-    value
-        .parse::<u64>()
-        .ok()
-        .filter(|seconds| *seconds <= MAX_DELAY_SECONDS)
-        .map(Duration::from_secs)
-        .ok_or(format!(
-            "--delay takes whole seconds from 0 to {MAX_DELAY_SECONDS}, not `{value}`"
-        ))
-}
-
-fn parse_pin(arguments: &[String]) -> Result<PathBuf, String> {
-    let [path] = arguments else {
-        return Err("pin takes the path of one image".into());
-    };
-    let absolute = std::path::absolute(path)
-        .map_err(|error| format!("could not resolve `{path}`: {error}"))?;
-    if !absolute.is_file() {
-        return Err(format!("`{path}` is not a file"));
-    }
-    Ok(absolute)
-}
-
-fn is_help_request(arguments: &[String]) -> bool {
-    arguments
-        .iter()
-        .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parse(arguments: &[&str]) -> Result<Request, String> {
-        let arguments: Vec<String> = arguments
-            .iter()
-            .map(|argument| (*argument).into())
-            .collect();
-        parse_capture(&arguments, 0)
-    }
-
-    #[test]
-    fn captures_a_region_now_by_default() {
-        let request = parse(&[]).unwrap();
-        assert_eq!(request.mode, CaptureMode::Region);
-        assert_eq!(request.delay, Duration::ZERO);
-        assert!(request.save);
-    }
-
-    #[test]
-    fn parses_a_delayed_repeat_of_the_last_region() {
-        let request = parse(&["repeat", "--delay", "5", "--no-save"]).unwrap();
-        assert_eq!(request.mode, CaptureMode::Repeat);
-        assert_eq!(request.delay, Duration::from_secs(5));
-        assert!(!request.save);
-    }
-
-    #[test]
-    fn parses_window_capture_with_its_flags() {
-        let request = parse(&["window", "--edit", "--no-save"]).unwrap();
-        assert_eq!(request.mode, CaptureMode::Window);
-        assert!(request.edit);
-        assert!(!request.save);
-        assert_eq!(
-            parse(&["--delay", "2", "window"]).unwrap().mode,
-            CaptureMode::Window
-        );
-        assert_eq!(
-            parse(&["windows"]).err().as_deref(),
-            Some("unknown mode `windows`")
-        );
-    }
-
-    #[test]
-    fn refuses_window_capture_where_the_session_reports_no_windows() {
-        let unavailable = || Availability::Unavailable("no window source");
-        assert_eq!(
-            check_available(CaptureMode::Window, unavailable)
-                .err()
-                .as_deref(),
-            Some("window capture is unavailable: no window source")
-        );
-        assert!(check_available(CaptureMode::Window, || Availability::Available).is_ok());
-    }
-
-    #[test]
-    fn checks_window_support_only_for_window_capture() {
-        for mode in [
-            CaptureMode::Region,
-            CaptureMode::Fullscreen,
-            CaptureMode::Repeat,
-        ] {
-            assert!(check_available(mode, || panic!("probed for {mode:?}")).is_ok());
-        }
-    }
-
-    #[test]
-    fn asks_for_the_editor_with_edit() {
-        assert!(parse(&["--edit"]).unwrap().edit);
-        assert!(!parse(&[]).unwrap().edit);
-    }
-
-    #[test]
-    fn pins_one_existing_file_by_its_absolute_path() {
-        let manifest = env!("CARGO_MANIFEST_DIR");
-        let path = parse_pin(&[format!("{manifest}/Cargo.toml")]).unwrap();
-        assert!(path.is_absolute());
-        assert!(parse_pin(&[]).is_err());
-        assert!(parse_pin(&[format!("{manifest}/missing.png")]).is_err());
-        assert!(parse_pin(&["a.png".into(), "b.png".into()]).is_err());
-    }
-
-    #[test]
-    fn rejects_a_delay_that_is_not_whole_seconds_in_range() {
-        for value in ["-1", "1.5", "61", "soon"] {
-            assert!(parse(&["--delay", value]).is_err(), "{value}");
-        }
-        assert_eq!(
-            parse(&["--delay"]).err().as_deref(),
-            Some("--delay needs a value")
-        );
-    }
-}

@@ -36,10 +36,19 @@ pub(super) fn append(page: &gtk::Box, window: &gtk::Window, keys: DrawingKeys) -
             .label(keys.get(action).label())
             .css_classes(["trigger"])
             .build();
+        trigger.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{}: {}",
+            action.label(),
+            keys.get(action).label()
+        ))]);
         let reset = gtk::Button::builder()
             .label("Reset")
             .css_classes(["ghost", "optional"])
             .build();
+        reset.update_property(&[gtk::accessible::Property::Label(&format!(
+            "Reset {}",
+            action.label()
+        ))]);
         let controls = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(8)
@@ -138,6 +147,10 @@ impl Panel {
         self.complain("");
         if let Some((_, button)) = self.buttons.iter().find(|(each, _)| *each == action) {
             button.set_label("Press a key");
+            button.update_property(&[gtk::accessible::Property::Label(&format!(
+                "{}: press a key",
+                action.label()
+            ))]);
             button.add_css_class("recording");
         }
     }
@@ -154,7 +167,12 @@ impl Panel {
         let keys = self.keys.borrow();
         for (action, button) in &self.buttons {
             if self.recording.get() != Some(*action) {
-                button.set_label(&keys.get(*action).label());
+                let key = keys.get(*action).label();
+                button.set_label(&key);
+                button.update_property(&[gtk::accessible::Property::Label(&format!(
+                    "{}: {key}",
+                    action.label()
+                ))]);
             }
         }
         for (action, reset) in &self.resets {

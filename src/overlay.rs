@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, gio, glib, graphene, gsk, pango};
+use gtk::{gdk, glib, graphene, gsk};
 use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
+mod keyboard;
 mod magnifier;
 mod precision;
 
@@ -19,7 +20,7 @@ use crate::capture::mapping::{
 use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::config;
 use crate::editor::{Ending, Finish, Inline};
-use crate::output::{self, Image};
+use crate::output::Image;
 use crate::ui;
 
 mod snap;
@@ -27,7 +28,7 @@ mod unplug;
 
 use snap::Snap;
 
-const ACCENT: gdk::RGBA = gdk::RGBA::new(254.0 / 255.0, 81.0 / 255.0, 1.0 / 255.0, 1.0);
+const ACCENT: gdk::RGBA = gdk::RGBA::new(123.0 / 255.0, 126.0 / 255.0, 246.0 / 255.0, 1.0);
 const DIM: gdk::RGBA = gdk::RGBA::new(0.0, 0.0, 0.0, 0.45);
 const LABEL_BACKGROUND: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 10.0 / 255.0, 0.9);
 const LABEL_TEXT: gdk::RGBA = gdk::RGBA::new(237.0 / 255.0, 237.0 / 255.0, 237.0 / 255.0, 1.0);
@@ -50,6 +51,7 @@ pub struct Selection {
 
 pub enum Outcome {
     Selected(Selection),
+    Saved(crate::notify::Notice),
     Edited {
         selection: Selection,
         image: Image,
@@ -129,6 +131,7 @@ struct Shared {
     mode: CaptureMode,
     edit: bool,
     snap: Snap,
+    keyboard: Cell<keyboard::State>,
     drag: RefCell<Option<Drag>>,
     chosen: Cell<Option<LogicalRect>>,
     inline: RefCell<Option<Inline>>,
@@ -189,6 +192,7 @@ pub fn show(
         mode: options.mode,
         edit: options.edit,
         snap: Snap::new(windows, &logical),
+        keyboard: Cell::new(keyboard::State::default()),
         drag: RefCell::new(None),
         chosen: Cell::new(None),
         inline: RefCell::new(None),
@@ -225,7 +229,7 @@ pub fn show(
                     .connector()
                     .is_some_and(|name| name == frame.monitor.connector)
         }) else {
-            eprintln!("kiekje: no GDK monitor for {}", frame.monitor.connector);
+            warn!("no GDK monitor for {}", frame.monitor.connector);
             continue;
         };
         build_surface(app, &shared, frame_index, monitor);
@@ -290,8 +294,8 @@ pub fn warm_up() {
         }
     }
     window.destroy();
-    println!(
-        "kiekje: overlay warmed up in {:.1} ms",
+    info!(
+        "overlay warmed up in {:.1} ms",
         (glib::monotonic_time() - started) as f64 / 1000.0
     );
 }
@@ -302,7 +306,6 @@ fn build_surface(
     frame_index: usize,
     monitor: &gdk::Monitor,
 ) {
-    let frame = &shared.frames[frame_index];
     let window = gtk::Window::builder()
         .application(app)
         .decorated(false)
@@ -313,7 +316,7 @@ fn build_surface(
         window.fullscreen_on_monitor(monitor);
     }
 
-    let picture = gtk::Picture::for_paintable(&frame.texture());
+    let picture = gtk::Picture::for_paintable(&Frame::shared_texture(&shared.frames, frame_index));
     picture.set_content_fit(gtk::ContentFit::Fill);
     picture.set_can_shrink(true);
 
@@ -452,6 +455,9 @@ fn build_surface(
         if key_shared.chosen.get().is_some() || key_shared.drag.borrow().is_some() {
             return glib::Propagation::Proceed;
         }
+        if keyboard::press(&key_shared, key, state) {
+            return glib::Propagation::Stop;
+        }
         if key_shared.magnifier.key(key, state, &key_shared.frames) {
             for area in key_shared.areas.borrow().iter() {
                 area.layer.queue_draw();
@@ -506,6 +512,7 @@ fn paint(shared: &Shared, frame_index: usize, widget: &gtk::Widget, snapshot: &g
         return;
     }
     paint_selection(shared, frame_index, widget, snapshot);
+    keyboard::paint(shared, frame_index, snapshot);
     if shared.chosen.get().is_none() {
         shared
             .magnifier
@@ -524,7 +531,11 @@ fn paint_selection(
     let moved = drag
         .as_ref()
         .filter(|drag| drag.moved() && !picks_windows(shared));
-    let (rect, dragged_on) = match (moved, shared.chosen.get().or(shared.snap.hovered())) {
+    let preview = shared.keyboard.get().preview;
+    let (rect, dragged_on) = match (
+        moved,
+        shared.chosen.get().or(preview).or(shared.snap.hovered()),
+    ) {
         (Some(drag), _) => (
             rect_from_drag(drag.start, drag.current),
             Some(drag.frame_index),
@@ -605,9 +616,7 @@ fn paint_size_label(
     height: f32,
 ) {
     let layout = widget.create_pango_layout(Some(text));
-    layout.set_font_description(Some(&pango::FontDescription::from_string(
-        "Geist Mono 12px",
-    )));
+    layout.set_font_description(Some(&magnifier::font(12)));
     let (_, logical) = layout.pixel_extents();
     let padding = 6.0;
     let label_width = logical.width() as f32 + padding * 2.0;
@@ -713,16 +722,18 @@ fn hint_bar(shared: &Shared) -> gtk::Box {
         ("", "no windows to pick", !region && !windows),
         ("Click", "window", !region && windows),
         ("Drag", "select", region),
+        ("Arrows", "move cursor", region),
+        ("Space", "set corner", region),
         ("F", "screen", region),
-        ("W", "window", region && windows),
-        ("Enter", "hovered window", !region && windows),
+        ("W", "next window", windows),
+        ("Enter", "capture", windows || region),
         (
             "Shift R",
             "last region",
             region && shared.last_region.is_some(),
         ),
         ("D", "draw", region),
-        ("Z", "loupe", magnifier),
+        ("Z", "loupe", true),
         ("C", "colour", magnifier),
         ("?", "hide", true),
         ("Esc", "cancel", true),
@@ -775,56 +786,58 @@ fn begin_edit(
     let frames = shared.frames.clone();
     let weak = Rc::downgrade(shared);
     glib::spawn_future_local(async move {
-        let rendered = gio::spawn_blocking(move || {
-            let frame = &frames[frame_index];
-            output::crop(
-                frame,
-                PixelRect {
-                    x: 0,
-                    y: 0,
-                    width: frame.width,
-                    height: frame.height,
-                },
-            )
-        })
-        .await;
         let Some(shared) = weak.upgrade().filter(|shared| !shared.finished.get()) else {
             return;
         };
-        let Ok(image) = rendered else {
-            eprintln!("kiekje: the render worker stopped, finishing without editing");
-            finish_unedited(&shared, region);
-            return;
-        };
         let ending = Rc::downgrade(&shared);
-        let opened = Inline::open(image, shared.mode, shared.drawing, move |end| {
-            let Some(shared) = ending.upgrade() else {
+        let suspended = Rc::downgrade(&shared);
+        let suspend = move |hidden: bool| {
+            let Some(shared) = suspended.upgrade().filter(|shared| !shared.finished.get()) else {
                 return;
             };
-            match end {
-                Ending::Canceled => finish(&shared, Outcome::Canceled),
-                Ending::Finished {
-                    image,
-                    finish: how,
-                    region,
-                    annotated,
-                } => match edited_selection(&shared, frame_index, region) {
-                    Some(selection) => finish(
-                        &shared,
-                        Outcome::Edited {
-                            selection,
-                            image,
-                            finish: how,
-                            annotated,
-                        },
-                    ),
-                    None => {
-                        eprintln!("kiekje: the edited region is not on its monitor, nothing saved");
-                        finish(&shared, Outcome::Canceled);
-                    }
-                },
+            for window in shared.windows.borrow().iter() {
+                window.set_visible(!hidden);
             }
-        })
+            if !hidden && let Some(window) = shared.windows.borrow().get(frame_index) {
+                window.present();
+            }
+        };
+        let opened = Inline::open(
+            frames,
+            frame_index,
+            shared.mode,
+            shared.drawing,
+            suspend,
+            move |end| {
+                let Some(shared) = ending.upgrade() else {
+                    return;
+                };
+                match end {
+                    Ending::Canceled => finish(&shared, Outcome::Canceled),
+                    Ending::Saved(notice) => finish(&shared, Outcome::Saved(notice)),
+                    Ending::Finished {
+                        image,
+                        finish: how,
+                        region,
+                        annotated,
+                    } => match edited_selection(&shared, frame_index, region) {
+                        Some(selection) => finish(
+                            &shared,
+                            Outcome::Edited {
+                                selection,
+                                image,
+                                finish: how,
+                                annotated,
+                            },
+                        ),
+                        None => {
+                            warn!("the edited region is not on its monitor, nothing saved");
+                            finish(&shared, Outcome::Canceled);
+                        }
+                    },
+                }
+            },
+        )
         .await;
         if shared.finished.get() {
             return;
@@ -832,7 +845,7 @@ fn begin_edit(
         let inline = match opened {
             Ok(inline) => inline,
             Err(error) => {
-                eprintln!("kiekje: inline editing is unavailable, finishing without it: {error}");
+                warn!("inline editing is unavailable, finishing without it: {error}");
                 finish_unedited(&shared, region);
                 return;
             }

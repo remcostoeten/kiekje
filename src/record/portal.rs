@@ -43,7 +43,7 @@ impl Drop for Session {
             .and_then(|builder| builder.cache_properties(CacheProperties::No).build())
             .and_then(|session| session.call_method("Close", &()));
         if let Err(error) = closed {
-            eprintln!("kiekje: the screen cast session did not close: {error}");
+            warn!("the screen cast session did not close: {error}");
         }
     }
 }

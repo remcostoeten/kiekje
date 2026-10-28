@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::os::fd::AsFd;
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -16,6 +16,47 @@ const DESTINATION: &str = "org.kde.KWin";
 const PATH: &str = "/org/kde/KWin/ScreenShot2";
 const INTERFACE: &str = "org.kde.KWin.ScreenShot2";
 const TIMEOUT: Duration = Duration::from_secs(10);
+const PIPE_BYTES: usize = 1 << 20;
+
+static CONNECTION: Mutex<Option<Connection>> = Mutex::new(None);
+static FRAME_BYTES: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
+
+fn connection() -> Result<Connection, CaptureError> {
+    let mut cached = CONNECTION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(connection) = cached.as_ref() {
+        return Ok(connection.clone());
+    }
+    let connection = zbus::blocking::connection::Builder::session()?
+        .method_timeout(TIMEOUT)
+        .build()?;
+    *cached = Some(connection.clone());
+    Ok(connection)
+}
+
+fn forget_connection() {
+    *CONNECTION
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+fn expected_bytes(connector: &str) -> usize {
+    FRAME_BYTES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(|sizes| sizes.get(connector).copied())
+        .unwrap_or(0)
+}
+
+fn remember_bytes(connector: &str, bytes: usize) {
+    FRAME_BYTES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_or_insert_with(HashMap::new)
+        .insert(connector.to_owned(), bytes);
+}
 
 pub struct Kwin;
 
@@ -41,9 +82,7 @@ fn capture_monitors(
     monitors: &[MonitorInfo],
     include_cursor: bool,
 ) -> Result<Vec<Frame>, CaptureError> {
-    let connection = zbus::blocking::connection::Builder::session()?
-        .method_timeout(TIMEOUT)
-        .build()?;
+    let connection = connection()?;
     let handles: Vec<_> = monitors
         .iter()
         .cloned()
@@ -53,14 +92,18 @@ fn capture_monitors(
         })
         .collect();
 
-    handles
+    let frames: Result<Vec<Frame>, CaptureError> = handles
         .into_iter()
         .map(|handle| {
             handle.join().unwrap_or_else(|_| {
                 Err(CaptureError::Unavailable("capture thread panicked".into()))
             })
         })
-        .collect()
+        .collect();
+    if matches!(&frames, Err(CaptureError::Dbus(_) | CaptureError::Io(_))) {
+        forget_connection();
+    }
+    frames
 }
 
 fn capture_screen(
@@ -76,9 +119,12 @@ fn capture_screen(
         .build()?;
 
     let (mut reader, writer) = std::io::pipe()?;
+    // A bigger pipe means fewer read calls for a frame of tens of megabytes; the default still works if this fails.
+    let _ = rustix::pipe::fcntl_setpipe_size(&writer, PIPE_BYTES);
+    let expected = expected_bytes(&monitor.connector);
     let (sender, pixels) = mpsc::sync_channel(1);
     thread::spawn(move || {
-        let mut data = Vec::new();
+        let mut data = Vec::with_capacity(expected);
         // The receiver is gone only when the capture already timed out.
         let _ = sender.send(reader.read_to_end(&mut data).map(|_| data));
     });
@@ -113,6 +159,7 @@ fn capture_screen(
         .ok_or(CaptureError::UnsupportedFormat(format_code))?;
 
     check_layout(width, height, stride, data.len())?;
+    remember_bytes(&monitor.connector, data.len());
 
     Ok(Frame {
         monitor,

@@ -53,7 +53,7 @@ impl WindowGeometrySource for Kwin {
         let report = run_script(&connection, id, &receiver);
         if let Err(error) = scripting.call::<_, _, bool>("unloadScript", &(script.plugin.as_str(),))
         {
-            eprintln!("kiekje: could not unload the KWin window script: {error}");
+            error!("could not unload the KWin window script: {error}");
         }
         Ok(parse_report(&report?)?)
     }
@@ -96,7 +96,7 @@ impl ScriptFile {
 impl Drop for ScriptFile {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_file(&self.path) {
-            eprintln!("kiekje: could not remove {}: {error}", self.path.display());
+            error!("could not remove {}: {error}", self.path.display());
         }
     }
 }

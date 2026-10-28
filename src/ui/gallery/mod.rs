@@ -1,24 +1,24 @@
 mod actions;
 mod cards;
 mod colours;
+mod loader;
 mod rename;
 mod toolbar;
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::library::query::{self, Query};
-use crate::library::{self, Capture, Library, thumbs};
+use crate::library::{self, Capture, Library};
 use crate::ui;
+use crate::ui::widgets::{Failure, StatusBar};
 
+use loader::{Textures, Thumbnails};
 use toolbar::{Change, View};
-
-const TEXTURE_LIMIT: usize = 240;
 
 struct Gallery {
     paths: gtk::StringList,
@@ -27,8 +27,15 @@ struct Gallery {
     actions: OnceCell<gio::SimpleActionGroup>,
     missing: OnceCell<gtk::ToggleButton>,
     status: gtk::Label,
-    all: RefCell<Vec<Capture>>,
-    details: RefCell<HashMap<String, Capture>>,
+    spinner: gtk::Spinner,
+    footer: gtk::Box,
+    banner: StatusBar,
+    pending: RefCell<Option<String>>,
+    all: RefCell<Vec<Rc<Capture>>>,
+    details: RefCell<HashMap<Rc<str>, Rc<Capture>>>,
+    listed: RefCell<Vec<Rc<str>>>,
+    queue: RefCell<Thumbnails>,
+    recheck: Cell<bool>,
     query: RefCell<Query>,
     textures: RefCell<Textures>,
     loading: Cell<bool>,
@@ -39,29 +46,6 @@ struct Gallery {
     pages: gtk::Stack,
     palette: colours::Palette,
     count: gtk::Label,
-}
-
-#[derive(Default)]
-struct Textures {
-    loaded: HashMap<String, gdk::Texture>,
-    order: VecDeque<String>,
-}
-
-impl Textures {
-    fn get(&self, path: &str) -> Option<gdk::Texture> {
-        self.loaded.get(path).cloned()
-    }
-
-    fn put(&mut self, path: String, texture: gdk::Texture) {
-        if self.loaded.insert(path.clone(), texture).is_none() {
-            self.order.push_back(path);
-        }
-        while self.order.len() > TEXTURE_LIMIT {
-            if let Some(oldest) = self.order.pop_front() {
-                self.loaded.remove(&oldest);
-            }
-        }
-    }
 }
 
 /// Opens the gallery window with every saved capture that is still on disk, newest first.
@@ -105,7 +89,7 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     );
     let count = gtk::Label::builder()
         .valign(gtk::Align::Baseline)
-        .css_classes(["caps", "count"])
+        .css_classes(["section-title", "count"])
         .build();
     header.append(&count);
     content.append(&header);
@@ -137,9 +121,22 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     let status = gtk::Label::builder()
         .xalign(0.0)
         .wrap(true)
-        .visible(false)
+        .hexpand(true)
         .css_classes(["note"])
         .build();
+    let spinner = gtk::Spinner::builder()
+        .valign(gtk::Align::Center)
+        .visible(false)
+        .build();
+    let footer = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .visible(false)
+        .css_classes(["status"])
+        .build();
+    footer.append(&spinner);
+    footer.append(&status);
+    let banner = StatusBar::new();
     let gallery = Rc::new(Gallery {
         paths,
         selection,
@@ -147,8 +144,15 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         actions: OnceCell::new(),
         missing: OnceCell::new(),
         status,
+        spinner,
+        footer,
+        banner,
+        pending: RefCell::new(None),
         all: RefCell::new(Vec::new()),
         details: RefCell::new(HashMap::new()),
+        listed: RefCell::new(Vec::new()),
+        queue: RefCell::new(Thumbnails::default()),
+        recheck: Cell::new(false),
         query: RefCell::new(Query::default()),
         textures: RefCell::new(Textures::default()),
         loading: Cell::new(false),
@@ -162,6 +166,12 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
             .build(),
         palette: colours::palette(),
         count,
+    });
+    let restore = Rc::downgrade(&gallery);
+    gallery.banner.on_dismiss(move || {
+        if let Some(gallery) = restore.upgrade() {
+            gallery.focus_selected();
+        }
     });
     let grid = cards::grid(&gallery);
     let list = cards::list(&gallery);
@@ -199,7 +209,8 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
         .pages
         .add_named(&gallery.palette.page, Some("colours"));
     content.append(&gallery.pages);
-    content.append(&gallery.status);
+    content.append(&gallery.banner.widget);
+    content.append(&gallery.footer);
     let shell = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .css_classes(["panel", "settings", "gallery"])
@@ -232,7 +243,7 @@ pub fn show(app: &gtk::Application) -> (gtk::Window, Handle) {
     });
     window.add_controller(keys);
 
-    gallery.reload();
+    gallery.load(true);
     window.present();
     (window, Handle(Rc::downgrade(&gallery)))
 }
@@ -263,19 +274,84 @@ impl Handle {
             }
         }
     }
+
+    /// Reads the library again and selects and scrolls to `path` once it is listed.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handle.reveal(&gif_path);
+    /// ```
+    pub fn reveal(&self, path: &std::path::Path) {
+        if let Some(gallery) = self.0.upgrade() {
+            gallery
+                .pending
+                .replace(Some(path.to_string_lossy().into_owned()));
+            gallery.reload();
+        }
+    }
+
+    /// Shows `message` in the gallery footer, styled as a problem when `problem` is set.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handle.say("Saved clip.gif", false);
+    /// ```
+    pub fn say(&self, message: &str, problem: bool) {
+        if let Some(gallery) = self.0.upgrade() {
+            gallery.say(message, problem);
+        }
+    }
+
+    /// Shows an accessible failure banner in the gallery.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handle.failure(Failure::Capture("No backend".into()));
+    /// ```
+    pub fn failure(&self, failure: Failure) {
+        if let Some(gallery) = self.0.upgrade() {
+            gallery.banner.show(failure);
+        }
+    }
+
+    /// Shows `message` in the gallery footer with a spinner, until the next `say`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// handle.working("Exporting clip.webm as a GIF");
+    /// ```
+    pub fn working(&self, message: &str) {
+        if let Some(gallery) = self.0.upgrade() {
+            gallery.working(message);
+        }
+    }
 }
 
 impl Gallery {
     fn reload(self: &Rc<Self>) {
+        self.load(false);
+    }
+
+    fn load(self: &Rc<Self>, check: bool) {
         if self.loading.replace(true) {
             self.stale.set(true);
+            if check {
+                self.recheck.set(true);
+            }
             return;
         }
+        let check = check || self.recheck.take();
         let gallery = self.clone();
         glib::spawn_future_local(async move {
-            let loaded = gio::spawn_blocking(|| {
+            let loaded = gio::spawn_blocking(move || {
                 let mut library = Library::open(&library::path())?;
-                library.check_missing()?;
+                if check {
+                    library.check_missing()?;
+                }
                 library.all()
             })
             .await;
@@ -287,15 +363,18 @@ impl Gallery {
             match loaded {
                 Ok(Ok(captures)) => {
                     gallery.loaded.set(true);
-                    gallery.all.replace(captures);
+                    gallery
+                        .all
+                        .replace(captures.into_iter().map(Rc::new).collect());
+                    gallery.queue.borrow_mut().forget_failures();
                     gallery.refresh();
                 }
                 Ok(Err(error)) => {
-                    eprintln!("kiekje: gallery could not read the library: {error}");
+                    error!("gallery could not read the library: {error}");
                     gallery.stack.set_visible_child_name("failed");
                 }
                 Err(_) => {
-                    eprintln!("kiekje: the gallery worker stopped");
+                    error!("the gallery worker stopped");
                     gallery.stack.set_visible_child_name("failed");
                 }
             }
@@ -354,15 +433,12 @@ impl Gallery {
             toolbar::set_nav_label(toggle, &format!("Missing {missing}"));
             toggle.set_visible(missing > 0 || query.missing);
         }
-        let texts: Vec<String> = shown
+        let texts: Vec<Rc<str>> = shown
             .iter()
-            .map(|capture| capture.path.to_string_lossy().into_owned())
+            .map(|capture| Rc::from(capture.path.to_string_lossy().as_ref()))
             .collect();
-        let current: Vec<String> = (0..self.paths.n_items())
-            .filter_map(|position| self.paths.string(position))
-            .map(String::from)
-            .collect();
-        self.details.replace(
+        let current = self.listed.replace(texts.clone());
+        let previous = self.details.replace(
             texts
                 .iter()
                 .cloned()
@@ -370,8 +446,10 @@ impl Gallery {
                 .collect(),
         );
         drop(all);
+        let pending = self.pending.take();
         if current == texts {
             self.sync_actions();
+            self.scroll_to_pending(pending.as_deref(), &texts);
             return;
         }
         let selected = self
@@ -379,52 +457,79 @@ impl Gallery {
             .selected_item()
             .and_downcast::<gtk::StringObject>()
             .map(|object| object.string());
-        let borrowed: Vec<&str> = texts.iter().map(String::as_str).collect();
-        self.paths.splice(0, self.paths.n_items(), &borrowed);
+        let previous_position = self.selection.selected();
+        let focused_in_view = self
+            .status
+            .root()
+            .and_downcast::<gtk::Window>()
+            .and_then(|window| GtkWindowExt::focus(&window))
+            .is_some_and(|focus| focus.is_ancestor(&self.views));
+        let borrowed: Vec<&str> = texts.iter().map(|text| &**text).collect();
+        let details = self.details.borrow();
+        let same = |old: &Rc<str>, new: &Rc<str>| {
+            old == new && previous.get(&**new) == details.get(&**new)
+        };
+        let limit = current.len().min(texts.len());
+        let head = current
+            .iter()
+            .zip(&texts)
+            .take_while(|(old, new)| same(old, new))
+            .count();
+        let tail = current
+            .iter()
+            .rev()
+            .zip(texts.iter().rev())
+            .take(limit - head)
+            .take_while(|(old, new)| same(old, new))
+            .count();
+        drop(details);
+        let removed = u32::try_from(current.len() - head - tail).unwrap_or(u32::MAX);
+        self.paths.splice(
+            u32::try_from(head).unwrap_or(u32::MAX),
+            removed,
+            &borrowed[head..texts.len() - tail],
+        );
         let kept = selected
-            .and_then(|selected| texts.iter().position(|text| *text == selected.as_str()))
+            .as_ref()
+            .and_then(|selected| texts.iter().position(|text| &**text == selected.as_str()))
             .and_then(|position| u32::try_from(position).ok());
         if let Some(position) = kept {
             self.selection.set_selected(position);
+        } else if selected.is_some() && !texts.is_empty() {
+            let last = u32::try_from(texts.len() - 1).unwrap_or(u32::MAX);
+            self.selection.set_selected(previous_position.min(last));
+            if focused_in_view {
+                self.focus_selected();
+            }
         }
         self.sync_actions();
+        self.scroll_to_pending(pending.as_deref(), &texts);
     }
 
-    fn thumbnail(self: &Rc<Self>, item: &gtk::ListItem, picture: &gtk::Picture, path: String) {
-        if let Some(texture) = self.textures.borrow().get(&path) {
-            cards::show_texture(picture, &texture);
+    fn scroll_to_pending(&self, pending: Option<&str>, texts: &[Rc<str>]) {
+        let Some(position) = pending
+            .and_then(|pending| texts.iter().position(|text| &**text == pending))
+            .and_then(|position| u32::try_from(position).ok())
+        else {
             return;
-        }
-        picture.set_paintable(gdk::Paintable::NONE);
-        picture.add_css_class("skeleton");
-        let gallery = self.clone();
-        let item = item.downgrade();
-        let picture = picture.downgrade();
-        glib::spawn_future_local(async move {
-            let source = PathBuf::from(&path);
-            let made = gio::spawn_blocking(move || thumbs::texture(&thumbs::dir(), &source)).await;
-            let texture = match made {
-                Ok(Ok(texture)) => texture,
-                Ok(Err(error)) => {
-                    eprintln!("kiekje: no thumbnail: {error}");
-                    return;
-                }
-                Err(_) => {
-                    eprintln!("kiekje: the thumbnail worker stopped");
-                    return;
-                }
+        };
+        let flags = gtk::ListScrollFlags::SELECT | gtk::ListScrollFlags::FOCUS;
+        for page in [View::Grid, View::List] {
+            let Some(view) = self
+                .views
+                .child_by_name(page.name())
+                .and_downcast::<gtk::ScrolledWindow>()
+                .and_then(|scrolled| scrolled.child())
+            else {
+                continue;
             };
-            gallery
-                .textures
-                .borrow_mut()
-                .put(path.clone(), texture.clone());
-            let (Some(item), Some(picture)) = (item.upgrade(), picture.upgrade()) else {
-                return;
-            };
-            if cards::bound_path(&item).as_deref() == Some(path.as_str()) {
-                cards::show_texture(&picture, &texture);
+            if let Some(grid) = view.downcast_ref::<gtk::GridView>() {
+                grid.scroll_to(position, flags, None);
+            } else if let Some(list) = view.downcast_ref::<gtk::ListView>() {
+                list.scroll_to(position, flags, None);
             }
-        });
+        }
+        self.sync_actions();
     }
 }
 
@@ -448,25 +553,5 @@ mod tests {
         assert_eq!(count_text(42, 42), "42 captures");
         assert_eq!(count_text(3, 42), "3 of 42 captures");
         assert_eq!(count_text(0, 1), "0 of 1 capture");
-    }
-
-    #[test]
-    fn keeps_only_the_newest_textures() {
-        let mut textures = Textures::default();
-        let pixel = gdk::MemoryTexture::new(
-            1,
-            1,
-            gdk::MemoryFormat::R8g8b8a8,
-            &glib::Bytes::from_static(&[0, 0, 0, 255]),
-            4,
-        );
-        for index in 0..=TEXTURE_LIMIT {
-            textures.put(index.to_string(), pixel.clone().upcast());
-        }
-        assert!(textures.get("0").is_none());
-        assert!(textures.get(&TEXTURE_LIMIT.to_string()).is_some());
-        assert_eq!(textures.loaded.len(), TEXTURE_LIMIT);
-        textures.put("1".to_owned(), pixel.upcast());
-        assert_eq!(textures.order.len(), TEXTURE_LIMIT);
     }
 }

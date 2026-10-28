@@ -11,7 +11,8 @@ use zbus::proxy::CacheProperties;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
 
 use crate::backends::{Capabilities, CaptureBackend};
-use crate::capture::{CaptureError, Frame, LogicalRect, MonitorInfo, PixelFormat};
+use crate::capture::mapping::bounding_box;
+use crate::capture::{CaptureError, Frame, MonitorInfo, PixelFormat};
 
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -31,11 +32,23 @@ impl CaptureBackend for Portal {
     }
 
     fn capture(&self, monitors: &[MonitorInfo], _: bool) -> Result<Vec<Frame>, CaptureError> {
-        capture_monitors(monitors)
+        capture_monitors(monitors, monitors)
+    }
+
+    fn capture_some(
+        &self,
+        all: &[MonitorInfo],
+        wanted: &[MonitorInfo],
+        _: bool,
+    ) -> Result<Vec<Frame>, CaptureError> {
+        capture_monitors(all, wanted)
     }
 }
 
-fn capture_monitors(monitors: &[MonitorInfo]) -> Result<Vec<Frame>, CaptureError> {
+fn capture_monitors(
+    all: &[MonitorInfo],
+    wanted: &[MonitorInfo],
+) -> Result<Vec<Frame>, CaptureError> {
     let started = SystemTime::now();
     let uri = request_screenshot()?;
     let (path, _) = gtk::glib::filename_from_uri(&uri)
@@ -44,7 +57,7 @@ fn capture_monitors(monitors: &[MonitorInfo]) -> Result<Vec<Frame>, CaptureError
     let image = decode_png(&path);
     remove_if_created_since(&path, started);
     let (width, height, rgba) = image?;
-    split_by_monitor(monitors, width, height, &rgba)
+    split_by_monitor(all, wanted, width, height, rgba)
 }
 
 fn request_screenshot() -> Result<String, CaptureError> {
@@ -148,26 +161,26 @@ fn remove_if_created_since(path: &Path, started: SystemTime) {
         .and_then(|metadata| metadata.modified())
         .is_ok_and(|modified| modified >= started);
     if created_by_request && let Err(error) = fs::remove_file(path) {
-        eprintln!(
-            "kiekje: could not remove portal file {}: {error}",
-            path.display()
-        );
+        error!("could not remove portal file {}: {error}", path.display());
     }
 }
 
 fn split_by_monitor(
-    monitors: &[MonitorInfo],
+    all: &[MonitorInfo],
+    wanted: &[MonitorInfo],
     width: u32,
     height: u32,
-    rgba: &[u8],
+    rgba: Vec<u8>,
 ) -> Result<Vec<Frame>, CaptureError> {
     let bounds =
-        bounding_box(monitors).ok_or_else(|| CaptureError::Unavailable("no monitors".into()))?;
+        bounding_box(all).ok_or_else(|| CaptureError::Unavailable("no monitors".into()))?;
     let scale_x = f64::from(width) / f64::from(bounds.width);
     let scale_y = f64::from(height) / f64::from(bounds.height);
     let source_stride = width as usize * 4;
 
-    monitors
+    let mut whole = Some(rgba);
+    let single = wanted.len() == 1;
+    wanted
         .iter()
         .map(|monitor| {
             let left = (f64::from(monitor.logical.x - bounds.x) * scale_x).round() as u32;
@@ -177,11 +190,26 @@ fn split_by_monitor(
             let frame_height =
                 ((f64::from(monitor.logical.height) * scale_y).round() as u32).min(height - top);
             let stride = frame_width as usize * 4;
-            let mut data = Vec::with_capacity(stride * frame_height as usize);
-            for row in top..top + frame_height {
-                let start = row as usize * source_stride + left as usize * 4;
-                data.extend_from_slice(&rgba[start..start + stride]);
-            }
+            let covers_image =
+                left == 0 && top == 0 && frame_width == width && frame_height == height;
+            let data = match whole.take() {
+                Some(rgba) if single && covers_image => rgba,
+                Some(rgba) => {
+                    let data = crop_rows(
+                        &rgba,
+                        source_stride,
+                        (left, top),
+                        (frame_width, frame_height),
+                    );
+                    whole = Some(rgba);
+                    data
+                }
+                None => {
+                    return Err(CaptureError::Unavailable(
+                        "portal image already used".into(),
+                    ));
+                }
+            };
             Ok(Frame {
                 monitor: monitor.clone(),
                 width: frame_width,
@@ -194,35 +222,20 @@ fn split_by_monitor(
         .collect()
 }
 
-/// Returns the smallest logical rectangle that contains every monitor.
-///
-/// # Examples
-///
-/// ```ignore
-/// let bounds = bounding_box(&monitors).unwrap();
-/// ```
-pub fn bounding_box(monitors: &[MonitorInfo]) -> Option<LogicalRect> {
-    let left = monitors.iter().map(|monitor| monitor.logical.x).min()?;
-    let top = monitors.iter().map(|monitor| monitor.logical.y).min()?;
-    let right = monitors
-        .iter()
-        .map(|monitor| monitor.logical.x + monitor.logical.width)
-        .max()?;
-    let bottom = monitors
-        .iter()
-        .map(|monitor| monitor.logical.y + monitor.logical.height)
-        .max()?;
-    Some(LogicalRect {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top,
-    })
+fn crop_rows(rgba: &[u8], source_stride: usize, at: (u32, u32), size: (u32, u32)) -> Vec<u8> {
+    let stride = size.0 as usize * 4;
+    let mut data = Vec::with_capacity(stride * size.1 as usize);
+    for row in at.1..at.1 + size.1 {
+        let start = row as usize * source_stride + at.0 as usize * 4;
+        data.extend_from_slice(&rgba[start..start + stride]);
+    }
+    data
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capture::LogicalRect;
 
     fn monitor(name: &str, x: i32, y: i32, width: i32, height: i32) -> MonitorInfo {
         MonitorInfo {
@@ -237,31 +250,34 @@ mod tests {
     }
 
     #[test]
-    fn bounding_box_handles_negative_origins() {
-        let monitors = [
-            monitor("A", -1024, 0, 1024, 768),
-            monitor("B", 0, -200, 1920, 1080),
-        ];
-        assert_eq!(
-            bounding_box(&monitors),
-            Some(LogicalRect {
-                x: -1024,
-                y: -200,
-                width: 2944,
-                height: 1080
-            })
-        );
-    }
-
-    #[test]
     fn splits_workspace_image_per_monitor() {
         let monitors = [monitor("A", 0, 0, 2, 1), monitor("B", 2, 0, 1, 1)];
         let rgba: Vec<u8> = (0..3u8)
             .flat_map(|pixel| [pixel, pixel, pixel, 255])
             .collect();
-        let frames = split_by_monitor(&monitors, 3, 1, &rgba).unwrap();
+        let frames = split_by_monitor(&monitors, &monitors, 3, 1, rgba).unwrap();
         assert_eq!(frames[0].width, 2);
         assert_eq!(frames[0].data, vec![0, 0, 0, 255, 1, 1, 1, 255]);
         assert_eq!(frames[1].data, vec![2, 2, 2, 255]);
+    }
+
+    #[test]
+    fn splits_only_the_wanted_monitor_against_the_whole_desktop() {
+        let monitors = [monitor("A", 0, 0, 2, 1), monitor("B", 2, 0, 1, 1)];
+        let rgba: Vec<u8> = (0..3u8)
+            .flat_map(|pixel| [pixel, pixel, pixel, 255])
+            .collect();
+        let frames = split_by_monitor(&monitors, &monitors[1..], 3, 1, rgba).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].monitor.connector, "B");
+        assert_eq!(frames[0].data, vec![2, 2, 2, 255]);
+    }
+
+    #[test]
+    fn hands_over_the_decoded_image_when_one_monitor_covers_it() {
+        let monitors = [monitor("A", 0, 0, 2, 1)];
+        let rgba = vec![9u8; 8];
+        let frames = split_by_monitor(&monitors, &monitors, 2, 1, rgba).unwrap();
+        assert_eq!(frames[0].data, vec![9u8; 8]);
     }
 }

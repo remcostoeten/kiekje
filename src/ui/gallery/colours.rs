@@ -76,11 +76,11 @@ impl Gallery {
             match loaded {
                 Ok(Ok(colours)) => gallery.fill_colours(&colours),
                 Ok(Err(error)) => {
-                    eprintln!("kiekje: gallery could not read the colour history: {error}");
+                    error!("gallery could not read the colour history: {error}");
                     gallery.palette.page.set_visible_child_name("failed");
                 }
                 Err(_) => {
-                    eprintln!("kiekje: the colour history worker stopped");
+                    error!("the colour history worker stopped");
                     gallery.palette.page.set_visible_child_name("failed");
                 }
             }
@@ -211,7 +211,7 @@ fn swatch(rgb: [u8; 3]) -> gtk::DrawingArea {
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.25);
         cr.set_line_width(1.0);
         if let Err(error) = filled.and_then(|()| cr.stroke()) {
-            eprintln!("kiekje: a colour swatch was not drawn: {error}");
+            warn!("a colour swatch was not drawn: {error}");
         }
     });
     swatch

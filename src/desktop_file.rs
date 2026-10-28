@@ -5,7 +5,7 @@ use std::process::Command;
 
 use gtk::glib;
 
-use crate::app::APP_ID;
+use crate::ids::APP_ID;
 
 const PROTOTYPE_ID: &str = "dev.remcostoeten.KiekjeNext";
 const FALLBACK_ICON: &str = "camera-photo";
@@ -30,13 +30,13 @@ pub fn install() -> io::Result<PathBuf> {
 
     match Command::new("kbuildsycoca6").output() {
         Ok(output) if !output.status.success() => {
-            eprintln!(
-                "kiekje: kbuildsycoca6 failed: {}",
+            error!(
+                "kbuildsycoca6 failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }
         Err(error) if error.kind() != io::ErrorKind::NotFound => {
-            eprintln!("kiekje: kbuildsycoca6: {error}")
+            warn!("kbuildsycoca6: {error}")
         }
         _ => {}
     }
@@ -46,9 +46,9 @@ pub fn install() -> io::Result<PathBuf> {
 fn remove_prototype(directory: &Path) {
     let stale = directory.join(format!("{PROTOTYPE_ID}.desktop"));
     match fs::remove_file(&stale) {
-        Ok(()) => eprintln!("kiekje: removed the old {}", stale.display()),
+        Ok(()) => warn!("removed the old {}", stale.display()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!("kiekje: could not remove {}: {error}", stale.display()),
+        Err(error) => error!("could not remove {}: {error}", stale.display()),
     }
 }
 

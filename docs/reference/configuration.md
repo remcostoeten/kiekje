@@ -14,6 +14,7 @@ version = 1
 
 [general]
 check_for_updates = false
+theme = "dark"
 
 [storage]
 filename = "kiekje-{mode}-{date}-{time}"
@@ -81,6 +82,7 @@ The config format version. Kiekje migrates older files on load and refuses newer
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `check_for_updates` | `false` | Ask the GitHub releases API for a newer version at startup and at most once a day, with one notification per new version |
+| `theme` | `"dark"` | `"dark"` or `"light"`. Applies to every window at once. Settings has a Light theme switch on the General page. `gdbus call --session --dest dev.remcostoeten.Kiekje --object-path /dev/remcostoeten/Kiekje --method org.gtk.Actions.Activate toggle-theme [] {}` flips it and saves the choice |
 
 ## `[storage]`
 

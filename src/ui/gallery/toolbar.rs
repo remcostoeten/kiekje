@@ -161,7 +161,7 @@ fn sidebar(on_change: &Rc<dyn Fn(Change)>) -> (gtk::Box, gtk::ToggleButton) {
         &gtk::Label::builder()
             .label("Kiekje")
             .xalign(0.0)
-            .css_classes(["caps", "brand"])
+            .css_classes(["brand"])
             .build(),
     );
     let all = gtk::ToggleButton::builder()

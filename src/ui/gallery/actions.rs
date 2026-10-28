@@ -21,6 +21,7 @@ pub(super) enum FileAction {
     Open,
     Edit,
     Pin,
+    Gif,
     Reveal,
     CopyImage,
     CopyPath,
@@ -33,11 +34,12 @@ pub(super) enum FileAction {
 }
 
 impl FileAction {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::Keep,
         Self::Open,
         Self::Edit,
         Self::Pin,
+        Self::Gif,
         Self::Reveal,
         Self::Locate,
         Self::CopyImage,
@@ -55,6 +57,7 @@ impl FileAction {
             Self::Open => "open",
             Self::Edit => "edit",
             Self::Pin => "pin",
+            Self::Gif => "gif",
             Self::Reveal => "reveal",
             Self::CopyImage => "copy-image",
             Self::CopyPath => "copy-path",
@@ -73,6 +76,7 @@ impl FileAction {
             Self::Open => "Open",
             Self::Edit => "Edit",
             Self::Pin => "Pin on screen",
+            Self::Gif => "Export as GIF",
             Self::Reveal => "Show in folder",
             Self::CopyImage => "Copy image",
             Self::CopyPath => "Copy path",
@@ -91,6 +95,7 @@ impl FileAction {
             Self::Open => None,
             Self::Edit => Some("<Ctrl>e"),
             Self::Pin => Some("<Ctrl>p"),
+            Self::Gif => Some("<Ctrl>g"),
             Self::Reveal => Some("<Ctrl>Return"),
             Self::CopyImage => Some("<Ctrl>c"),
             Self::CopyPath => Some("<Ctrl><Alt>c"),
@@ -137,6 +142,7 @@ pub(super) fn attach(view: &impl IsA<gtk::Widget>) -> gtk::PopoverMenu {
             | FileAction::Open
             | FileAction::Edit
             | FileAction::Pin
+            | FileAction::Gif
             | FileAction::Reveal
             | FileAction::Locate => &open,
             FileAction::CopyImage | FileAction::CopyPath | FileAction::Upload => &copy,
@@ -221,6 +227,27 @@ fn show_at_focus(view: &gtk::Widget, menu: &gtk::PopoverMenu) {
 }
 
 impl Gallery {
+    pub(super) fn focus_selected(&self) {
+        if self.selection.selected_item().is_none() {
+            return;
+        }
+        let Some(view) = self
+            .views
+            .visible_child()
+            .and_downcast::<gtk::ScrolledWindow>()
+            .and_then(|scrolled| scrolled.child())
+        else {
+            return;
+        };
+        let position = self.selection.selected();
+        let flags = gtk::ListScrollFlags::SELECT | gtk::ListScrollFlags::FOCUS;
+        if let Some(grid) = view.downcast_ref::<gtk::GridView>() {
+            grid.scroll_to(position, flags, None);
+        } else if let Some(list) = view.downcast_ref::<gtk::ListView>() {
+            list.scroll_to(position, flags, None);
+        }
+    }
+
     fn selected(&self) -> Option<PathBuf> {
         self.selection
             .selected_item()
@@ -236,10 +263,20 @@ impl Gallery {
             self.details
                 .borrow()
                 .get(path.to_string_lossy().as_ref())
-                .map_or((false, false), |capture| (capture.missing, capture.unsaved))
+                .map_or((false, false, false, false), |capture| {
+                    (
+                        capture.missing,
+                        capture.unsaved,
+                        capture.is_video(),
+                        capture.is_gif(),
+                    )
+                })
         });
-        let missing = selected.map(|(missing, _)| missing);
-        let unsaved = selected.is_some_and(|(missing, unsaved)| unsaved && !missing);
+        let missing = selected.map(|(missing, ..)| missing);
+        let present = missing == Some(false);
+        let unsaved = selected.is_some_and(|(missing, unsaved, ..)| unsaved && !missing);
+        let video = selected.is_some_and(|(_, _, video, _)| video);
+        let animated = video || selected.is_some_and(|(.., gif)| gif);
         let any_missing = self.all.borrow().iter().any(|capture| capture.missing);
         for action in FileAction::ALL {
             let enabled = match action {
@@ -247,7 +284,10 @@ impl Gallery {
                 FileAction::Forget => missing.is_some(),
                 FileAction::Locate => missing == Some(true),
                 FileAction::ForgetMissing => self.query.borrow().missing && any_missing,
-                _ => missing == Some(false),
+                FileAction::Edit | FileAction::Pin | FileAction::CopyImage => present && !animated,
+                FileAction::Upload => present && !video,
+                FileAction::Gif => present && video,
+                _ => present,
             };
             if let Some(simple) = group
                 .lookup_action(action.name())
@@ -326,6 +366,7 @@ impl Gallery {
             FileAction::Keep => self.keep(path),
             FileAction::Edit => self.edit(path),
             FileAction::Pin => self.pin(path),
+            FileAction::Gif => self.export_gif(path),
             FileAction::Upload => self.upload(path, name),
             FileAction::Locate => self.locate(path),
             FileAction::Rename => self.rename(path),
@@ -366,6 +407,22 @@ impl Gallery {
                 gallery.say(&format!("Not pinned: {error}"), true);
             }
         });
+    }
+
+    fn export_gif(&self, path: PathBuf) {
+        let Some(app) = self
+            .status
+            .root()
+            .and_downcast::<gtk::Window>()
+            .and_then(|window| window.application())
+        else {
+            self.say("Exporting a GIF needs the running app", true);
+            return;
+        };
+        app.activate_action(
+            "export-gif",
+            Some(&path.to_string_lossy().into_owned().to_variant()),
+        );
     }
 
     fn upload(self: &Rc<Self>, path: PathBuf, name: String) {
@@ -431,14 +488,19 @@ impl Gallery {
         glib::spawn_future_local(async move {
             let picked = match dialog.open_future(window.as_ref()).await {
                 Ok(file) => file.path(),
-                Err(error) if error.matches(gtk::DialogError::Dismissed) => return,
+                Err(error) if error.matches(gtk::DialogError::Dismissed) => {
+                    gallery.focus_selected();
+                    return;
+                }
                 Err(error) => {
                     gallery.say(&format!("Could not pick a file: {error}"), true);
+                    gallery.focus_selected();
                     return;
                 }
             };
             let Some(picked) = picked else {
                 gallery.say("Pick a local file; remote locations can't be linked", true);
+                gallery.focus_selected();
                 return;
             };
             let target = picked.clone();
@@ -451,11 +513,17 @@ impl Gallery {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
             match linked {
-                Ok(Ok(())) => gallery.say(&format!("Linked the capture to {name}"), false),
+                Ok(Ok(())) => {
+                    gallery
+                        .pending
+                        .replace(Some(picked.to_string_lossy().into_owned()));
+                    gallery.say(&format!("Linked the capture to {name}"), false);
+                }
                 Ok(Err(error)) => gallery.say(&format!("Not linked: {error}"), true),
                 Err(_) => gallery.say("The library worker stopped", true),
             }
             gallery.reload();
+            gallery.focus_selected();
         });
     }
 
@@ -531,12 +599,20 @@ impl Gallery {
     }
 
     pub(super) fn say(&self, message: &str, problem: bool) {
+        self.spinner.set_spinning(false);
+        self.spinner.set_visible(false);
         self.status.set_label(message);
-        self.status.set_visible(!message.is_empty());
+        self.footer.set_visible(!message.is_empty());
         if problem {
             self.status.add_css_class("problem");
         } else {
             self.status.remove_css_class("problem");
         }
+    }
+
+    pub(super) fn working(&self, message: &str) {
+        self.say(message, false);
+        self.spinner.set_visible(true);
+        self.spinner.set_spinning(true);
     }
 }

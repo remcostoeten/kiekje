@@ -1,65 +1,78 @@
 use std::cell::{Cell, RefCell};
 use std::ops::ControlFlow;
-use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 
 use gtk::prelude::*;
-use gtk::{gdk, gio, glib};
+use gtk::{gio, glib};
 
-use crate::backends;
-use crate::backends::windows::{self, WindowError};
-use crate::capture::mapping::{self, SelectionPlan};
-use crate::capture::{
-    Availability, BackendChoice, Capture, CaptureError, CaptureMode, Frame, LogicalRect,
-    MonitorInfo, PixelFormat,
-};
+use crate::capture::{Availability, BackendChoice, CaptureMode, LogicalRect};
 use crate::clipboard::Clipboard;
-use crate::config::{self, AfterSelection, Notifications};
-use crate::editor::{self, Finish};
-use crate::library::{self, Library, NewCapture, thumbs};
-use crate::notify::{FdoNotifier, Notice};
-use crate::output::{self, Image};
-use crate::overlay::{self, Outcome, Selection};
+use crate::config::{self, Notifications};
+use crate::ids::APP_ID;
+use crate::notify::FdoNotifier;
+use crate::overlay::{self};
 use crate::pin;
-use crate::record::{self, Recording};
-use crate::shortcuts::{
-    Binding, PortalGuard, PortalShortcuts, ShortcutAction, ShortcutHost, ShortcutRegistrar,
-    Shortcuts, hyprland, kde,
-};
+use crate::record::Recording;
+use crate::shortcuts::{PortalGuard, ShortcutHost};
 use crate::sound;
-use crate::storage::{self, ImageFormat, Naming, last_region};
-use crate::tray::popover::{self, Pick};
-use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
-use crate::ui::{fonts, gallery, settings};
-use crate::update;
+use crate::tray::TrayGuard;
+use crate::ui::{self, fonts, gallery, settings};
 
-pub const APP_ID: &str = "dev.remcostoeten.Kiekje";
-const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
-const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
-const UPDATE_CHECK_TICK: Duration = Duration::from_secs(60 * 60);
-const RECORDING_QUIT_POLL: Duration = Duration::from_millis(100);
-const RECORDING_QUIT_WAIT: Duration = Duration::from_secs(12);
+mod countdown;
+mod deliver;
+mod flow;
+mod notice;
+mod panels;
+mod recording;
+mod save;
+mod shortcuts;
+mod startup;
+mod tray;
 
-struct Session {
-    busy: Cell<bool>,
-    last_region: Cell<Option<LogicalRect>>,
-    clipboard: Option<Clipboard>,
-    notifier: Option<FdoNotifier>,
-    notifications: Cell<Notifications>,
-    shortcuts: RefCell<Option<PortalGuard>>,
-    tray: RefCell<Option<Box<dyn TrayGuard>>>,
+use flow::start_capture;
+use panels::{open_gallery, open_settings, pin_file};
+use recording::{quit_after_recording, start_gif_export, toggle_recording};
+pub(crate) use save::store_at;
+use startup::{
+    check_library, schedule_update_checks, start_session_services, write_default_config,
+};
+use tray::toggle_menu;
+
+struct Recorder {
+    active: RefCell<Option<Recording>>,
+    live: Cell<bool>,
+    exporting_gif: Cell<bool>,
+}
+
+struct Panels {
     popover: RefCell<Option<gtk::Window>>,
     settings: RefCell<Option<gtk::Window>>,
     gallery: RefCell<Option<gtk::Window>>,
     gallery_handle: RefCell<Option<gallery::Handle>>,
     settings_handle: RefCell<Option<settings::Handle>>,
-    shortcut_host: RefCell<ShortcutHost>,
-    shortcut_labels: RefCell<Vec<(CaptureMode, String)>>,
+}
+
+struct ShortcutState {
+    guard: RefCell<Option<PortalGuard>>,
+    host: RefCell<ShortcutHost>,
+    labels: RefCell<Vec<(CaptureMode, String)>>,
+}
+
+struct Session {
+    busy: Cell<bool>,
+    countdown: RefCell<Option<Rc<countdown::Countdown>>>,
+    last_region: Cell<Option<LogicalRect>>,
+    clipboard: Option<Clipboard>,
+    notifier: Option<FdoNotifier>,
+    notifications: Cell<Notifications>,
+    tray: RefCell<Option<Box<dyn TrayGuard>>>,
+    shortcuts: ShortcutState,
+    panels: Panels,
+    recorder: Recorder,
     window_capture: Cell<Option<Availability>>,
-    recording: RefCell<Option<Recording>>,
-    recording_live: Cell<bool>,
+    trigger_config: RefCell<Option<config::Config>>,
 }
 
 pub enum Command {
@@ -118,8 +131,8 @@ impl Request {
 
     fn from_variant(variant: &glib::Variant) -> Option<Self> {
         let (mode, backend, save, edit, delay_ms, trigger_us) = variant.get::<RequestVariant>()?;
-        if u64::from(delay_ms) > crate::MAX_DELAY_SECONDS * 1000 {
-            eprintln!("kiekje: ignored a capture request with a {delay_ms} ms delay");
+        if u64::from(delay_ms) > crate::cli::MAX_DELAY_SECONDS * 1000 {
+            warn!("ignored a capture request with a {delay_ms} ms delay");
             return None;
         }
         Some(Self {
@@ -158,38 +171,48 @@ pub fn run(command: Command) -> glib::ExitCode {
     }
 
     for error in fonts::register() {
-        eprintln!("kiekje: {error}, using the system font");
+        warn!("{error}, using the system font");
     }
 
     let clipboard = match Clipboard::start() {
         Ok(clipboard) => Some(clipboard),
         Err(error) => {
-            println!("kiekje: using the GTK clipboard: {error}");
+            info!("using the GTK clipboard: {error}");
             None
         }
     };
     let session = Rc::new(Session {
         busy: Cell::new(false),
+        countdown: RefCell::new(None),
         last_region: Cell::new(None),
         clipboard,
         notifier: app.dbus_connection().map(FdoNotifier::start),
         notifications: Cell::new(Notifications::default()),
-        shortcuts: RefCell::new(None),
         tray: RefCell::new(None),
-        popover: RefCell::new(None),
-        settings: RefCell::new(None),
-        gallery: RefCell::new(None),
-        gallery_handle: RefCell::new(None),
-        settings_handle: RefCell::new(None),
-        shortcut_host: RefCell::new(ShortcutHost::Starting),
-        shortcut_labels: RefCell::new(Vec::new()),
+        shortcuts: ShortcutState {
+            guard: RefCell::new(None),
+            host: RefCell::new(ShortcutHost::Starting),
+            labels: RefCell::new(Vec::new()),
+        },
+        panels: Panels {
+            popover: RefCell::new(None),
+            settings: RefCell::new(None),
+            gallery: RefCell::new(None),
+            gallery_handle: RefCell::new(None),
+            settings_handle: RefCell::new(None),
+        },
+        recorder: Recorder {
+            active: RefCell::new(None),
+            live: Cell::new(false),
+            exporting_gif: Cell::new(false),
+        },
         window_capture: Cell::new(None),
-        recording: RefCell::new(None),
-        recording_live: Cell::new(false),
+        trigger_config: RefCell::new(None),
     });
     install_actions(&app, &session);
     start_session_services(&app, &session);
     write_default_config();
+    ui::apply_saved_theme();
     check_library();
     schedule_update_checks(&session);
     thread::spawn(|| {
@@ -251,416 +274,6 @@ fn exit_without_running(app: &gtk::Application, code: glib::ExitCode) -> glib::E
     app.run_with_args(&[env!("CARGO_PKG_NAME")])
 }
 
-fn start_session_services(app: &gtk::Application, session: &Rc<Session>) {
-    let app = app.clone();
-    let session = session.clone();
-    glib::spawn_future_local(async move {
-        let window = match gio::spawn_blocking(|| windows::availability(windows::detect())).await {
-            Ok(window) => window,
-            Err(_) => {
-                eprintln!("kiekje: the window detection worker stopped");
-                Availability::Unavailable(windows::UNAVAILABLE)
-            }
-        };
-        if let Availability::Unavailable(reason) = window {
-            println!("kiekje: window capture is off: {reason}");
-        }
-        session.window_capture.set(Some(window));
-        register_shortcuts(&app, &session, window);
-        start_tray(&app, &session, window);
-    });
-}
-
-fn window_capture(session: &Session) -> Availability {
-    session
-        .window_capture
-        .get()
-        .unwrap_or(Availability::Available)
-}
-
-fn offered_actions(window: Availability) -> Vec<ShortcutAction> {
-    ShortcutAction::ALL
-        .into_iter()
-        .filter(|action| *action != ShortcutAction::Window || window.is_available())
-        .collect()
-}
-
-fn register_shortcuts(app: &gtk::Application, session: &Rc<Session>, window: Availability) {
-    let Some(connection) = app.dbus_connection() else {
-        eprintln!("kiekje: no session bus, global shortcuts are off");
-        session
-            .shortcut_host
-            .replace(ShortcutHost::Off("there is no session bus".to_owned()));
-        return;
-    };
-    let weak_app = app.downgrade();
-    let weak_session = Rc::downgrade(session);
-    let on_activated = move |action: ShortcutAction| {
-        let (Some(app), Some(session)) = (weak_app.upgrade(), weak_session.upgrade()) else {
-            return;
-        };
-        println!("kiekje: shortcut {}", action.id());
-        start_capture(&app, Request::saved(action_mode(action)), &session);
-    };
-    let session = Rc::downgrade(session);
-    glib::spawn_future_local(async move {
-        let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
-            .await
-            .unwrap_or_default();
-        let registrar = PortalShortcuts::new(
-            connection.clone(),
-            shortcuts.clone(),
-            offered_actions(window),
-        );
-        match registrar.bind(on_activated).await {
-            Ok((mut guard, bindings)) => {
-                let on_hyprland = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some();
-                let mut unbound = false;
-                let mut labels = Vec::new();
-                for binding in bindings {
-                    let mode = action_mode(binding.action);
-                    match binding.trigger {
-                        Some(trigger) => {
-                            println!(
-                                "kiekje: shortcut {} bound to {trigger} through {}",
-                                binding.action.id(),
-                                registrar.name()
-                            );
-                            labels.push((mode, trigger));
-                        }
-                        None if on_hyprland => {
-                            unbound = true;
-                            if let Some(trigger) = shortcuts.slot(binding.action).trigger() {
-                                labels.push((mode, trigger.label()));
-                            }
-                        }
-                        None => println!(
-                            "kiekje: shortcut {} registered through {} without a trigger; assign one in the desktop settings",
-                            binding.action.id(),
-                            registrar.name()
-                        ),
-                    }
-                }
-                if unbound {
-                    install_hyprland_binds(shortcuts);
-                }
-                let on_kde = !on_hyprland && kde::holds(&connection, APP_ID).await;
-                if let Some(session) = session.upgrade() {
-                    if !on_hyprland {
-                        let changed_session = Rc::downgrade(&session);
-                        guard.watch_changes(move |bindings| {
-                            if let Some(session) = changed_session.upgrade() {
-                                desktop_changed(&session, bindings);
-                            }
-                        });
-                    }
-                    session.shortcut_host.replace(if on_hyprland {
-                        ShortcutHost::Hyprland
-                    } else if on_kde {
-                        ShortcutHost::Kde
-                    } else {
-                        ShortcutHost::Desktop {
-                            name: registrar.name(),
-                            configurable: guard.can_configure(),
-                        }
-                    });
-                    session.shortcut_labels.replace(labels);
-                    session.shortcuts.replace(Some(guard));
-                }
-            }
-            Err(error) => {
-                eprintln!("kiekje: global shortcuts are off: {error}");
-                if let Some(session) = session.upgrade() {
-                    session
-                        .shortcut_host
-                        .replace(ShortcutHost::Off(error.to_string()));
-                }
-            }
-        }
-    });
-}
-
-fn desktop_changed(session: &Session, bindings: Vec<Binding>) {
-    let mut labels = Vec::new();
-    for binding in bindings {
-        println!(
-            "kiekje: shortcut {} changed to {}",
-            binding.action.id(),
-            binding.trigger.as_deref().unwrap_or("nothing")
-        );
-        if let Some(trigger) = binding.trigger {
-            labels.push((binding.action, trigger));
-        }
-    }
-    if let Some(handle) = session.settings_handle.borrow().as_ref() {
-        handle.show_bound(&labels);
-    }
-    session.shortcut_labels.replace(
-        labels
-            .into_iter()
-            .map(|(action, label)| (action_mode(action), label))
-            .collect(),
-    );
-}
-
-fn configure_shortcuts(session: &Session) {
-    let Some(configure) = session
-        .shortcuts
-        .borrow()
-        .as_ref()
-        .map(PortalGuard::configure)
-    else {
-        eprintln!("kiekje: no shortcut session to configure");
-        return;
-    };
-    glib::spawn_future_local(async move {
-        if let Err(error) = configure.await {
-            eprintln!("kiekje: the desktop's shortcut dialog did not open: {error}");
-        }
-    });
-}
-
-fn install_hyprland_binds(shortcuts: Shortcuts) {
-    glib::spawn_future_local(async move {
-        let include = hyprland::include_path();
-        let target = include.clone();
-        let written = gio::spawn_blocking(move || {
-            let changed = hyprland::write_include(&target, APP_ID, &shortcuts)?;
-            let sourced =
-                hyprland::is_sourced(&hyprland::main_config_path(), &target, &glib::home_dir());
-            Ok::<_, std::io::Error>((changed, sourced))
-        })
-        .await;
-        match written {
-            Ok(Ok((changed, sourced))) => {
-                if changed {
-                    println!("kiekje: wrote Hyprland binds to {}", include.display());
-                }
-                if !sourced {
-                    println!(
-                        "kiekje: shortcuts have no keys yet; add `{}` to {}",
-                        hyprland::source_line(&include),
-                        hyprland::main_config_path().display()
-                    );
-                }
-            }
-            Ok(Err(error)) => eprintln!(
-                "kiekje: could not write Hyprland binds to {}: {error}",
-                include.display()
-            ),
-            Err(_) => eprintln!("kiekje: the Hyprland bind worker stopped"),
-        }
-    });
-}
-
-fn start_tray(app: &gtk::Application, session: &Rc<Session>, window: Availability) {
-    let host = SniTray { window };
-    let name = host.name();
-    let (commands, received) = async_channel::unbounded();
-    let (started_sender, started) = async_channel::bounded(1);
-    thread::spawn(move || {
-        // The receiver only disappears when the app is quitting.
-        let _ = started_sender.send_blocking(host.start(commands));
-    });
-
-    let weak_app = app.downgrade();
-    let weak_session = Rc::downgrade(session);
-    glib::spawn_future_local(async move {
-        match started.recv().await {
-            Ok(Ok(guard)) => {
-                println!("kiekje: tray shown through {name}");
-                match weak_session.upgrade() {
-                    Some(session) => {
-                        session.tray.replace(Some(Box::new(guard)));
-                    }
-                    None => guard.stop(),
-                }
-            }
-            Ok(Err(error)) => {
-                eprintln!("kiekje: tray is off: {error}");
-                return;
-            }
-            Err(_) => return,
-        }
-        while let Ok(command) = received.recv().await {
-            let (Some(app), Some(session)) = (weak_app.upgrade(), weak_session.upgrade()) else {
-                return;
-            };
-            handle_tray_command(&app, &session, command);
-        }
-    });
-}
-
-fn action_mode(action: ShortcutAction) -> CaptureMode {
-    match action {
-        ShortcutAction::Region => CaptureMode::Region,
-        ShortcutAction::Fullscreen => CaptureMode::Fullscreen,
-        ShortcutAction::Window => CaptureMode::Window,
-    }
-}
-
-fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: TrayCommand) {
-    match command {
-        TrayCommand::Capture { mode } => {
-            println!("kiekje: tray capture-{}", mode.as_str());
-            capture_after_menu(app, session, Request::saved(mode));
-        }
-        TrayCommand::Annotate => {
-            println!("kiekje: tray annotate-region");
-            capture_after_menu(app, session, Request::annotated());
-        }
-        TrayCommand::Record => toggle_recording(session),
-        TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
-        TrayCommand::OpenCaptures => open_captures(),
-        TrayCommand::OpenGallery => open_gallery(app, session),
-        TrayCommand::OpenSettings => open_settings(app, session),
-        TrayCommand::Quit => app.activate_action("quit", None),
-    }
-}
-
-fn capture_after_menu(app: &gtk::Application, session: &Rc<Session>, request: Request) {
-    let app = app.clone();
-    let session = session.clone();
-    glib::timeout_add_local_once(TRAY_MENU_CLOSE, move || {
-        let request = Request {
-            trigger_us: glib::monotonic_time(),
-            ..request
-        };
-        start_capture(&app, request, &session)
-    });
-}
-
-fn toggle_menu(app: &gtk::Application, session: &Rc<Session>, click: Option<(i32, i32)>) {
-    if let Some(open) = session.popover.take() {
-        open.close();
-        return;
-    }
-    let app = app.clone();
-    let session = session.clone();
-    glib::spawn_future_local(async move {
-        let content = popover::Content {
-            shortcuts: session.shortcut_labels.borrow().clone(),
-            window: window_capture(&session),
-            recording: session.recording.borrow().is_some(),
-        };
-        let pick_app = app.downgrade();
-        let pick_session = Rc::downgrade(&session);
-        let window = popover::show(&app, click, content, move |pick| {
-            let (Some(app), Some(session)) = (pick_app.upgrade(), pick_session.upgrade()) else {
-                return;
-            };
-            match pick {
-                Pick::Capture(mode) => {
-                    println!("kiekje: menu capture-{}", mode.as_str());
-                    capture_after_menu(&app, &session, Request::saved(mode));
-                }
-                Pick::Annotate => {
-                    println!("kiekje: menu annotate-region");
-                    capture_after_menu(&app, &session, Request::annotated());
-                }
-                Pick::Record => toggle_recording(&session),
-                Pick::OpenCaptures => open_captures(),
-                Pick::Settings => open_settings(&app, &session),
-                Pick::Gallery => open_gallery(&app, &session),
-                Pick::Quit => app.activate_action("quit", None),
-            }
-        });
-        let closed_session = Rc::downgrade(&session);
-        window.connect_close_request(move |closed| {
-            if let Some(session) = closed_session.upgrade() {
-                let current = session.popover.borrow().clone();
-                if current.as_ref() == Some(closed) {
-                    session.popover.take();
-                }
-            }
-            glib::Propagation::Proceed
-        });
-        session.popover.replace(Some(window));
-    });
-}
-
-fn schedule_update_checks(session: &Rc<Session>) {
-    let session = Rc::downgrade(session);
-    glib::timeout_add_local_once(FIRST_UPDATE_CHECK, move || {
-        check_for_updates(session.clone());
-        glib::timeout_add_local(UPDATE_CHECK_TICK, move || {
-            check_for_updates(session.clone());
-            glib::ControlFlow::Continue
-        });
-    });
-}
-
-fn check_for_updates(session: Weak<Session>) {
-    glib::spawn_future_local(async move {
-        let checked =
-            gio::spawn_blocking(|| update::automatic(&config::path(), &update::state::path()))
-                .await;
-        match checked {
-            Ok(update::Automatic::Newer {
-                available,
-                notify: true,
-            }) => {
-                println!("kiekje: version {} is available", available.version);
-                let Some(session) = session.upgrade() else {
-                    return;
-                };
-                let notice = Notice::UpdateAvailable {
-                    version: available.version,
-                    url: available.url,
-                };
-                match &session.notifier {
-                    Some(notifier) => notifier.send(&notice),
-                    None => println!("kiekje: no session bus, update notification skipped"),
-                }
-            }
-            Ok(_) => {}
-            Err(_) => eprintln!("kiekje: the update check worker stopped"),
-        }
-    });
-}
-
-fn write_default_config() {
-    glib::spawn_future_local(async {
-        let path = config::path();
-        let target = path.clone();
-        match gio::spawn_blocking(move || config::ensure_file(&target)).await {
-            Ok(Ok(true)) => println!("kiekje: wrote the default config to {}", path.display()),
-            Ok(Ok(false)) => {}
-            Ok(Err(error)) => eprintln!("kiekje: {error}"),
-            Err(_) => eprintln!("kiekje: the config worker stopped"),
-        }
-    });
-}
-
-fn open_captures() {
-    glib::spawn_future_local(async move {
-        let created = gio::spawn_blocking(|| {
-            let directory = config::load().storage.captures_dir();
-            std::fs::create_dir_all(&directory)
-                .map(|()| directory.clone())
-                .map_err(|error| (directory, error))
-        })
-        .await;
-        let directory = match created {
-            Ok(Ok(directory)) => directory,
-            Ok(Err((directory, error))) => {
-                eprintln!("kiekje: could not create {}: {error}", directory.display());
-                return;
-            }
-            Err(_) => {
-                eprintln!("kiekje: the folder worker stopped");
-                return;
-            }
-        };
-        let uri = gio::File::for_path(&directory).uri();
-        if let Err(error) =
-            gio::AppInfo::launch_default_for_uri_future(&uri, gio::AppLaunchContext::NONE).await
-        {
-            eprintln!("kiekje: could not open {uri}: {error}");
-        }
-    });
-}
-
 fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
     let capture = gio::SimpleAction::new("capture", Some(&RequestVariant::static_variant_type()));
     let capture_session = session.clone();
@@ -670,7 +283,7 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
             capture_app.upgrade(),
             parameter.and_then(Request::from_variant),
         ) else {
-            eprintln!("kiekje: ignored a malformed capture request");
+            warn!("ignored a malformed capture request");
             return;
         };
         start_capture(&app, request, &capture_session);
@@ -682,6 +295,12 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
     let quit_session = Rc::downgrade(session);
     quit.connect_activate(move |_, _| {
         pin::close_all();
+        if let Some(session) = quit_session.upgrade() {
+            let countdown = session.countdown.take();
+            if let Some(countdown) = countdown {
+                countdown.cancel();
+            }
+        }
         if let Some(guard) = quit_session
             .upgrade()
             .and_then(|session| session.tray.take())
@@ -693,7 +312,8 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         };
         let recording = quit_session.upgrade().filter(|session| {
             session
-                .recording
+                .recorder
+                .active
                 .borrow()
                 .as_ref()
                 .map(Recording::stop)
@@ -726,6 +346,10 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
     });
     app.add_action(&settings);
 
+    let toggle_theme = gio::SimpleAction::new("toggle-theme", None);
+    toggle_theme.connect_activate(|_, _| ui::toggle_theme());
+    app.add_action(&toggle_theme);
+
     let gallery = gio::SimpleAction::new("gallery", None);
     let gallery_app = app.downgrade();
     let gallery_session = Rc::downgrade(session);
@@ -743,7 +367,7 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
             pin_app.upgrade(),
             parameter.and_then(glib::Variant::get::<String>),
         ) else {
-            eprintln!("kiekje: ignored a malformed pin request");
+            warn!("ignored a malformed pin request");
             return;
         };
         pin_file(&app, std::path::PathBuf::from(path));
@@ -758,1138 +382,20 @@ fn install_actions(app: &gtk::Application, session: &Rc<Session>) {
         }
     });
     app.add_action(&record);
-}
 
-fn quit_after_recording(app: gtk::Application, session: Weak<Session>) {
-    println!("kiekje: saving the recording before quitting");
-    let started = std::time::Instant::now();
-    glib::timeout_add_local(RECORDING_QUIT_POLL, move || {
-        let saving = session
-            .upgrade()
-            .is_some_and(|session| session.recording.borrow().is_some());
-        if saving && started.elapsed() < RECORDING_QUIT_WAIT {
-            return glib::ControlFlow::Continue;
-        }
-        app.quit();
-        glib::ControlFlow::Break
-    });
-}
-
-fn toggle_recording(session: &Rc<Session>) {
-    if let Some(recording) = session.recording.borrow().as_ref() {
-        println!("kiekje: stopping the recording");
-        recording.stop();
-        return;
-    }
-    println!("kiekje: starting a recording");
-    let (events, received) = async_channel::unbounded();
-    session.recording.replace(Some(record::start(events)));
-    let weak = Rc::downgrade(session);
-    glib::spawn_future_local(async move {
-        while let Ok(event) = received.recv().await {
-            let Some(session) = weak.upgrade() else {
-                return;
-            };
-            recording_event(&session, event);
-        }
-    });
-}
-
-fn recording_event(session: &Session, event: record::Event) {
-    let notice = match event {
-        record::Event::Started => {
-            session.recording_live.set(true);
-            set_tray_recording(session, true);
-            Notice::RecordingStarted
-        }
-        record::Event::Saved(path) => {
-            println!("kiekje: recording saved to {}", path.display());
-            end_recording(session);
-            Notice::RecordingSaved { path }
-        }
-        record::Event::Failed(record::RecordError::Canceled) => {
-            println!("kiekje: recording cancelled");
-            end_recording(session);
-            return;
-        }
-        record::Event::Failed(error) => {
-            eprintln!("kiekje: recording failed: {error}");
-            end_recording(session);
-            Notice::RecordingFailed {
-                reason: error.to_string(),
-            }
-        }
-    };
-    notify(session, notice);
-}
-
-fn end_recording(session: &Session) {
-    session.recording.take();
-    if session.recording_live.replace(false) {
-        set_tray_recording(session, false);
-    }
-}
-
-fn set_tray_recording(session: &Session, recording: bool) {
-    if let Some(tray) = session.tray.borrow().as_ref() {
-        tray.set_recording(recording);
-    }
-}
-
-fn pin_file(app: &gtk::Application, path: std::path::PathBuf) {
-    let app = app.clone();
-    glib::spawn_future_local(async move {
-        let shown = path.display().to_string();
-        match pin::open_file(&app, path, None).await {
-            Ok(()) => println!("kiekje: pinned {shown}"),
-            Err(error) => eprintln!("kiekje: not pinned: {error}"),
-        }
-    });
-}
-
-fn open_gallery(app: &gtk::Application, session: &Rc<Session>) {
-    if let Some(open) = session.gallery.borrow().as_ref() {
-        open.present();
-        return;
-    }
-    let (window, handle) = gallery::show(app);
-    let closed_session = Rc::downgrade(session);
-    window.connect_close_request(move |_| {
-        if let Some(session) = closed_session.upgrade() {
-            session.gallery.take();
-            session.gallery_handle.take();
-        }
-        glib::Propagation::Proceed
-    });
-    session.gallery_handle.replace(Some(handle));
-    session.gallery.replace(Some(window));
-}
-
-fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
-    if let Some(open) = session.settings.borrow().as_ref() {
-        open.present();
-        return;
-    }
-    let app = app.clone();
-    let session = session.clone();
-    glib::spawn_future_local(async move {
-        let config = gio::spawn_blocking(config::load).await.unwrap_or_default();
-        if session.settings.borrow().is_some() {
-            return;
-        }
-        let bound = ShortcutAction::ALL
-            .into_iter()
-            .filter_map(|action| {
-                let mode = action_mode(action);
-                session
-                    .shortcut_labels
-                    .borrow()
-                    .iter()
-                    .find(|(bound, _)| *bound == mode)
-                    .map(|(_, label)| (action, label.clone()))
-            })
-            .collect();
-        let model = settings::Model {
-            shortcuts: config.shortcuts,
-            storage: config.storage,
-            saving: config.saving,
-            notifications: config.notifications,
-            capture: config.capture,
-            overlay: config.overlay,
-            general: config.general,
-            upload: config.upload,
-            drawing_keys: config.drawing.keys,
-            host: session.shortcut_host.borrow().clone(),
-            bound,
-            window_capture: window_capture(&session),
-        };
-        let saved_session = Rc::downgrade(&session);
-        let configure_session = Rc::downgrade(&session);
-        let cleared_session = Rc::downgrade(&session);
-        let (window, handle) = settings::show(
-            &app,
-            model,
-            move |shortcuts| {
-                if let Some(session) = saved_session.upgrade() {
-                    session.shortcut_labels.replace(hyprland_labels(shortcuts));
-                }
-            },
-            move || {
-                if let Some(session) = configure_session.upgrade() {
-                    configure_shortcuts(&session);
-                }
-            },
-            move || {
-                if let Some(session) = cleared_session.upgrade()
-                    && let Some(gallery) = session.gallery_handle.borrow().as_ref()
-                {
-                    gallery.reload();
-                }
-            },
-        );
-        let closed_session = Rc::downgrade(&session);
-        window.connect_close_request(move |_| {
-            if let Some(session) = closed_session.upgrade() {
-                session.settings.take();
-                session.settings_handle.take();
-            }
-            glib::Propagation::Proceed
-        });
-        session.settings_handle.replace(Some(handle));
-        session.settings.replace(Some(window));
-    });
-}
-
-fn hyprland_labels(shortcuts: &Shortcuts) -> Vec<(CaptureMode, String)> {
-    ShortcutAction::ALL
-        .into_iter()
-        .filter_map(|action| {
-            shortcuts
-                .slot(action)
-                .trigger()
-                .map(|trigger| (action_mode(action), trigger.label()))
-        })
-        .collect()
-}
-
-fn start_capture(app: &gtk::Application, request: Request, session: &Rc<Session>) {
-    if session.busy.replace(true) {
-        eprintln!("kiekje: a capture is already running, ignoring this trigger");
-        return;
-    }
-    if request.delay.is_zero() {
-        grab(app, request, session);
-        return;
-    }
-    println!("kiekje: capturing in {:.1} s", request.delay.as_secs_f64());
-    let app = app.clone();
-    let session = session.clone();
-    glib::timeout_add_local_once(request.delay, move || {
-        let request = Request {
-            trigger_us: glib::monotonic_time(),
-            ..request
-        };
-        grab(&app, request, &session);
-    });
-}
-
-fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
-    let received_us = glib::monotonic_time();
-    let monitors = gdk_monitors();
-    let infos: Vec<MonitorInfo> = monitors.iter().map(monitor_info).collect();
-    let known_region = session.last_region.get();
-
-    let (sender, receiver) = async_channel::bounded(1);
-    thread::spawn(move || {
-        let config = config::load();
-        let windows = match request.mode {
-            CaptureMode::Window => Some(thread::spawn(list_windows)),
-            CaptureMode::Region if config.overlay.window_snap => {
-                Some(thread::spawn(|| Ok(snapshot_windows())))
-            }
-            CaptureMode::Region | CaptureMode::Fullscreen | CaptureMode::Repeat => None,
-        };
-        let notifications = config.notifications;
-        if notifications.sound {
-            sound::check();
-        }
-        let inline = config.capture.after_selection == AfterSelection::Edit;
-        let overlay = config.overlay;
-        let drawing = config.drawing;
-        let previous_region = (request.mode == CaptureMode::Region)
-            .then(|| known_region.or_else(last_region::load))
-            .flatten();
-        let result = match request.mode {
-            CaptureMode::Repeat => match known_region.or_else(last_region::load) {
-                Some(region) => backends::capture(request.backend, &infos, false)
-                    .map(|capture| (capture, Some(region))),
-                None => Err(CaptureError::NoLastRegion),
-            },
-            CaptureMode::Region | CaptureMode::Fullscreen | CaptureMode::Window => {
-                backends::capture(request.backend, &infos, false).map(|capture| (capture, None))
-            }
-        };
-        let windows = match windows.map(|handle| handle.join()) {
-            Some(Ok(listed)) => listed,
-            Some(Err(_)) => Err(CaptureError::WindowList(
-                "the window list worker stopped".into(),
-            )),
-            None => Ok(Vec::new()),
-        };
-        let result = result.and_then(|(capture, region)| {
-            windows.map(|windows| (Capture { windows, ..capture }, region))
-        });
-        // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking((
-            result,
-            notifications,
-            inline,
-            overlay,
-            drawing,
-            previous_region,
-            glib::monotonic_time(),
-        ));
-    });
-
-    let app = app.clone();
-    let session = session.clone();
-    glib::spawn_future_local(async move {
-        let Ok((result, notifications, inline, overlay, drawing, previous_region, captured_us)) =
-            receiver.recv().await
-        else {
-            session.busy.set(false);
+    let export_gif = gio::SimpleAction::new("export-gif", Some(glib::VariantTy::STRING));
+    let gif_session = Rc::downgrade(session);
+    export_gif.connect_activate(move |_, parameter| {
+        let (Some(session), Some(path)) = (
+            gif_session.upgrade(),
+            parameter.and_then(glib::Variant::get::<String>),
+        ) else {
+            warn!("ignored a malformed GIF export request");
             return;
         };
-        session.notifications.set(notifications);
-        if notifications.sound {
-            sound::prepare();
-        }
-        log_timing("trigger -> instance", request.trigger_us, received_us);
-        log_timing("instance -> frames", received_us, captured_us);
-        match result {
-            Ok((capture, region)) => {
-                let options = overlay::Options {
-                    mode: request.mode,
-                    edit: request.edit || inline,
-                    overlay,
-                    drawing,
-                    last_region: previous_region,
-                };
-                handle_capture(&app, request, capture, region, &monitors, options, session)
-            }
-            Err(CaptureError::Canceled) => {
-                println!("kiekje: capture canceled");
-                session.busy.set(false);
-            }
-            Err(error) => {
-                eprintln!("kiekje: capture failed: {error}");
-                notify(
-                    &session,
-                    Notice::CaptureFailed {
-                        reason: error.to_string(),
-                    },
-                );
-                session.busy.set(false);
-            }
-        }
+        start_gif_export(&session, std::path::PathBuf::from(path));
     });
-}
-
-fn handle_capture(
-    app: &gtk::Application,
-    request: Request,
-    capture: Capture,
-    region: Option<LogicalRect>,
-    monitors: &[gdk::Monitor],
-    options: overlay::Options,
-    session: Rc<Session>,
-) {
-    println!("kiekje: backend {}", capture.backend);
-    if let Some(reason) = &capture.fallback_reason {
-        println!("kiekje: skipped earlier backends: {reason}");
-    }
-    for frame in &capture.frames {
-        println!(
-            "kiekje: frame {} {}x{} for logical {}x{}{:+}{:+} ({:?})",
-            frame.monitor.connector,
-            frame.width,
-            frame.height,
-            frame.monitor.logical.width,
-            frame.monitor.logical.height,
-            frame.monitor.logical.x,
-            frame.monitor.logical.y,
-            frame.format,
-        );
-    }
-
-    match (request.mode, region) {
-        (CaptureMode::Fullscreen, _) => {
-            let frames = capture.frames;
-            deliver(
-                Box::new(move || output::stitch(&frames)),
-                request,
-                Filing::default(),
-                session,
-            );
-        }
-        (CaptureMode::Repeat, Some(region)) => {
-            repeat_region(request, capture.frames, region, session)
-        }
-        (CaptureMode::Repeat, None) => {
-            eprintln!("kiekje: capture failed: {}", CaptureError::NoLastRegion);
-            notify(
-                &session,
-                Notice::CaptureFailed {
-                    reason: CaptureError::NoLastRegion.to_string(),
-                },
-            );
-            session.busy.set(false);
-        }
-        (CaptureMode::Region | CaptureMode::Window, _) => {
-            let frames = Arc::new(capture.frames);
-            let selection_frames = frames.clone();
-            let trigger_us = request.trigger_us;
-            let pin_app = app.clone();
-            overlay::show(
-                app,
-                frames,
-                &capture.windows,
-                monitors,
-                options,
-                move |selection| match selection {
-                    Outcome::Selected(Selection { rect, plan }) => {
-                        remember_region(&session, rect);
-                        log_selection(&selection_frames, plan);
-                        deliver(
-                            Box::new(move || {
-                                Some(output::render_selection(&selection_frames, plan))
-                            }),
-                            request,
-                            Filing::default(),
-                            session,
-                        )
-                    }
-                    Outcome::Edited {
-                        selection: Selection { rect, plan },
-                        image,
-                        finish,
-                        annotated,
-                    } => {
-                        remember_region(&session, rect);
-                        log_selection(&selection_frames, plan);
-                        if finish == Finish::Pin {
-                            pin::open_image(&pin_app, image, Some(rect));
-                            session.busy.set(false);
-                            return;
-                        }
-                        finish_edit(image, finish, annotated, request, session);
-                    }
-                    Outcome::Canceled => {
-                        println!("kiekje: selection canceled, nothing saved");
-                        session.busy.set(false);
-                    }
-                    Outcome::MonitorLost(connector) => {
-                        eprintln!(
-                            "kiekje: monitor {connector} was disconnected during the selection, nothing saved"
-                        );
-                        notify(&session, Notice::MonitorLost);
-                        session.busy.set(false);
-                    }
-                },
-                move || {
-                    log_timing(
-                        "trigger -> overlay painted",
-                        trigger_us,
-                        glib::monotonic_time(),
-                    )
-                },
-            );
-        }
-    }
-}
-
-fn list_windows() -> Result<Vec<LogicalRect>, CaptureError> {
-    match backends::windows::snapshot() {
-        Ok((source, windows)) => {
-            println!("kiekje: {} windows from {source}", windows.len());
-            Ok(windows)
-        }
-        Err(WindowError::Unavailable) => Err(CaptureError::NoWindowSource(windows::UNAVAILABLE)),
-        Err(error) => Err(CaptureError::WindowList(error.to_string())),
-    }
-}
-
-fn snapshot_windows() -> Vec<LogicalRect> {
-    match backends::windows::snapshot() {
-        Ok((source, windows)) => {
-            println!("kiekje: {} windows from {source}", windows.len());
-            windows
-        }
-        Err(WindowError::Unavailable) => Vec::new(),
-        Err(error) => {
-            eprintln!("kiekje: window snapping is off for this capture: {error}");
-            Vec::new()
-        }
-    }
-}
-
-fn repeat_region(request: Request, frames: Vec<Frame>, region: LogicalRect, session: Rc<Session>) {
-    let geometry: Vec<(LogicalRect, (u32, u32))> = frames
-        .iter()
-        .map(|frame| (frame.monitor.logical, (frame.width, frame.height)))
-        .collect();
-    let Some(plan) = mapping::plan_selection(region, &geometry) else {
-        let reason = format!(
-            "the last region {}x{}{:+}{:+} is not on any monitor now",
-            region.width, region.height, region.x, region.y,
-        );
-        eprintln!("kiekje: capture failed: {reason}");
-        notify(&session, Notice::CaptureFailed { reason });
-        session.busy.set(false);
-        return;
-    };
-    log_selection(&frames, plan);
-    deliver(
-        Box::new(move || Some(output::render_selection(&frames, plan))),
-        request,
-        Filing::default(),
-        session,
-    );
-}
-
-fn remember_region(session: &Session, region: LogicalRect) {
-    if session.last_region.replace(Some(region)) == Some(region) {
-        return;
-    }
-    glib::spawn_future_local(async move {
-        match gio::spawn_blocking(move || last_region::save_to(&last_region::path(), region)).await
-        {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => eprintln!("kiekje: {error}"),
-            Err(_) => eprintln!("kiekje: the last region worker stopped"),
-        }
-    });
-}
-
-type Render = Box<dyn FnOnce() -> Option<Image> + Send>;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Placement {
-    #[default]
-    Configured,
-    Captures,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-struct Filing {
-    placement: Placement,
-    annotated: bool,
-}
-
-fn deliver(render: Render, request: Request, filing: Filing, session: Rc<Session>) {
-    if request.edit {
-        annotate(render, request, session);
-        return;
-    }
-    let clipboard = session.clipboard.clone();
-    let display = gdk::Display::default().is_some();
-    if clipboard.is_none() && !display && !request.save {
-        eprintln!("kiekje: no display, clipboard not set");
-        finish_delivery(
-            &session,
-            Notice::CaptureFailed {
-                reason: "no display to put the image on the clipboard".into(),
-            },
-        );
-        return;
-    }
-
-    let (sender, receiver) = async_channel::bounded(2);
-    thread::spawn(move || {
-        let Some(image) = render() else {
-            // The receiver only disappears when the app is quitting.
-            let _ = sender.send_blocking(Delivery::Done(empty_notice()));
-            return;
-        };
-        let notice = match clipboard {
-            Some(clipboard) => store(image, request, filing, Some(&clipboard), false),
-            None => copy_off_thread(image, request, filing, display, &sender),
-        };
-        // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking(Delivery::Done(notice));
-    });
-    glib::spawn_future_local(async move {
-        loop {
-            match receiver.recv().await {
-                Ok(Delivery::Pixels(pixels)) => copy_with_gtk(pixels),
-                Ok(Delivery::Done(notice)) => {
-                    finish_delivery(&session, notice);
-                    return;
-                }
-                Err(_) => {
-                    eprintln!("kiekje: delivery worker stopped");
-                    session.busy.set(false);
-                    return;
-                }
-            }
-        }
-    });
-}
-
-enum Delivery {
-    Pixels(Pixels),
-    Done(Notice),
-}
-
-struct Pixels {
-    width: u32,
-    height: u32,
-    stride: usize,
-    format: PixelFormat,
-    bytes: glib::Bytes,
-}
-
-impl Pixels {
-    fn copied(image: &Image) -> Self {
-        Self {
-            width: image.width,
-            height: image.height,
-            stride: image.stride,
-            format: image.format,
-            bytes: glib::Bytes::from(&image.data),
-        }
-    }
-
-    fn owned(image: Image) -> Self {
-        Self {
-            width: image.width,
-            height: image.height,
-            stride: image.stride,
-            format: image.format,
-            bytes: glib::Bytes::from_owned(image.data),
-        }
-    }
-}
-
-fn copy_off_thread(
-    image: Image,
-    request: Request,
-    filing: Filing,
-    display: bool,
-    sender: &async_channel::Sender<Delivery>,
-) -> Notice {
-    if !display {
-        return store(image, request, filing, None, false);
-    }
-    if request.save {
-        // The receiver only disappears when the app is quitting.
-        let _ = sender.send_blocking(Delivery::Pixels(Pixels::copied(&image)));
-        return store(image, request, filing, None, true);
-    }
-    let (width, height) = (image.width, image.height);
-    // The receiver only disappears when the app is quitting.
-    let _ = sender.send_blocking(Delivery::Pixels(Pixels::owned(image)));
-    Notice::Copied { width, height }
-}
-
-fn annotate(render: Render, request: Request, session: Rc<Session>) {
-    glib::spawn_future_local(async move {
-        let rendered = gio::spawn_blocking(render).await;
-        session.busy.set(false);
-        let image = match rendered {
-            Ok(Some(image)) => image,
-            Ok(None) => {
-                notify(&session, empty_notice());
-                return;
-            }
-            Err(_) => {
-                eprintln!("kiekje: the render worker stopped");
-                return;
-            }
-        };
-        let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() else {
-            eprintln!("kiekje: no running app to open the editor in");
-            return;
-        };
-        log_timing(
-            "trigger -> editor opening",
-            request.trigger_us,
-            glib::monotonic_time(),
-        );
-        editor::open(
-            &app,
-            editor::Source::Capture {
-                image,
-                mode: request.mode,
-            },
-        );
-    });
-}
-
-fn finish_edit(
-    image: Image,
-    finish: Finish,
-    annotated: bool,
-    request: Request,
-    session: Rc<Session>,
-) {
-    let request = Request {
-        edit: false,
-        ..request
-    };
-    let filing = Filing {
-        placement: Placement::Configured,
-        annotated,
-    };
-    match finish {
-        Finish::Accept => deliver(Box::new(move || Some(image)), request, filing, session),
-        Finish::Copy => deliver(
-            Box::new(move || Some(image)),
-            Request {
-                save: false,
-                ..request
-            },
-            filing,
-            session,
-        ),
-        Finish::Save => save_only(
-            image,
-            Request {
-                save: true,
-                ..request
-            },
-            Filing {
-                placement: Placement::Captures,
-                annotated,
-            },
-            session,
-        ),
-        Finish::SaveAs => save_as(image, request, annotated, session),
-        Finish::Pin => {
-            if let Some(app) = gio::Application::default().and_downcast::<gtk::Application>() {
-                pin::open_image(&app, image, None);
-            }
-            session.busy.set(false);
-        }
-    }
-}
-
-fn save_only(image: Image, request: Request, filing: Filing, session: Rc<Session>) {
-    glib::spawn_future_local(async move {
-        match gio::spawn_blocking(move || store(image, request, filing, None, false)).await {
-            Ok(notice) => finish_delivery(&session, notice),
-            Err(_) => {
-                eprintln!("kiekje: the save worker stopped");
-                session.busy.set(false);
-            }
-        }
-    });
-}
-
-fn save_as(image: Image, request: Request, annotated: bool, session: Rc<Session>) {
-    let (width, height) = (image.width, image.height);
-    glib::spawn_future_local(async move {
-        let suggested = gio::spawn_blocking(move || {
-            let storage = config::load().storage;
-            let base = storage.filename.render(&Naming {
-                mode: request.mode,
-                stamp: storage::now(),
-                width,
-                height,
-            });
-            (
-                storage.captures_dir(),
-                format!("{base}.{}", storage.format.extension()),
-            )
-        })
-        .await;
-        let Ok((folder, name)) = suggested else {
-            eprintln!("kiekje: the settings worker stopped, nothing saved");
-            session.busy.set(false);
-            return;
-        };
-        let dialog = gtk::FileDialog::builder()
-            .title("Save the capture")
-            .modal(true)
-            .initial_name(name)
-            .initial_folder(&gio::File::for_path(&folder))
-            .build();
-        let chosen = dialog.save_future(None::<&gtk::Window>).await;
-        let path = match chosen {
-            Ok(file) => file.path(),
-            Err(error) if error.matches(gtk::DialogError::Dismissed) => {
-                println!("kiekje: save as canceled, nothing saved");
-                session.busy.set(false);
-                return;
-            }
-            Err(error) => {
-                eprintln!("kiekje: the save dialog failed: {error}");
-                notify(
-                    &session,
-                    Notice::SaveFailed {
-                        reason: format!("the save dialog failed: {error}"),
-                        copied: false,
-                    },
-                );
-                session.busy.set(false);
-                return;
-            }
-        };
-        let Some(path) = path else {
-            notify(
-                &session,
-                Notice::SaveFailed {
-                    reason: "that location is not on this computer".into(),
-                    copied: false,
-                },
-            );
-            session.busy.set(false);
-            return;
-        };
-        let stored =
-            gio::spawn_blocking(move || store_at(image, request.mode, annotated, &path)).await;
-        match stored {
-            Ok(notice) => finish_delivery(&session, notice),
-            Err(_) => {
-                eprintln!("kiekje: the save worker stopped");
-                session.busy.set(false);
-            }
-        }
-    });
-}
-
-fn store_at(image: Image, mode: CaptureMode, annotated: bool, path: &std::path::Path) -> Notice {
-    let (width, height) = (image.width, image.height);
-    let storage = config::load().storage;
-    let format = ImageFormat::from_path(path).unwrap_or(storage.format);
-    let bytes = match output::encode(image, format, storage.quality) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            eprintln!("kiekje: {} encode failed: {error}", format.label());
-            return Notice::SaveFailed {
-                reason: format!("could not encode the image: {error}"),
-                copied: false,
-            };
-        }
-    };
-    match storage::save_as(&bytes, path, format) {
-        Ok(path) => {
-            println!("kiekje: saved {}", path.display());
-            record(&path, mode, (width, height), bytes.len(), false, annotated);
-            Notice::Saved {
-                path,
-                width,
-                height,
-                copied: false,
-            }
-        }
-        Err(error) => {
-            eprintln!("kiekje: save failed: {error}");
-            Notice::SaveFailed {
-                reason: format!("could not write {}: {error}", path.display()),
-                copied: false,
-            }
-        }
-    }
-}
-
-fn empty_notice() -> Notice {
-    eprintln!("kiekje: nothing to deliver");
-    Notice::CaptureFailed {
-        reason: "the capture had no image to deliver".into(),
-    }
-}
-
-fn finish_delivery(session: &Session, notice: Notice) {
-    if let (Notice::Saved { .. } | Notice::Copied { .. }, Some(gallery)) =
-        (&notice, session.gallery_handle.borrow().as_ref())
-    {
-        gallery.reload();
-    }
-    if matches!(notice, Notice::Saved { .. } | Notice::Copied { .. })
-        && let Some(tray) = session.tray.borrow().as_ref()
-    {
-        tray.flash();
-    }
-    notify(session, notice);
-    session.busy.set(false);
-}
-
-fn notify(session: &Session, notice: Notice) {
-    let settings = session.notifications.get();
-    if settings.sound && matches!(notice, Notice::Saved { .. } | Notice::Copied { .. }) {
-        sound::play_capture();
-    }
-    if !settings.enabled {
-        return;
-    }
-    match &session.notifier {
-        Some(notifier) => notifier.send(&notice),
-        None => println!("kiekje: no session bus, notification skipped"),
-    }
-}
-
-fn record(
-    path: &std::path::Path,
-    mode: CaptureMode,
-    (width, height): (u32, u32),
-    bytes: usize,
-    unsaved: bool,
-    annotated: bool,
-) -> bool {
-    let capture = NewCapture {
-        path: path.to_path_buf(),
-        mode,
-        width,
-        height,
-        bytes: u64::try_from(bytes).unwrap_or(u64::MAX),
-        created_us: glib::real_time(),
-        unsaved,
-        annotated,
-    };
-    match Library::open(&library::path()).and_then(|library| library.insert(&capture)) {
-        Ok(_) => true,
-        Err(error) => {
-            eprintln!("kiekje: the capture is saved but not in the library: {error}");
-            false
-        }
-    }
-}
-
-fn check_library() {
-    glib::spawn_future_local(async {
-        let checked = gio::spawn_blocking(|| {
-            let mut library = Library::open(&library::path())?;
-            let keep_days = config::load().saving.keep_unsaved_days;
-            let pruned = library.prune_unsaved(glib::real_time(), keep_days)?;
-            if pruned > 0 {
-                println!("kiekje: deleted {pruned} unsaved captures older than {keep_days} days");
-            }
-            let changed = library.check_missing()?;
-            Ok::<_, library::LibraryError>((changed, library.present()?))
-        })
-        .await;
-        let present = match checked {
-            Ok(Ok((changed, present))) => {
-                if changed > 0 {
-                    println!("kiekje: {changed} library entries changed missing state");
-                }
-                present
-            }
-            Ok(Err(error)) => {
-                eprintln!("kiekje: library check failed: {error}");
-                return;
-            }
-            Err(_) => {
-                eprintln!("kiekje: the library worker stopped");
-                return;
-            }
-        };
-        let pruned = gio::spawn_blocking(move || thumbs::prune(&thumbs::dir(), &present)).await;
-        match pruned {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => eprintln!("kiekje: thumbnail cache cleanup failed: {error}"),
-            Err(_) => eprintln!("kiekje: the thumbnail worker stopped"),
-        }
-    });
-}
-
-fn store(
-    image: Image,
-    request: Request,
-    filing: Filing,
-    clipboard: Option<&Clipboard>,
-    copied: bool,
-) -> Notice {
-    let (width, height) = (image.width, image.height);
-    let config = config::load();
-    let unsaved = filing.placement == Placement::Configured && !config.saving.enabled;
-    let storage = config.storage;
-    let format = storage.format;
-    let rgba = output::into_rgba(image);
-    let encoded = |format: ImageFormat| {
-        output::encode_rgba(&rgba, format, storage.quality).map_err(|error| {
-            eprintln!("kiekje: {} encode failed: {error}", format.label());
-            Notice::CaptureFailed {
-                reason: format!("could not encode the image: {error}"),
-            }
-        })
-    };
-    let mut copied = copied;
-    let mut png = None;
-    if let Some(clipboard) = clipboard {
-        let offered = match encoded(ImageFormat::Png) {
-            Ok(bytes) => Arc::new(bytes),
-            Err(notice) => return notice,
-        };
-        match clipboard.set_png(offered.clone()) {
-            Ok(()) => {
-                log_timing(
-                    "trigger -> clipboard offered",
-                    request.trigger_us,
-                    glib::monotonic_time(),
-                );
-                println!("kiekje: copied {width}x{height} to the clipboard");
-                copied = true;
-            }
-            Err(error) => eprintln!("kiekje: clipboard not set: {error}"),
-        }
-        png = Some(offered);
-    }
-    if !request.save {
-        return if copied {
-            Notice::Copied { width, height }
-        } else {
-            Notice::CaptureFailed {
-                reason: "could not put the image on the clipboard".into(),
-            }
-        };
-    }
-    let bytes = match png.filter(|_| format == ImageFormat::Png) {
-        Some(png) => png,
-        None => match encoded(format) {
-            Ok(bytes) => Arc::new(bytes),
-            Err(notice) => return notice,
-        },
-    };
-    let base = storage.filename.render(&Naming {
-        mode: request.mode,
-        stamp: storage::now(),
-        width,
-        height,
-    });
-    let target = Target {
-        folder: if unsaved {
-            storage::unsaved_dir()
-        } else {
-            storage.captures_dir()
-        },
-        base,
-        format,
-        mode: request.mode,
-        width,
-        height,
-        unsaved,
-        annotated: filing.annotated,
-    };
-    write_file(&bytes, target, copied)
-}
-
-struct Target {
-    folder: std::path::PathBuf,
-    base: String,
-    format: ImageFormat,
-    mode: CaptureMode,
-    width: u32,
-    height: u32,
-    unsaved: bool,
-    annotated: bool,
-}
-
-fn write_file(bytes: &[u8], target: Target, copied: bool) -> Notice {
-    let Target {
-        folder,
-        base,
-        format,
-        mode,
-        width,
-        height,
-        unsaved,
-        annotated,
-    } = target;
-    let saved = storage::save(bytes, &folder, &base, format);
-    if unsaved {
-        match saved {
-            Ok(path) => {
-                println!("kiekje: kept {} as unsaved", path.display());
-                if !record(&path, mode, (width, height), bytes.len(), true, annotated)
-                    && let Err(error) = std::fs::remove_file(&path)
-                {
-                    eprintln!(
-                        "kiekje: could not remove the untracked {}: {error}",
-                        path.display()
-                    );
-                }
-            }
-            Err(error) => eprintln!("kiekje: the unsaved capture was not kept: {error}"),
-        }
-        return if copied {
-            Notice::Copied { width, height }
-        } else {
-            Notice::CaptureFailed {
-                reason: "could not put the image on the clipboard, and saving is off".into(),
-            }
-        };
-    }
-    match saved {
-        Ok(path) => {
-            println!("kiekje: saved {}", path.display());
-            record(&path, mode, (width, height), bytes.len(), false, annotated);
-            Notice::Saved {
-                path,
-                width,
-                height,
-                copied,
-            }
-        }
-        Err(error) => {
-            eprintln!("kiekje: save failed: {error}");
-            Notice::SaveFailed {
-                reason: format!("could not write to {}: {error}", folder.display()),
-                copied,
-            }
-        }
-    }
-}
-
-fn copy_with_gtk(pixels: Pixels) {
-    let Some(display) = gdk::Display::default() else {
-        eprintln!("kiekje: no display, clipboard not set");
-        return;
-    };
-    let texture = gdk::MemoryTexture::new(
-        pixels.width as i32,
-        pixels.height as i32,
-        pixels.format.memory_format(),
-        &pixels.bytes,
-        pixels.stride,
-    );
-    display.clipboard().set_texture(&texture);
-    println!(
-        "kiekje: copied {}x{} to the GTK clipboard",
-        pixels.width, pixels.height
-    );
-}
-
-pub fn gdk_monitors() -> Vec<gdk::Monitor> {
-    let Some(display) = gdk::Display::default() else {
-        return Vec::new();
-    };
-    let model = display.monitors();
-    (0..model.n_items())
-        .filter_map(|index| model.item(index).and_downcast::<gdk::Monitor>())
-        .collect()
-}
-
-pub fn monitor_info(monitor: &gdk::Monitor) -> MonitorInfo {
-    let geometry = monitor.geometry();
-    MonitorInfo {
-        connector: monitor
-            .connector()
-            .map(|name| name.to_string())
-            .unwrap_or_default(),
-        logical: LogicalRect {
-            x: geometry.x(),
-            y: geometry.y(),
-            width: geometry.width(),
-            height: geometry.height(),
-        },
-    }
-}
-
-fn log_selection(frames: &[Frame], plan: SelectionPlan) {
-    match plan {
-        SelectionPlan::Crop { frame_index, rect } => println!(
-            "kiekje: selected {}x{}+{}+{} on {}",
-            rect.width, rect.height, rect.x, rect.y, frames[frame_index].monitor.connector,
-        ),
-        SelectionPlan::Compose {
-            bounds,
-            width,
-            height,
-            ..
-        } => println!(
-            "kiekje: selected {width}x{height} across monitors from logical {}x{}{:+}{:+}",
-            bounds.width, bounds.height, bounds.x, bounds.y,
-        ),
-    }
-}
-
-fn log_timing(label: &str, from_us: i64, to_us: i64) {
-    println!(
-        "kiekje: timing {label}: {:.1} ms",
-        (to_us - from_us) as f64 / 1000.0
-    );
+    app.add_action(&export_gif);
 }
 
 #[cfg(test)]
@@ -1916,53 +422,10 @@ mod tests {
     }
 
     #[test]
-    fn hands_copy_only_pixels_to_the_main_thread_without_copying() {
-        let data = vec![7u8; 4 * 3 * 2];
-        let source = data.as_ptr();
-        let image = Image {
-            width: 3,
-            height: 2,
-            stride: 12,
-            format: PixelFormat::Bgra,
-            data,
-        };
-        let request = Request {
-            save: false,
-            ..Request::saved(CaptureMode::Region)
-        };
-        let (sender, receiver) = async_channel::bounded(2);
-        let notice = copy_off_thread(image, request, Filing::default(), true, &sender);
-        assert!(matches!(
-            notice,
-            Notice::Copied {
-                width: 3,
-                height: 2
-            }
-        ));
-        let Ok(Delivery::Pixels(pixels)) = receiver.try_recv() else {
-            panic!("expected pixels before the notice");
-        };
-        assert_eq!((pixels.width, pixels.height, pixels.stride), (3, 2, 12));
-        assert_eq!(pixels.bytes.as_ref().as_ptr(), source);
-    }
-
-    #[test]
     fn carries_a_window_capture_through_its_variant() {
         let request = Request::saved(CaptureMode::Window);
         let decoded = Request::from_variant(&request.to_variant()).unwrap();
         assert_eq!(decoded.mode, CaptureMode::Window);
-    }
-
-    #[test]
-    fn offers_the_window_shortcut_only_where_window_capture_works() {
-        assert_eq!(
-            offered_actions(Availability::Available),
-            ShortcutAction::ALL.to_vec()
-        );
-        let offered = offered_actions(Availability::Unavailable(windows::UNAVAILABLE));
-        assert!(!offered.contains(&ShortcutAction::Window));
-        assert!(offered.contains(&ShortcutAction::Region));
-        assert!(offered.contains(&ShortcutAction::Fullscreen));
     }
 
     #[test]

@@ -42,6 +42,13 @@ impl Gallery {
             .css_classes(["settings-window"])
             .build();
         window.set_transient_for(self.status.root().and_downcast::<gtk::Window>().as_ref());
+        let focus_gallery = Rc::downgrade(self);
+        window.connect_close_request(move |_| {
+            if let Some(gallery) = focus_gallery.upgrade() {
+                glib::idle_add_local_once(move || gallery.focus_selected());
+            }
+            glib::Propagation::Proceed
+        });
         let body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .spacing(12)
@@ -131,6 +138,9 @@ impl Gallery {
                     Ok(Outcome::Renamed(target)) => {
                         window.close();
                         gallery.say(&format!("Renamed to {}", file_name(&target)), false);
+                        gallery
+                            .pending
+                            .replace(Some(target.to_string_lossy().into_owned()));
                         gallery.reload();
                     }
                     Ok(Outcome::Refused(error)) => {

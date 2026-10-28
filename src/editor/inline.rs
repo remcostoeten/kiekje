@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gtk::prelude::*;
 use gtk::{cairo, gdk, gio, glib};
@@ -10,7 +11,7 @@ use super::pixels::{self, LoadError};
 use super::render::{self, Layers};
 use super::{DrawAction, DrawingKeys, Editor, Host, Input, Loaded, SaveError, prepare, toolbar};
 use crate::capture::mapping::PixelRect;
-use crate::capture::{CaptureMode, LogicalRect};
+use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::config;
 use crate::output::Image;
 use crate::ui;
@@ -34,6 +35,7 @@ pub enum Finish {
 /// and whether anything was drawn on it.
 pub enum Ending {
     Canceled,
+    Saved(crate::notify::Notice),
     Finished {
         image: Image,
         finish: Finish,
@@ -72,15 +74,17 @@ impl Inline {
     /// # Examples
     ///
     /// ```ignore
-    /// let inline = Inline::open(image, CaptureMode::Region, drawing, |ending| {}).await?;
+    /// let inline = Inline::open(frames, 0, CaptureMode::Region, drawing, |_| {}, |ending| {}).await?;
     /// ```
     pub async fn open(
-        image: Image,
+        frames: Arc<Vec<Frame>>,
+        index: usize,
         mode: CaptureMode,
         drawing: config::Drawing,
+        suspend: impl Fn(bool) + 'static,
         on_end: impl FnOnce(Ending) + 'static,
     ) -> Result<Self, OpenError> {
-        let prepared = gio::spawn_blocking(move || prepare(Input::Image(image)))
+        let prepared = gio::spawn_blocking(move || prepare(Input::Frame(frames, index)))
             .await
             .map_err(|_| OpenError::Worker)??;
         let layers = Layers::new(prepared.base, prepared.hidden)?;
@@ -90,7 +94,9 @@ impl Inline {
             layers,
             drawing,
         };
-        Ok(Self(Editor::new(host, mode, None, loaded)))
+        let editor = Editor::new(host, mode, None, loaded);
+        editor.suspend.replace(Some(Box::new(suspend)));
+        Ok(Self(editor))
     }
 
     /// Covers `layer` with the frame and puts the tool and action bars around the region.
@@ -171,6 +177,10 @@ impl Inline {
 
 impl Editor {
     pub(super) fn conclude(self: &Rc<Self>, finish: Finish) {
+        if finish == Finish::SaveAs {
+            self.save_as();
+            return;
+        }
         let Some((picture, shapes, crop)) = self.begin() else {
             return;
         };

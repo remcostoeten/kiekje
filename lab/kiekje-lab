@@ -400,9 +400,13 @@ function mark {
     echo "=== $* ===" >>"$RUN/daemon.log"
 }
 
+function strip_log_tags {
+    sed -E 's/^kiekje: \[[a-z_:]+\] (error: |warning: |debug: )?/kiekje: /'
+}
+
 function wait_for_log {
     local pattern="$1" deadline=$((SECONDS + $2))
-    until grep -qE "$pattern" <(tail -n +"$3" "$RUN/daemon.log"); do
+    until grep -qE "$pattern" <(tail -n +"$3" "$RUN/daemon.log" | strip_log_tags); do
         ((SECONDS < deadline)) || return 1
         sleep 0.5
     done
@@ -432,11 +436,11 @@ function summarize_run {
                 printf "%s\t%s\t%s\t%d/%d\t%s\t%s\t%s\n", run, b, used[b] ? used[b] : "-", ok[b], total[b],
                     n ? values[1] "-" values[n] : "-", median, reason[b]
             }
-        }' "$RUN/daemon.log" | sort >"$RUN/summary.tsv"
+        }' <(strip_log_tags <"$RUN/daemon.log") | sort >"$RUN/summary.tsv"
 }
 
 function log_since {
-    tail -n +"$1" "$RUN/daemon.log"
+    tail -n +"$1" "$RUN/daemon.log" | strip_log_tags
 }
 
 function leave_gnome_overview {
@@ -645,7 +649,7 @@ function check_save_burst {
         wait_for_log '^kiekje: (saved|save failed)' 10 "$start" || true
         start=$(($(wc -l <"$RUN/daemon.log") + 1))
     done
-    saved="$(sed -n '/^=== save burst ===/,$p' "$RUN/daemon.log" | sed -n 's/^kiekje: saved //p')"
+    saved="$(strip_log_tags <"$RUN/daemon.log" | sed -n '/^=== save burst ===/,$p' | sed -n 's/^kiekje: saved //p')"
     names="$(echo "$saved" | grep -c . || true)"
     unique="$(echo "$saved" | sort -u | grep -c . || true)"
     while IFS= read -r path; do
@@ -710,7 +714,7 @@ function check_missing_backend {
     start=$(($(wc -l <"$RUN/daemon.log") + 1))
     capture_and_wait capture fullscreen --no-save
     if daemon_alive && log_since "$start" | grep -q '^kiekje: copied'; then
-        check_output missing_backend "pass --backend $choice: $(grep '^kiekje: capture failed' "$RUN/daemon.log" | tail -n 1 | cut -d: -f3- | xargs), next capture worked"
+        check_output missing_backend "pass --backend $choice: $(strip_log_tags <"$RUN/daemon.log" | grep '^kiekje: capture failed' | tail -n 1 | cut -d: -f3- | xargs), next capture worked"
     else
         check_output missing_backend "fail the daemon did not recover after --backend $choice"
     fi
@@ -742,7 +746,7 @@ function check_shortcuts {
         return
     fi
     sleep 1
-    lines="$(grep -E '^kiekje: (shortcut .* (bound|registered)|global shortcuts are off)' "$RUN/daemon.log" | cut -d' ' -f2- | paste -sd';')"
+    lines="$(strip_log_tags <"$RUN/daemon.log" | grep -E '^kiekje: (shortcut .* (bound|registered)|global shortcuts are off)' | cut -d' ' -f2- | paste -sd';')"
     if grep -q 'global shortcuts are off' <<<"$lines"; then
         check_output shortcuts "unavailable $lines"
     else

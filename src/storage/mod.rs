@@ -74,7 +74,7 @@ pub fn now() -> Stamp {
             second: now.second().unsigned_abs(),
         },
         Err(error) => {
-            eprintln!("kiekje: no local time, naming the capture after 1970: {error}");
+            warn!("no local time, naming the capture after 1970: {error}");
             Stamp {
                 year: 1970,
                 month: 1,

@@ -208,7 +208,7 @@ impl Editor {
             &gtk::Label::builder()
                 .label("Recent")
                 .xalign(0.0)
-                .css_classes(["caps"])
+                .css_classes(["section-title"])
                 .build(),
         );
         let recent = flow("Recent emoji");
@@ -239,7 +239,36 @@ impl Editor {
         picker.append(&recent_row);
         picker.append(&grid);
         picker.append(&caption);
+        picker.append(&self.keep_open_row());
         picker
+    }
+
+    fn keep_open_row(self: &Rc<Self>) -> gtk::Box {
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        let label = gtk::Label::builder()
+            .label("Keep open after picking")
+            .xalign(0.0)
+            .hexpand(true)
+            .css_classes(["note"])
+            .build();
+        let keep = gtk::Switch::builder()
+            .active(self.keep_emoji_open.get())
+            .valign(gtk::Align::Center)
+            .build();
+        keep.update_property(&[gtk::accessible::Property::Label("Keep open after picking")]);
+        let target = Rc::downgrade(self);
+        keep.connect_active_notify(move |keep| {
+            if let Some(editor) = target.upgrade() {
+                editor.keep_emoji_open.set(keep.is_active());
+                editor.pin_menu(keep.is_active());
+            }
+        });
+        row.append(&label);
+        row.append(&keep);
+        row
     }
 
     pub(super) fn open_emoji_picker(self: &Rc<Self>) {
@@ -248,7 +277,12 @@ impl Editor {
 
     pub(super) fn open_emoji_picker_with(self: &Rc<Self>, typed: &str) {
         let (x, y) = self.view.get().to_widget(self.stamp_point());
+        self.open_emoji_menu(typed, x, y);
+    }
+
+    pub(super) fn open_emoji_menu(self: &Rc<Self>, typed: &str, x: f64, y: f64) {
         self.open_menu_with(self.emoji_picker(typed), x, y);
+        self.pin_menu(self.keep_emoji_open.get());
     }
 
     pub(super) fn load_recent_emoji(self: &Rc<Self>) {
@@ -262,14 +296,17 @@ impl Editor {
                 (Some(editor), Ok(Ok(glyphs))) => {
                     editor.recent_emoji.replace(glyphs);
                 }
-                (_, Ok(Err(error))) => eprintln!("kiekje: could not read recent emoji: {error}"),
+                (_, Ok(Err(error))) => error!("could not read recent emoji: {error}"),
                 _ => {}
             }
         });
     }
 
     fn choose_emoji(self: &Rc<Self>, glyph: &str) {
-        self.close_menu();
+        let kept = self.menu_pinned.get();
+        if !kept {
+            self.close_menu();
+        }
         self.emoji.replace(glyph.to_owned());
         toolbar::describe_emoji(&self.emoji_button, glyph);
         self.note_recent_emoji(glyph);
@@ -279,7 +316,9 @@ impl Editor {
         }
         self.say(&format!("Emoji set to {glyph}"), false);
         self.canvas.queue_draw();
-        self.canvas.grab_focus();
+        if !kept {
+            self.canvas.grab_focus();
+        }
     }
 
     fn note_recent_emoji(&self, glyph: &str) {
@@ -293,7 +332,7 @@ impl Editor {
             let noted = Library::open(&library::path())
                 .and_then(|library| library.use_emoji(&glyph, used_us));
             if let Err(error) = noted {
-                eprintln!("kiekje: could not remember the emoji: {error}");
+                error!("could not remember the emoji: {error}");
             }
         });
     }

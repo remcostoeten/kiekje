@@ -101,7 +101,7 @@ fn reshape(area: Area, edge: Edge, delta: (f64, f64), bounds: (f64, f64)) -> Are
 }
 
 impl Editor {
-    fn crop_draft(&self) -> Option<Area> {
+    pub(super) fn crop_draft(&self) -> Option<Area> {
         let draft = self.draft.borrow();
         let (&start, &end) = (draft.first()?, draft.last()?);
         Some(Area::between(start, end))

@@ -15,6 +15,58 @@ const HINT_ARROW: f64 = 4.0;
 const HANDLE: f64 = 8.0;
 const OUTSET: f64 = 4.0;
 
+fn cycled_shape(current: Option<usize>, count: usize, backwards: bool) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    Some(match current.filter(|index| *index < count) {
+        Some(0) if backwards => count - 1,
+        Some(index) if backwards => index - 1,
+        Some(index) => (index + 1) % count,
+        None if backwards => count - 1,
+        None => 0,
+    })
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::cycled_shape;
+
+    #[test]
+    fn cycles_in_drawing_order_and_wraps_both_ways() {
+        assert_eq!(cycled_shape(None, 3, false), Some(0));
+        assert_eq!(cycled_shape(Some(0), 3, false), Some(1));
+        assert_eq!(cycled_shape(Some(2), 3, false), Some(0));
+        assert_eq!(cycled_shape(None, 3, true), Some(2));
+        assert_eq!(cycled_shape(Some(0), 3, true), Some(2));
+        assert_eq!(cycled_shape(Some(2), 3, true), Some(1));
+    }
+
+    #[test]
+    fn handles_empty_and_stale_selections() {
+        assert_eq!(cycled_shape(Some(0), 0, false), None);
+        assert_eq!(cycled_shape(Some(9), 3, false), Some(0));
+        assert_eq!(cycled_shape(Some(9), 3, true), Some(2));
+        assert_eq!(cycled_shape(Some(0), 1, true), Some(0));
+    }
+}
+
+fn shape_name(shape: &Shape) -> &'static str {
+    match shape {
+        Shape::Rectangle { .. } => "Rectangle",
+        Shape::Ellipse { .. } => "Ellipse",
+        Shape::Line { .. } => "Line",
+        Shape::Arrow { .. } => "Arrow",
+        Shape::Pen { .. } => "Pen",
+        Shape::Highlight { .. } => "Marker",
+        Shape::Step { .. } => "Step",
+        Shape::Pixelate { .. } => "Pixelate",
+        Shape::Text { .. } => "Text",
+        Shape::Mark { .. } => "Mark",
+        Shape::Emoji { .. } => "Emoji",
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Grab {
     Body,
@@ -95,14 +147,14 @@ impl Editor {
         }
         match tool {
             Tool::Crop if self.is_inline() => self.say(
-                "Drag to choose the region. Drag inside it to move it, a handle to resize it.",
+                "Space starts a region, arrows set its endpoint, Space or Enter finishes. Arrows move an existing region; Ctrl+arrows resize it.",
                 false,
             ),
             Tool::Crop => self.say(
-                "Drag to keep part of the image. Click once to clear the crop.",
+                "Space starts a crop, arrows set its endpoint, Space or Enter finishes. Click once to clear the crop.",
                 false,
             ),
-            Tool::Text => self.say("Click where the text goes, type, then press Enter.", false),
+            Tool::Text => self.say("Arrows position text, Space starts typing, Enter commits it. Clicking also places text.", false),
             Tool::Check | Tool::Cross => self.say(
                 "Click to place it. Arrows move the cursor, Space places it, scroll sizes it.",
                 false,
@@ -114,10 +166,10 @@ impl Editor {
             ),
             Tool::Select => self.say(
                 "Click a shape, then drag to move, drag a handle to resize, Delete removes, \
-                 arrows nudge. Drag on empty canvas to select several, Ctrl adds to the selection.",
+                 arrows nudge. Page Up and Page Down select shapes. Drag on empty canvas to select several, Ctrl adds to the selection.",
                 false,
             ),
-            _ => {}
+            _ => self.say("Arrows move 1 pixel, Shift moves 10. Space starts a shape, Space or Enter finishes it. Page Up and Page Down select shapes.", false),
         }
     }
 
@@ -335,6 +387,38 @@ impl Editor {
         all.sort_unstable();
         all.dedup();
         all
+    }
+
+    pub(super) fn cycle_shape(&self, backwards: bool) -> bool {
+        let count = self.document.borrow().shapes().len();
+        let Some(index) = cycled_shape(self.selected.get(), count, backwards) else {
+            self.say("There are no annotations to select.", false);
+            return true;
+        };
+        self.pick(Tool::Select);
+        self.keyboard_cursor.set(false);
+        self.moving.take();
+        self.selected.set(Some(index));
+        self.also_selected.borrow_mut().clear();
+        self.adopt(index);
+        let document = self.document.borrow();
+        let shape = &document.shapes()[index];
+        let bounds = shape.bounds();
+        let description = format!(
+            "{} {} of {} selected at {:.0}, {:.0}, size {:.0} by {:.0}. Arrows move 1 pixel, Shift moves 10. Delete removes it. Page Up and Page Down select shapes.",
+            shape_name(shape),
+            index + 1,
+            count,
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+        );
+        self.canvas
+            .update_property(&[gtk::accessible::Property::Description(&description)]);
+        self.say(&description, false);
+        self.canvas.queue_draw();
+        true
     }
 
     pub(super) fn select_all(&self) {

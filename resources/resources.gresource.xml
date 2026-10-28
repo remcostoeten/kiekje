@@ -2,24 +2,39 @@
 <gresources>
   <gresource prefix="/dev/remcostoeten/Kiekje">
     <file>style.css</file>
+    <file>style-light.css</file>
     <file>sounds/capture.oga</file>
     <file>icons/scalable/actions/kiekje-arrow-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-check-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-clear-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-crop-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-cross-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-download-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-ellipse-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-emoji-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-folder-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-gallery-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-highlight-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-info-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-keyboard-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-line-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-open-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-pen-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-pixelate-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-power-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-record-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-rectangle-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-redo-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-region-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-repeat-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-screens-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-search-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-select-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-sliders-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-step-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-stop-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-text-symbolic.svg</file>
     <file>icons/scalable/actions/kiekje-undo-symbolic.svg</file>
+    <file>icons/scalable/actions/kiekje-window-symbolic.svg</file>
   </gresource>
 </gresources>

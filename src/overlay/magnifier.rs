@@ -1,4 +1,5 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
@@ -37,7 +38,41 @@ enum Notice {
     Copied,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Slot {
+    Hex,
+    Copied,
+    Position,
+    Zoom,
+    CopyHint,
+    HideHint,
+}
+
+type Layouts = RefCell<HashMap<(usize, Slot), pango::Layout>>;
+
+thread_local! {
+    static FONTS: RefCell<HashMap<u8, pango::FontDescription>> = RefCell::new(HashMap::new());
+}
+
+/// Returns the Geist Mono description for a pixel size, parsing it only the first time.
+///
+/// # Examples
+///
+/// ```ignore
+/// layout.set_font_description(Some(&font(12)));
+/// ```
+pub fn font(size: u8) -> pango::FontDescription {
+    FONTS.with(|fonts| {
+        fonts
+            .borrow_mut()
+            .entry(size)
+            .or_insert_with(|| pango::FontDescription::from_string(&format!("Geist Mono {size}px")))
+            .clone()
+    })
+}
+
 pub struct Magnifier {
+    layouts: Layouts,
     enabled: Cell<bool>,
     pointer: Cell<Option<(f64, f64)>>,
     notice: Cell<Notice>,
@@ -50,6 +85,7 @@ impl Magnifier {
     pub fn new(enabled: bool, pixels: u32) -> Self {
         let level = level_for(pixels);
         Self {
+            layouts: RefCell::new(HashMap::new()),
             enabled: Cell::new(enabled),
             pointer: Cell::new(None),
             notice: Cell::new(Notice::Position),
@@ -117,7 +153,7 @@ impl Magnifier {
             if let Err(error) = config::update(&config::path(), |config| {
                 config.overlay.magnifier_pixels = pixels;
             }) {
-                eprintln!("kiekje: could not remember the magnifier zoom: {error}");
+                error!("could not remember the magnifier zoom: {error}");
             }
         });
     }
@@ -157,7 +193,7 @@ impl Magnifier {
                     return false;
                 };
                 let Some(display) = gdk::Display::default() else {
-                    eprintln!("kiekje: no display, colour not copied");
+                    warn!("no display, colour not copied");
                     return true;
                 };
                 display.clipboard().set_text(&hex(colour));
@@ -262,61 +298,85 @@ impl Magnifier {
         let text_left = left + PADDING + SWATCH + PADDING;
         let right = left + grid - PADDING;
         paint_text(
+            &self.layouts,
             widget,
             snapshot,
-            &hex(colour),
-            12,
-            LABEL_TEXT,
-            Align::Left(text_left),
-            first,
+            Label {
+                slot: Slot::Hex,
+                text: &hex(colour),
+                size: 12,
+                colour: LABEL_TEXT,
+                align: Align::Left(text_left),
+                top: first,
+            },
         );
         if self.notice.get() == Notice::Copied {
             paint_text(
+                &self.layouts,
                 widget,
                 snapshot,
-                "COPIED",
-                11,
-                ACCENT,
-                Align::Right(right),
-                first,
+                Label {
+                    slot: Slot::Copied,
+                    text: "COPIED",
+                    size: 11,
+                    colour: ACCENT,
+                    align: Align::Right(right),
+                    top: first,
+                },
             );
         }
         let position = format!("X {}  Y {}", center.0, center.1);
         paint_text(
+            &self.layouts,
             widget,
             snapshot,
-            &position,
-            11,
-            MUTED,
-            Align::Left(left + PADDING),
-            first + ROW,
+            Label {
+                slot: Slot::Position,
+                text: &position,
+                size: 11,
+                colour: MUTED,
+                align: Align::Left(left + PADDING),
+                top: first + ROW,
+            },
         );
         paint_text(
+            &self.layouts,
             widget,
             snapshot,
-            &format!("{cell_size}X"),
-            11,
-            MUTED,
-            Align::Right(right),
-            first + ROW,
+            Label {
+                slot: Slot::Zoom,
+                text: &format!("{cell_size}X"),
+                size: 11,
+                colour: MUTED,
+                align: Align::Right(right),
+                top: first + ROW,
+            },
         );
         paint_text(
+            &self.layouts,
             widget,
             snapshot,
-            "C COPY",
-            11,
-            MUTED,
-            Align::Left(left + PADDING),
-            first + ROW * 2.0,
+            Label {
+                slot: Slot::CopyHint,
+                text: "C COPY",
+                size: 11,
+                colour: MUTED,
+                align: Align::Left(left + PADDING),
+                top: first + ROW * 2.0,
+            },
         );
         paint_text(
+            &self.layouts,
             widget,
             snapshot,
-            "Z HIDE",
-            11,
-            MUTED,
-            Align::Right(right),
-            first + ROW * 2.0,
+            Label {
+                slot: Slot::HideHint,
+                text: "Z HIDE",
+                size: 11,
+                colour: MUTED,
+                align: Align::Right(right),
+                top: first + ROW * 2.0,
+            },
         );
 
         snapshot.pop();
@@ -391,7 +451,7 @@ fn record(rgb: [u8; 3]) {
         if let Err(error) =
             Library::open(&library::path()).and_then(|library| library.pick_colour(rgb, picked_us))
         {
-            eprintln!("kiekje: the copied colour was not added to the history: {error}");
+            warn!("the copied colour was not added to the history: {error}");
         }
     });
 }
@@ -401,7 +461,7 @@ fn remember(enabled: bool) {
         if let Err(error) = config::update(&config::path(), |config| {
             config.overlay.magnifier = enabled;
         }) {
-            eprintln!("kiekje: could not remember the magnifier setting: {error}");
+            error!("could not remember the magnifier setting: {error}");
         }
     });
 }
@@ -416,19 +476,36 @@ enum Align {
     Right(f32),
 }
 
-fn paint_text(
-    widget: &gtk::Widget,
-    snapshot: &gtk::Snapshot,
-    text: &str,
+struct Label<'a> {
+    slot: Slot,
+    text: &'a str,
     size: u8,
     colour: gdk::RGBA,
     align: Align,
     top: f32,
-) {
-    let layout = widget.create_pango_layout(Some(text));
-    layout.set_font_description(Some(&pango::FontDescription::from_string(&format!(
-        "Geist Mono {size}px"
-    ))));
+}
+
+fn paint_text(layouts: &Layouts, widget: &gtk::Widget, snapshot: &gtk::Snapshot, label: Label) {
+    let Label {
+        slot,
+        text,
+        size,
+        colour,
+        align,
+        top,
+    } = label;
+    let layout = layouts
+        .borrow_mut()
+        .entry((widget.as_ptr() as usize, slot))
+        .or_insert_with(|| {
+            let layout = widget.create_pango_layout(None);
+            layout.set_font_description(Some(&font(size)));
+            layout
+        })
+        .clone();
+    if layout.text() != text {
+        layout.set_text(text);
+    }
     let (_, logical) = layout.pixel_extents();
     let x = match align {
         Align::Left(x) => x,

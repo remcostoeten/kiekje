@@ -1,12 +1,16 @@
+use std::io;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 use gtk::prelude::*;
 use gtk::{gio, glib};
+use thiserror::Error;
 
-use crate::app::APP_ID;
-use crate::config::{self, Config};
-use crate::library::{self, Library, thumbs};
+use crate::config::{self, Config, ConfigError};
+use crate::ids::APP_ID;
+use crate::library::{self, Library, LibraryError, thumbs};
+use crate::shortcuts::kde::KdeError;
 use crate::shortcuts::{ShortcutHost, Shortcuts, hyprland, kde};
 use crate::storage;
 use crate::ui::widgets::{group, problem, row};
@@ -59,6 +63,27 @@ impl Danger {
     }
 }
 
+#[derive(Debug, Error)]
+enum DangerError {
+    #[error("Settings were not reset: {0}")]
+    ResetConfig(ConfigError),
+    #[error(
+        "Settings were reset, but {} could not be written: {source}",
+        storage::tilde(path)
+    )]
+    HyprlandInclude { path: PathBuf, source: io::Error },
+    #[error("Settings were reset, but KDE kept the old shortcuts: {0}")]
+    KdeShortcuts(KdeError),
+    #[error("The gallery was not cleared: {0}")]
+    ClearGallery(LibraryError),
+    #[error("The gallery was cleared, but unsaved captures were not deleted: {0}")]
+    DeleteUnsaved(io::Error),
+    #[error("The colours were not cleared: {0}")]
+    ClearColours(LibraryError),
+    #[error("Thumbnails were not cleared: {0}")]
+    ClearThumbnails(io::Error),
+}
+
 pub(super) type DoneCallback = Rc<dyn Fn(Danger)>;
 
 pub(super) fn append(page: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback) {
@@ -69,6 +94,7 @@ pub(super) fn append(page: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback
             .label(danger.verb())
             .css_classes(["danger"])
             .build();
+        button.update_property(&[gtk::accessible::Property::Label(danger.label())]);
         let result = result.clone();
         let on_done = on_done.clone();
         let host = host.clone();
@@ -91,7 +117,7 @@ pub(super) fn append(page: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback
                         on_done(danger);
                         message
                     }
-                    Ok(Err(message)) => message,
+                    Ok(Err(error)) => error.to_string(),
                     Err(_) => "The settings worker stopped; nothing was changed.".to_owned(),
                 };
                 result.set_label(&message);
@@ -106,6 +132,10 @@ pub(super) fn append(page: &gtk::Box, host: &ShortcutHost, on_done: DoneCallback
 fn arm(button: &gtk::Button, danger: Danger) {
     button.add_css_class("armed");
     button.set_label("Confirm");
+    button.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Confirm {}",
+        danger.label().to_lowercase()
+    ))]);
     button.set_tooltip_text(Some(&format!(
         "Click again to {}",
         danger.label().to_lowercase()
@@ -121,30 +151,28 @@ fn arm(button: &gtk::Button, danger: Danger) {
 fn disarm(button: &gtk::Button, danger: Danger) {
     button.remove_css_class("armed");
     button.set_label(danger.verb());
+    button.update_property(&[gtk::accessible::Property::Label(danger.label())]);
     button.set_tooltip_text(None);
 }
 
-fn run(danger: Danger, host: &ShortcutHost) -> Result<String, String> {
+fn run(danger: Danger, host: &ShortcutHost) -> Result<String, DangerError> {
     match danger {
         Danger::ResetSettings => {
             config::save_to(&config::path(), &Config::default())
-                .map_err(|error| format!("Settings were not reset: {error}"))?;
+                .map_err(DangerError::ResetConfig)?;
             match host {
                 ShortcutHost::Hyprland => {
                     let include = hyprland::include_path();
                     hyprland::write_include(&include, APP_ID, &Shortcuts::default()).map_err(
-                        |error| {
-                            format!(
-                                "Settings were reset, but {} could not be written: {error}",
-                                storage::tilde(&include)
-                            )
+                        |source| DangerError::HyprlandInclude {
+                            path: include.clone(),
+                            source,
                         },
                     )?;
                 }
                 ShortcutHost::Kde => {
-                    let skipped = kde::set_all(APP_ID, &Shortcuts::default()).map_err(|error| {
-                        format!("Settings were reset, but KDE kept the old shortcuts: {error}")
-                    })?;
+                    let skipped = kde::set_all(APP_ID, &Shortcuts::default())
+                        .map_err(DangerError::KdeShortcuts)?;
                     if !skipped.is_empty() {
                         let reasons: Vec<String> =
                             skipped.iter().map(ToString::to_string).collect();
@@ -161,10 +189,9 @@ fn run(danger: Danger, host: &ShortcutHost) -> Result<String, String> {
         Danger::ClearGallery => {
             let forgotten = Library::open(&library::path())
                 .and_then(|library| library.clear())
-                .map_err(|error| format!("The gallery was not cleared: {error}"))?;
-            let deleted = storage::delete_files_in(&storage::unsaved_dir()).map_err(|error| {
-                format!("The gallery was cleared, but unsaved captures were not deleted: {error}")
-            })?;
+                .map_err(DangerError::ClearGallery)?;
+            let deleted = storage::delete_files_in(&storage::unsaved_dir())
+                .map_err(DangerError::DeleteUnsaved)?;
             Ok(format!(
                 "The gallery forgot {} and deleted {}.",
                 count(forgotten, "capture"),
@@ -174,12 +201,12 @@ fn run(danger: Danger, host: &ShortcutHost) -> Result<String, String> {
         Danger::ClearColours => {
             let forgotten = Library::open(&library::path())
                 .and_then(|library| library.clear_colours())
-                .map_err(|error| format!("The colours were not cleared: {error}"))?;
+                .map_err(DangerError::ClearColours)?;
             Ok(format!("Forgot {}.", count(forgotten, "colour")))
         }
         Danger::ClearThumbnails => {
-            let removed = thumbs::prune(&thumbs::dir(), &[])
-                .map_err(|error| format!("Thumbnails were not cleared: {error}"))?;
+            let removed =
+                thumbs::prune(&thumbs::dir(), &[]).map_err(DangerError::ClearThumbnails)?;
             Ok(format!("Deleted {}.", count(removed, "cached thumbnail")))
         }
     }

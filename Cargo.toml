@@ -1,6 +1,6 @@
 [package]
 name = "kiekje"
-version = "0.1.0-alpha.8"
+version = "0.1.0-alpha.9"
 edition = "2024"
 license = "MIT"
 description = "Capture, mark up and keep screenshots"
@@ -8,7 +8,9 @@ repository = "https://github.com/remcostoeten/kiekje"
 
 [dependencies]
 async-channel = "2"
+color_quant = "1.1"
 fast_image_resize = "6.1.0"
+gif = "0.14"
 gtk = { version = "0.11", package = "gtk4", features = ["v4_14"] }
 gtk4-layer-shell = { version = "0.8", default-features = false }
 jpeg-encoder = "0.7"
@@ -17,7 +19,7 @@ libc = "0.2.189"
 pangocairo = "0.22"
 png = "0.18"
 rusqlite = { version = "0.37", features = ["bundled"] }
-rustix = { version = "1", features = ["event", "fs"] }
+rustix = { version = "1", features = ["event", "fs", "pipe"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smithay-client-toolkit = { version = "0.21", default-features = false }
@@ -35,3 +37,11 @@ glib-build-tools = "0.22"
 [[example]]
 name = "lab_probe"
 test = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

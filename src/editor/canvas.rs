@@ -75,9 +75,24 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         );
         editor.view.set(view);
         if let Err(error) = paint(&editor, cr, view) {
-            eprintln!("kiekje: the editor canvas was not drawn: {error}");
+            warn!("the editor canvas was not drawn: {error}");
         }
     });
+
+    let focus = gtk::EventControllerFocus::new();
+    let enter = editor.canvas.downgrade();
+    focus.connect_enter(move |_| {
+        if let Some(canvas) = enter.upgrade() {
+            canvas.queue_draw();
+        }
+    });
+    let leave = editor.canvas.downgrade();
+    focus.connect_leave(move |_| {
+        if let Some(canvas) = leave.upgrade() {
+            canvas.queue_draw();
+        }
+    });
+    editor.canvas.add_controller(focus);
 
     let drag = gtk::GestureDrag::builder()
         .button(gdk::BUTTON_PRIMARY)
@@ -85,6 +100,11 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     let started = Rc::downgrade(editor);
     drag.connect_drag_begin(move |gesture, x, y| {
         if let Some(editor) = started.upgrade() {
+            if editor.busy.get() {
+                return;
+            }
+            editor.keyboard_cursor.set(false);
+            editor.cancel_draft();
             editor.canvas.grab_focus();
             let point = editor.view.get().to_image(x, y, editor.size());
             if editor.grab_region(point) {
@@ -112,12 +132,18 @@ pub(super) fn attach(editor: &Rc<Editor>) {
     let moved = Rc::downgrade(editor);
     drag.connect_drag_update(move |gesture, dx, dy| {
         if let Some(editor) = moved.upgrade() {
+            if editor.busy.get() {
+                return;
+            }
             extend(&editor, gesture, dx, dy);
         }
     });
     let ended = Rc::downgrade(editor);
     drag.connect_drag_end(move |gesture, dx, dy| {
         if let Some(editor) = ended.upgrade() {
+            if editor.busy.get() {
+                return;
+            }
             extend(&editor, gesture, dx, dy);
             if editor.release_region() {
                 return;
@@ -140,7 +166,10 @@ pub(super) fn attach(editor: &Rc<Editor>) {
         let Some(editor) = clicked.upgrade() else {
             return;
         };
-        if presses != 2 || !matches!(editor.tool.get(), Tool::Select | Tool::Text) {
+        if editor.busy.get()
+            || presses != 2
+            || !matches!(editor.tool.get(), Tool::Select | Tool::Text)
+        {
             return;
         }
         let view = editor.view.get();
@@ -296,6 +325,7 @@ fn paint(editor: &Editor, cr: &cairo::Context, view: View) -> Result<(), cairo::
     drawn?;
     editor.paint_crop(cr, view)?;
     editor.paint_selection(cr, view)?;
+    editor.paint_keyboard_cursor(cr, view)?;
     editor.paint_hud(cr, view)
 }
 

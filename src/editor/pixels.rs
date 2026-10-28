@@ -4,7 +4,7 @@ use gtk::gdk_pixbuf::Pixbuf;
 use gtk::glib;
 
 use super::document::Area;
-use crate::capture::PixelFormat;
+use crate::capture::{Frame, PixelFormat};
 use crate::output::Image;
 
 #[derive(Debug, thiserror::Error)]
@@ -36,17 +36,50 @@ impl Picture {
     /// let picture = Picture::from_image(&image);
     /// ```
     pub fn from_image(image: &Image) -> Self {
-        let row = image.width as usize * 4;
-        let mut data = Vec::with_capacity(row * image.height as usize);
-        for line in image.data.chunks(image.stride).take(image.height as usize) {
+        Self::from_pixels(
+            image.width,
+            image.height,
+            image.stride,
+            image.format,
+            &image.data,
+        )
+    }
+
+    /// Converts a captured frame of any pixel format into cairo's layout without cropping it first.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let picture = Picture::from_frame(&frames[0]);
+    /// ```
+    pub fn from_frame(frame: &Frame) -> Self {
+        Self::from_pixels(
+            frame.width,
+            frame.height,
+            frame.stride,
+            frame.format,
+            &frame.data,
+        )
+    }
+
+    fn from_pixels(
+        width: u32,
+        height: u32,
+        stride: usize,
+        format: PixelFormat,
+        data: &[u8],
+    ) -> Self {
+        let row = width as usize * 4;
+        let mut converted = Vec::with_capacity(row * height as usize);
+        for line in data.chunks(stride).take(height as usize) {
             for pixel in line[..row.min(line.len())].as_chunks::<4>().0 {
-                data.extend_from_slice(&pack(image.format.to_rgba(*pixel)));
+                converted.extend_from_slice(&pack(format.to_rgba(*pixel)));
             }
         }
         Self {
-            width: image.width,
-            height: image.height,
-            data,
+            width,
+            height,
+            data: converted,
         }
     }
 

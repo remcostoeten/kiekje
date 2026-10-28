@@ -281,7 +281,7 @@ impl PortalGuard {
                     .parameters
                     .get::<(ObjectPath, Vec<(String, Results)>)>()
                 else {
-                    eprintln!("kiekje: ignored a malformed ShortcutsChanged signal");
+                    warn!("ignored a malformed ShortcutsChanged signal");
                     return;
                 };
                 if handle.as_str() == session {
@@ -322,7 +322,7 @@ impl ShortcutRegistrar for PortalShortcuts {
                     .parameters
                     .get::<(ObjectPath, String, u64, Results)>()
                 else {
-                    eprintln!("kiekje: ignored a malformed shortcut activation");
+                    warn!("ignored a malformed shortcut activation");
                     return;
                 };
                 if handle.as_str() != activated_session {
@@ -330,7 +330,7 @@ impl ShortcutRegistrar for PortalShortcuts {
                 }
                 match ShortcutAction::parse(&id).filter(|action| actions.contains(action)) {
                     Some(action) => on_activated(action),
-                    None => eprintln!("kiekje: ignored unknown shortcut {id}"),
+                    None => warn!("ignored unknown shortcut {id}"),
                 }
             },
         );

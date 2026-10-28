@@ -1,7 +1,9 @@
 pub mod mapping;
+pub mod monitors;
 pub mod windows;
 
 use std::fmt;
+use std::sync::Arc;
 
 use gtk::gdk;
 use serde::{Deserialize, Serialize};
@@ -259,14 +261,38 @@ pub struct Frame {
     pub data: Vec<u8>,
 }
 
+struct SharedPixels {
+    frames: Arc<Vec<Frame>>,
+    index: usize,
+}
+
+impl AsRef<[u8]> for SharedPixels {
+    fn as_ref(&self) -> &[u8] {
+        &self.frames[self.index].data
+    }
+}
+
 impl Frame {
-    pub fn texture(&self) -> gdk::MemoryTexture {
+    /// Wraps the pixels of `frames[index]` in a texture without copying them.
+    ///
+    /// The texture keeps the frames alive for as long as it exists.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let texture = Frame::shared_texture(&frames, 0);
+    /// ```
+    pub fn shared_texture(frames: &Arc<Vec<Frame>>, index: usize) -> gdk::MemoryTexture {
+        let frame = &frames[index];
         gdk::MemoryTexture::new(
-            self.width as i32,
-            self.height as i32,
-            self.format.memory_format(),
-            &gtk::glib::Bytes::from(&self.data),
-            self.stride,
+            frame.width as i32,
+            frame.height as i32,
+            frame.format.memory_format(),
+            &gtk::glib::Bytes::from_owned(SharedPixels {
+                frames: frames.clone(),
+                index,
+            }),
+            frame.stride,
         )
     }
 }
