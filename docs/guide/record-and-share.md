@@ -13,7 +13,17 @@ Both features landed in 0.1.0-alpha.6. The recording pipeline is lab tested agai
 kiekje record
 ```
 
-`kiekje record`, Record screen in the tray menu or the capture menu starts a recording. Your desktop's own ScreenCast picker chooses a screen or a window. Run the command again, or pick Stop recording, to stop and save. The file is WebM (VP8) in `~/Videos/Kiekje`, and a notification offers Open, Show in folder and Export GIF. A finished recording also appears in the gallery with a poster frame as its thumbnail, a Video badge and its own Recording filter. Edit, Pin, Copy image and Upload are off for recordings.
+`kiekje record`, Record screen in the tray menu or the capture menu starts a recording. Your desktop's own ScreenCast picker chooses a screen or a window. A three second countdown follows with one beep per second when `[notifications] sound` is on, and no window, so nothing of it ends up in the video. Escape on KDE, the `[shortcuts] record` key or Stop recording in the tray abandons the recording during the countdown. Run the command again, pick Stop recording, or press the Start or stop a recording shortcut (`[shortcuts] record`, off until you set a key in Settings) to stop and save. The file is WebM (VP8) in `~/Videos/Kiekje`, and a notification offers Open, Show in folder and Export GIF. A finished recording also appears in the gallery with a poster frame as its thumbnail, a Video badge and its own Recording filter. Edit, Pin, Copy image and Upload are off for recordings.
+
+On KDE Plasma, pressing Escape twice quickly, or holding it for two seconds, cancels the recording and deletes it. Escape is a global key only while a recording runs, so other apps do not get it until the recording ends. Stopping and saving stays on `kiekje record`, the `[shortcuts] record` key and Stop recording in the tray. Other desktops have no Escape cancel yet.
+
+## Record a region
+
+With the inline editor open on the overlay, **Record** (<kbd>Ctrl</kbd>+<kbd>R</kbd>) and **Record GIF** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>) sit next to Copy and Pin. They record the selected region instead of taking a screenshot. The overlay closes, the desktop's picker asks for the screen the region is on, and the recording is cropped to the region. Run `kiekje record` again, or pick Stop recording, to stop. Record GIF also writes a GIF next to the WebM when the recording is saved.
+
+You can also choose before selecting: <kbd>G</kbd> on the overlay, or the Screenshot, Video and GIF buttons at its top, switches what the selection makes.
+
+The region has to sit on one screen, and the screen you pick must be the one you selected it on. The frame is not frozen while recording; the overlay only chooses the region.
 
 ## GIF export
 

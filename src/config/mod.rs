@@ -96,8 +96,8 @@ pub struct Capture {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AfterSelection {
-    #[default]
     Finish,
+    #[default]
     Edit,
 }
 
@@ -674,16 +674,16 @@ mod tests {
     }
 
     #[test]
-    fn reads_inline_editing_after_selection() {
+    fn edits_inline_after_selection_by_default() {
         let config = parse(
-            "[capture]\nafter_selection = \"edit\"",
+            "[capture]\nafter_selection = \"finish\"",
             Path::new("config.toml"),
         )
         .unwrap();
-        assert_eq!(config.capture.after_selection, AfterSelection::Edit);
+        assert_eq!(config.capture.after_selection, AfterSelection::Finish);
         assert_eq!(
             Config::default().capture.after_selection,
-            AfterSelection::Finish
+            AfterSelection::Edit
         );
     }
 

@@ -778,6 +778,26 @@ window.settings-window {
   padding: 8px 14px;
 }
 
+.recording-count {
+  background-color: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+}
+
+.recording-count label {
+  color: var(--fg);
+  font-size: 72px;
+  font-weight: 300;
+}
+
+.overlay-modes {
+  background-color: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--specular);
+  padding: 4px;
+}
+
 .overlay-hints .keycap {
   font-family: var(--sans);
   font-size: 11px;

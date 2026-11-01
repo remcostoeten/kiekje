@@ -3,7 +3,9 @@ use gtk::glib::{self, Variant};
 use gtk::prelude::*;
 use thiserror::Error;
 
-use super::{Modifiers, ShortcutAction, Shortcuts, Trigger};
+use super::{
+    Modifiers, STOP_RECORDING_DESCRIPTION, STOP_RECORDING_ID, ShortcutAction, Shortcuts, Trigger,
+};
 
 const SERVICE: &str = "org.kde.kglobalaccel";
 const PATH: &str = "/kglobalaccel";
@@ -108,6 +110,37 @@ pub fn set(
         action.id().to_owned(),
         COMPONENT_NAME.to_owned(),
         action.description().to_owned(),
+    ];
+    call(
+        &connection,
+        "setForeignShortcutKeys",
+        Variant::tuple_from_iter([id.to_variant(), keys.to_variant()]),
+    )?;
+    Ok(())
+}
+
+/// Gives the recording stop shortcut the Escape key, or takes it away again.
+///
+/// Escape is a global key while it is on, so call it only while a recording runs. Blocks on
+/// D-Bus, so call it from a worker thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// kde::set_stop_key(APP_ID, true)?;
+/// ```
+pub fn set_stop_key(app_id: &str, on: bool) -> Result<(), KdeError> {
+    let connection = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE)?;
+    let keys = if on {
+        vec![(vec![QT_SPECIAL],)]
+    } else {
+        Vec::new()
+    };
+    let id = vec![
+        app_id.to_owned(),
+        STOP_RECORDING_ID.to_owned(),
+        COMPONENT_NAME.to_owned(),
+        STOP_RECORDING_DESCRIPTION.to_owned(),
     ];
     call(
         &connection,

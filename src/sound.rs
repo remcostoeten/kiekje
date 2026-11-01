@@ -20,6 +20,7 @@ static PLAYABLE: OnceLock<bool> = OnceLock::new();
 
 thread_local! {
     static PLAYER: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
+    static BEEP: RefCell<Option<gtk::MediaFile>> = const { RefCell::new(None) };
 }
 
 #[derive(Debug, Error)]
@@ -124,7 +125,30 @@ pub fn play_capture() {
     });
 }
 
-/// Loads the capture sound ahead of time so the first capture plays it without delay.
+/// Plays one short countdown beep without waiting for it to finish.
+///
+/// Stays silent until [`check`] has found a working media backend.
+///
+/// # Examples
+///
+/// ```ignore
+/// sound::play_beep();
+/// ```
+pub fn play_beep() {
+    if PLAYABLE.get() != Some(&true) {
+        return;
+    }
+    BEEP.with(|player| {
+        let mut player = player.borrow_mut();
+        let media = player.get_or_insert_with(open_beep);
+        if media.is_ended() || media.is_playing() {
+            media.seek(0);
+        }
+        media.play();
+    });
+}
+
+/// Loads the capture sound and the countdown beep ahead of time so they play without delay.
 ///
 /// # Examples
 ///
@@ -138,6 +162,20 @@ pub fn prepare() {
     PLAYER.with(|player| {
         player.borrow_mut().get_or_insert_with(open);
     });
+    BEEP.with(|player| {
+        player.borrow_mut().get_or_insert_with(open_beep);
+    });
+}
+
+fn open_beep() -> gtk::MediaFile {
+    crate::ui::load_stylesheet();
+    let media = gtk::MediaFile::for_resource(&format!("{RESOURCE_PREFIX}/sounds/beep.wav"));
+    media.connect_error_notify(|media| {
+        if let Some(error) = media.error() {
+            warn!("the countdown beep did not play: {error}");
+        }
+    });
+    media
 }
 
 fn open() -> gtk::MediaFile {

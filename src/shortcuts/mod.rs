@@ -7,24 +7,29 @@ use gtk::glib;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub use portal::{PortalGuard, PortalShortcuts};
+pub use portal::{PortalGuard, PortalShortcuts, StopKey};
 pub use trigger::{Modifiers, Recorded, Slot, Trigger, record};
+
+pub const STOP_RECORDING_ID: &str = "stop-recording";
+pub const STOP_RECORDING_DESCRIPTION: &str = "Cancel the recording (press Escape twice or hold it)";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShortcutAction {
     Region,
     Fullscreen,
     Window,
+    Record,
 }
 
 impl ShortcutAction {
-    pub const ALL: [Self; 3] = [Self::Region, Self::Fullscreen, Self::Window];
+    pub const ALL: [Self; 4] = [Self::Region, Self::Fullscreen, Self::Window, Self::Record];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Region => "capture-region",
             Self::Fullscreen => "capture-fullscreen",
             Self::Window => "capture-window",
+            Self::Record => "record",
         }
     }
 
@@ -37,6 +42,7 @@ impl ShortcutAction {
             Self::Region => "Capture a region",
             Self::Fullscreen => "Capture every screen",
             Self::Window => "Capture a window",
+            Self::Record => "Start or stop a recording",
         }
     }
 
@@ -53,7 +59,7 @@ impl ShortcutAction {
         match self {
             Self::Region => Some("Print"),
             Self::Fullscreen => Some("SHIFT+Print"),
-            Self::Window => None,
+            Self::Window | Self::Record => None,
         }
     }
 
@@ -96,6 +102,8 @@ pub struct Shortcuts {
     pub capture_fullscreen: Slot,
     #[serde(skip_serializing_if = "Slot::is_off")]
     pub capture_window: Slot,
+    #[serde(skip_serializing_if = "Slot::is_off")]
+    pub record: Slot,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -112,6 +120,7 @@ impl Default for Shortcuts {
             capture_region: ShortcutAction::Region.default_slot(),
             capture_fullscreen: ShortcutAction::Fullscreen.default_slot(),
             capture_window: ShortcutAction::Window.default_slot(),
+            record: ShortcutAction::Record.default_slot(),
         }
     }
 }
@@ -122,6 +131,7 @@ impl Shortcuts {
             ShortcutAction::Region => &self.capture_region,
             ShortcutAction::Fullscreen => &self.capture_fullscreen,
             ShortcutAction::Window => &self.capture_window,
+            ShortcutAction::Record => &self.record,
         }
     }
 
@@ -130,6 +140,7 @@ impl Shortcuts {
             ShortcutAction::Region => self.capture_region = slot,
             ShortcutAction::Fullscreen => self.capture_fullscreen = slot,
             ShortcutAction::Window => self.capture_window = slot,
+            ShortcutAction::Record => self.record = slot,
         }
     }
 
@@ -245,6 +256,14 @@ mod tests {
             ShortcutAction::Region.default_slot()
         );
         assert_eq!(shortcuts.conflict(), None);
+    }
+
+    #[test]
+    fn leaves_the_record_shortcut_without_a_default_key() {
+        let shortcuts = Shortcuts::default();
+        assert_eq!(ShortcutAction::Record.id(), "record");
+        assert_eq!(shortcuts.record, Slot::Off);
+        assert_eq!(shortcuts.slot(ShortcutAction::Record), &Slot::Off);
     }
 
     #[test]

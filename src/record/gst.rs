@@ -35,7 +35,7 @@ const MESSAGE_ERROR: c_uint = 1 << 1;
 const NANOS_PER_MILLI: u64 = 1_000_000;
 const POLL: Duration = Duration::from_millis(100);
 
-const ELEMENTS: [(&CStr, &str); 6] = [
+const ELEMENTS: [(&CStr, &str); 7] = [
     (
         c"pipewiresrc",
         "the GStreamer PipeWire plugin (gst-plugin-pipewire on Arch, gstreamer1.0-pipewire on Debian and Ubuntu, pipewire-gstreamer on Fedora)",
@@ -50,6 +50,10 @@ const ELEMENTS: [(&CStr, &str); 6] = [
     ),
     (
         c"webmmux",
+        "the GStreamer good plugins (gst-plugins-good on Arch, gstreamer1.0-plugins-good on Debian and Ubuntu, gstreamer1-plugins-good on Fedora)",
+    ),
+    (
+        c"videocrop",
         "the GStreamer good plugins (gst-plugins-good on Arch, gstreamer1.0-plugins-good on Debian and Ubuntu, gstreamer1-plugins-good on Fedora)",
     ),
     (c"queue", "GStreamer's core elements"),

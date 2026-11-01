@@ -29,11 +29,14 @@ The overlay dims the frozen frame and shows the selection with a 1 px accent bor
 | <kbd>F</kbd> | Take the monitor under the pointer |
 | <kbd>W</kbd>, <kbd>Enter</kbd> | Take the hovered window |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Take the last region |
+| <kbd>G</kbd> | Cycle Screenshot, Video and GIF; a selection then records instead of taking a screenshot |
 | <kbd>D</kbd>, or a tool key | Start drawing first, pick the region afterwards with <kbd>S</kbd> |
 | <kbd>Z</kbd> | Show or hide the loupe for this capture |
 | <kbd>C</kbd> | Copy the colour under the pointer |
 | <kbd>?</kbd> | Show or hide the hint bar |
 | <kbd>Esc</kbd> | Cancel, nothing is saved |
+
+A small bar at the top of the overlay shows the same choice as three buttons: Screenshot, Video and GIF. With Video or GIF selected, a drag, a click on a window, <kbd>F</kbd> or <kbd>Enter</kbd> starts a recording of that region instead of taking a screenshot, and the inline editor is skipped. See [Record and share](/guide/record-and-share#record-a-region). The choice resets to Screenshot for every capture.
 
 Hold <kbd>Shift</kbd> while moving to slow the pointer to an eighth of its speed, which makes single pixels easy to hit. The factor is set under Settings, Capture, Magnifier.
 
@@ -68,7 +71,7 @@ A magnifier follows the pointer with the pixel grid, the position and the hex co
 
 By default the region is copied and saved when you let go. Two things change that:
 
-- `kiekje capture --edit`, the tray's Annotate region item, or `[capture] after_selection = "edit"` keep the overlay open with the drawing tools above the region and Accept, Cancel, Save, Save as and Copy below it. See [Annotate](/guide/annotate).
+- `kiekje capture --edit`, the tray's Annotate region item, or `[capture] after_selection = "edit"` (the default) keep the overlay open with the drawing tools above the region and Accept, Cancel, Save, Save as and Copy below it. See [Annotate](/guide/annotate).
 - `--no-save` copies to the clipboard only. With `[saving] enabled = false` every capture is treated that way and listed in the gallery as Unsaved. See [Gallery](/guide/gallery).
 
 A capture can also be pinned on screen as a floating window from the overlay, the gallery or `kiekje pin <path>`. Drag it around, scroll to zoom, <kbd>Esc</kbd> closes it. On GNOME a pinned window is not guaranteed to stay on top.
