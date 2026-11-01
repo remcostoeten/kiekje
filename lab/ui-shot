@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -u
+
+usage() {
+    cat <<'EOF'
+Usage: lab/ui-shot BIN OUT.png [WAIT_SECONDS] [XDOTOOL_LINES]
+
+Opens a Kiekje window from BIN on a private Xvfb display with a private session bus and
+isolated XDG directories, runs the optional newline-separated xdotool lines, and writes a
+1280x860 screenshot to OUT.png. The tail of the app log follows.
+
+  KIEKJE_UI_ROOT     holds the config, data, cache and logs (default /tmp/kiekje-ui)
+  KIEKJE_UI_COMMAND  the window to open: settings (default) or gallery
+
+Example: lab/ui-shot target/debug/kiekje /tmp/shortcuts.png 5 $'mousemove 78 147\nclick 1\nsleep 0.6'
+EOF
+}
+
+if [[ $# -lt 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+    usage
+    exit 1
+fi
+for tool in xvfb-run dbus-run-session xdotool import; do
+    if ! command -v "$tool" >/dev/null; then
+        echo "lab/ui-shot: $tool is not installed" >&2
+        exit 1
+    fi
+done
+
+BIN="$1"
+OUT="$2"
+WAIT="${3:-5}"
+ACTIONS="${4:-}"
+ROOT="${KIEKJE_UI_ROOT:-/tmp/kiekje-ui}"
+COMMAND="${KIEKJE_UI_COMMAND:-settings}"
+mkdir -p "$ROOT/config" "$ROOT/data" "$ROOT/cache" "$(dirname "$OUT")"
+export XDG_CONFIG_HOME="$ROOT/config" XDG_DATA_HOME="$ROOT/data" XDG_CACHE_HOME="$ROOT/cache"
+export GDK_BACKEND=x11 KIEKJE_LOG=debug GTK_A11Y=none NO_AT_BRIDGE=1
+unset WAYLAND_DISPLAY
+timeout 90 xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- bash -c '
+  "$0" "$5" >"$3/app.log" 2>&1 &
+  PID=$!
+  sleep "$1"
+  if [ -n "$4" ]; then
+    printf "%b\n" "$4" | while IFS= read -r line; do
+      [ -n "$line" ] && xdotool $line
+    done
+  fi
+  import -window root "$2"
+  kill $PID 2>/dev/null
+  wait $PID 2>/dev/null
+' "$BIN" "$WAIT" "$OUT" "$ROOT" "$ACTIONS" "$COMMAND" >"$ROOT/harness.log" 2>&1
+echo "exit=$? shot=$OUT"
+grep -v 'Gtk-CRITICAL\|^$\|icon_theme\|icon_paintable\|dbus-daemon\|portal\|fusermount\|xdg-desktop\|MESA-EGL' "$ROOT/app.log" | tail -n 15

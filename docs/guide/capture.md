@@ -40,7 +40,7 @@ A small bar at the top of the overlay shows the same choice as three buttons: Sc
 
 Hold <kbd>Shift</kbd> while moving to slow the pointer to an eighth of its speed, which makes single pixels easy to hit. The factor is set under Settings, Capture, Magnifier.
 
-With **Snap to the window under the pointer** on, the window under the pointer lights up and one click takes it. Without a window geometry source the overlay stays a plain drag.
+With **Snap to windows** on, the window under the pointer lights up and one click takes it. Without a window geometry source the overlay stays a plain drag.
 
 ### Window snapping and the hint bar
 
