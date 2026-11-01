@@ -20,7 +20,7 @@ use crate::capture::mapping::{
 };
 use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::config;
-use crate::editor::{Ending, Finish, Inline};
+use crate::editor::{Ending, Finish, Inline, Starter, Tool};
 use crate::output::Image;
 use crate::ui;
 
@@ -162,6 +162,30 @@ struct ModeBar {
     buttons: Vec<(Film, gtk::Button)>,
 }
 
+struct Mounted {
+    frame_index: usize,
+    layer: gtk::Fixed,
+    lens: SelectionLayer,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Stage {
+    drawing: bool,
+    region: bool,
+    windows: bool,
+    last_region: bool,
+    loupe: bool,
+    record_key: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Hint {
+    keys: &'static str,
+    label: &'static str,
+    press: Option<(gdk::Key, gdk::ModifierType)>,
+    on: bool,
+}
+
 struct Shared {
     frames: Arc<Vec<Frame>>,
     geometry: Vec<(LogicalRect, (u32, u32))>,
@@ -184,11 +208,14 @@ struct Shared {
     precision: Precision,
     last_region: Option<LogicalRect>,
     pointer: Cell<Option<(f64, f64)>>,
-    hints: RefCell<Vec<gtk::Box>>,
+    hints: RefCell<Vec<(usize, gtk::Box)>>,
     hints_on: Cell<bool>,
+    lens: Cell<bool>,
+    mounted: RefCell<Option<Mounted>>,
     film: Cell<Film>,
     modes: RefCell<Vec<ModeBar>>,
     drawing: config::Drawing,
+    starter: Starter,
 }
 
 /// Shows each monitor's frozen frame on its own surface and lets the user drag a selection.
@@ -201,9 +228,11 @@ struct Shared {
 /// `on_done` runs once with the outcome. `windows` are the visible window frames at trigger
 /// time, topmost first; hovering one highlights it and a click without a drag selects it. Before
 /// a selection, F takes the monitor under the pointer, W the window under it, Shift+R the last
-/// region, and D or a tool letter starts annotating the frame, after which a region can still be
-/// chosen. In `CaptureMode::Window` the overlay only picks windows: a click or Enter takes the
-/// hovered one and dragging selects nothing. A hint bar lists the keys; ? hides it.
+/// region, and D, a tool letter or a tool in the top bar starts annotating the frame, after which
+/// a region can still be chosen. In `CaptureMode::Window` the overlay only picks windows: a click
+/// or Enter takes the hovered one and dragging selects nothing. A hint bar at the bottom lists the
+/// keys, each one clickable, and stays while drawing, where G records and Z shows the loupe; ?
+/// hides it.
 ///
 /// # Examples
 ///
@@ -249,9 +278,12 @@ pub fn show(
         pointer: Cell::new(None),
         hints: RefCell::new(Vec::new()),
         hints_on: Cell::new(options.overlay.hints),
+        lens: Cell::new(false),
+        mounted: RefCell::new(None),
         film: Cell::new(Film::Off),
         modes: RefCell::new(Vec::new()),
         drawing: options.drawing,
+        starter: Starter::new(options.drawing),
     });
 
     let shown: Vec<String> = frames
@@ -375,8 +407,8 @@ fn build_surface(
     let hints = hint_bar(shared);
     hints.set_visible(shared.hints_on.get());
     overlay.add_overlay(&hints);
-    shared.hints.borrow_mut().push(hints);
-    let modes = mode_bar(shared);
+    shared.hints.borrow_mut().push((frame_index, hints));
+    let modes = mode_bar(shared, frame_index);
     overlay.add_overlay(&modes.bar);
     shared.modes.borrow_mut().push(modes);
     window.set_child(Some(&overlay));
@@ -489,33 +521,7 @@ fn build_surface(
 
     let keys = gtk::EventControllerKey::new();
     let key_shared = shared.clone();
-    keys.connect_key_pressed(move |_, key, _, state| {
-        let inline = key_shared.inline.borrow().clone();
-        if let Some(inline) = inline {
-            return inline.key(key, state);
-        }
-        if key == gdk::Key::Escape {
-            finish(&key_shared, Outcome::Canceled);
-            return glib::Propagation::Stop;
-        }
-        if key_shared.chosen.get().is_some() || key_shared.drag.borrow().is_some() {
-            return glib::Propagation::Proceed;
-        }
-        if keyboard::press(&key_shared, key, state) {
-            return glib::Propagation::Stop;
-        }
-        if key_shared.magnifier.key(key, state, &key_shared.frames) {
-            for area in key_shared.areas.borrow().iter() {
-                area.layer.queue_draw();
-            }
-            return glib::Propagation::Stop;
-        }
-        if shortcut(&key_shared, key, state) {
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
+    keys.connect_key_pressed(move |_, key, _, state| key_pressed(&key_shared, key, state));
     window.add_controller(keys);
 
     let paint_shared = shared.clone();
@@ -683,6 +689,67 @@ fn paint_size_label(
     snapshot.restore();
 }
 
+fn key_pressed(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
+    let inline = shared.inline.borrow().clone();
+    if let Some(inline) = inline {
+        if drawing_shortcut(shared, &inline, key, state) {
+            return glib::Propagation::Stop;
+        }
+        return inline.key(key, state);
+    }
+    if key == gdk::Key::Escape {
+        finish(shared, Outcome::Canceled);
+        return glib::Propagation::Stop;
+    }
+    if shared.chosen.get().is_some() || shared.drag.borrow().is_some() {
+        return glib::Propagation::Proceed;
+    }
+    if keyboard::press(shared, key, state) {
+        return glib::Propagation::Stop;
+    }
+    if shared.magnifier.key(key, state, &shared.frames) {
+        for area in shared.areas.borrow().iter() {
+            area.layer.queue_draw();
+        }
+        refresh_hints(shared);
+        return glib::Propagation::Stop;
+    }
+    if shortcut(shared, key, state) {
+        glib::Propagation::Stop
+    } else {
+        glib::Propagation::Proceed
+    }
+}
+
+fn drawing_shortcut(
+    shared: &Rc<Shared>,
+    inline: &Inline,
+    key: gdk::Key,
+    state: gdk::ModifierType,
+) -> bool {
+    if inline.typing()
+        || state.intersects(
+            gdk::ModifierType::CONTROL_MASK
+                | gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::SUPER_MASK,
+        )
+    {
+        return false;
+    }
+    match key.to_lower() {
+        _ if key == gdk::Key::question => toggle_hints(shared),
+        gdk::Key::z => set_lens(shared, !shared.lens.get()),
+        gdk::Key::c if shared.lens.get() => {
+            if shared.magnifier.copy_colour(&shared.frames) {
+                redraw_lens(shared);
+            }
+        }
+        gdk::Key::g if stage(shared).record_key => record_from_drawing(shared, inline),
+        _ => return false,
+    }
+    true
+}
+
 fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> bool {
     if state.intersects(
         gdk::ModifierType::CONTROL_MASK
@@ -694,34 +761,34 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
     let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
     match key.to_lower() {
         _ if key == gdk::Key::question => {
-            let on = !shared.hints_on.get();
-            shared.hints_on.set(on);
-            show_hints(shared, on);
+            toggle_hints(shared);
             true
         }
         gdk::Key::w | gdk::Key::Return | gdk::Key::KP_Enter if !shift => shared
             .snap
             .hovered()
             .is_some_and(|window| choose(shared, window)),
+        gdk::Key::g if !shift => {
+            set_film(shared, shared.film.get().next());
+            true
+        }
         _ if picks_windows(shared) => false,
         gdk::Key::r if shift => shared
             .last_region
             .is_some_and(|region| choose(shared, region)),
         _ if shift => false,
         gdk::Key::f => choose(shared, shared.geometry[pointer_frame(shared)].0),
-        gdk::Key::g => {
-            set_film(shared, shared.film.get().next());
-            true
-        }
         gdk::Key::d => {
-            begin_edit(shared, pointer_frame(shared), None, Some(gdk::Key::p));
+            begin_edit(shared, pointer_frame(shared), None, Some(Tool::Pen));
             true
         }
-        _ if Inline::is_tool_key(&shared.drawing.keys, key) => {
-            begin_edit(shared, pointer_frame(shared), None, Some(key));
-            true
-        }
-        _ => false,
+        _ => match Inline::tool_for_key(&shared.drawing.keys, key) {
+            Some(tool) => {
+                begin_edit(shared, pointer_frame(shared), None, Some(tool));
+                true
+            }
+            None => false,
+        },
     }
 }
 
@@ -763,73 +830,202 @@ fn pointer_frame(shared: &Shared) -> usize {
         .unwrap_or(0)
 }
 
-fn hint_bar(shared: &Shared) -> gtk::Box {
-    let bar = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(14)
-        .halign(gtk::Align::Center)
-        .valign(gtk::Align::End)
-        .margin_bottom(32)
-        .can_target(false)
-        .css_classes(["panel", "overlay-hints"])
-        .build();
-    let windows = shared.snap.has_windows();
-    let magnifier = shared.magnifier.enabled();
-    let region = !picks_windows(shared);
-    for (keys, label, shown) in [
-        ("", "no windows to pick", !region && !windows),
-        ("Click", "window", !region && windows),
-        ("Drag", "select", region),
-        ("Arrows", "move cursor", region),
-        ("Space", "set corner", region),
-        ("F", "screen", region),
-        ("W", "next window", windows),
-        ("Enter", "capture", windows || region),
-        (
-            "Shift R",
-            "last region",
-            region && shared.last_region.is_some(),
-        ),
-        ("G", "film mode", true),
-        ("D", "draw", region),
-        ("Z", "loupe", true),
-        ("C", "colour", magnifier),
-        ("?", "hide", true),
-        ("Esc", "cancel", true),
-    ] {
-        if !shown {
-            continue;
-        }
-        let hint = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(6)
-            .build();
-        if !keys.is_empty() {
-            hint.append(
-                &gtk::Label::builder()
-                    .label(keys)
-                    .css_classes(["keycap"])
-                    .build(),
-            );
-        }
-        hint.append(
-            &gtk::Label::builder()
-                .label(label)
-                .css_classes(["hint"])
-                .build(),
-        );
-        bar.append(&hint);
-    }
-    bar
-}
-
-fn mode_bar(shared: &Rc<Shared>) -> ModeBar {
+fn hint_bar(shared: &Rc<Shared>) -> gtk::Box {
     let bar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(2)
         .halign(gtk::Align::Center)
+        .valign(gtk::Align::End)
+        .margin_bottom(32)
+        .can_focus(false)
+        .css_classes(["panel", "overlay-hints"])
+        .build();
+    fill_hints(shared, &bar);
+    bar
+}
+
+fn stage(shared: &Shared) -> Stage {
+    let drawing = shared.chosen.get().is_some();
+    Stage {
+        drawing,
+        region: !picks_windows(shared),
+        windows: shared.snap.has_windows(),
+        last_region: shared.last_region.is_some(),
+        loupe: if drawing {
+            shared.lens.get()
+        } else {
+            shared.magnifier.enabled()
+        },
+        record_key: shared.drawing.keys.action('g').is_none(),
+    }
+}
+
+fn hints_for(stage: Stage) -> Vec<Hint> {
+    let plain = |key| Some((key, gdk::ModifierType::empty()));
+    let loupe = stage.loupe;
+    let rows = if stage.drawing {
+        vec![
+            (true, "S", "region", plain(gdk::Key::s), false),
+            (true, "Enter", "accept", plain(gdk::Key::Return), false),
+            (stage.record_key, "G", "record", plain(gdk::Key::g), false),
+            (true, "Z", "loupe", plain(gdk::Key::z), loupe),
+            (loupe, "C", "colour", None, false),
+            (true, "?", "hide", plain(gdk::Key::question), false),
+            (true, "Esc", "cancel", plain(gdk::Key::Escape), false),
+        ]
+    } else {
+        let (region, windows) = (stage.region, stage.windows);
+        vec![
+            (!region && !windows, "", "no windows to pick", None, false),
+            (!region && windows, "Click", "window", None, false),
+            (region, "Drag", "select", None, false),
+            (region, "Arrows", "move cursor", None, false),
+            (region, "Space", "set corner", None, false),
+            (region, "F", "screen", plain(gdk::Key::f), false),
+            (windows, "W", "next window", plain(gdk::Key::w), false),
+            (
+                windows || region,
+                "Enter",
+                "capture",
+                plain(gdk::Key::Return),
+                false,
+            ),
+            (
+                region && stage.last_region,
+                "Shift R",
+                "last region",
+                Some((gdk::Key::R, gdk::ModifierType::SHIFT_MASK)),
+                false,
+            ),
+            (true, "G", "film mode", plain(gdk::Key::g), false),
+            (region, "D", "draw", plain(gdk::Key::d), false),
+            (true, "Z", "loupe", plain(gdk::Key::z), loupe),
+            (loupe, "C", "colour", None, false),
+            (true, "?", "hide", plain(gdk::Key::question), false),
+            (true, "Esc", "cancel", plain(gdk::Key::Escape), false),
+        ]
+    };
+    rows.into_iter()
+        .filter(|(shown, ..)| *shown)
+        .map(|(_, keys, label, press, on)| Hint {
+            keys,
+            label,
+            press,
+            on,
+        })
+        .collect()
+}
+
+fn fill_hints(shared: &Rc<Shared>, bar: &gtk::Box) {
+    while let Some(child) = bar.first_child() {
+        bar.remove(&child);
+    }
+    for hint in hints_for(stage(shared)) {
+        bar.append(&hint_item(shared, hint));
+    }
+    bar.queue_resize();
+}
+
+fn hint_item(shared: &Rc<Shared>, hint: Hint) -> gtk::Widget {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    if !hint.keys.is_empty() {
+        content.append(
+            &gtk::Label::builder()
+                .label(hint.keys)
+                .css_classes(["keycap"])
+                .build(),
+        );
+    }
+    content.append(
+        &gtk::Label::builder()
+            .label(hint.label)
+            .css_classes(["hint"])
+            .build(),
+    );
+    let Some((key, state)) = hint.press else {
+        content.add_css_class("hint-item");
+        return content.upcast();
+    };
+    let button = gtk::Button::builder()
+        .child(&content)
+        .focus_on_click(false)
+        .build();
+    button.set_css_classes(&hint_classes(hint.on));
+    button.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{} ({})",
+        hint.label, hint.keys
+    ))]);
+    let weak = Rc::downgrade(shared);
+    button.connect_clicked(move |_| {
+        if let Some(shared) = weak.upgrade() {
+            key_pressed(&shared, key, state);
+        }
+    });
+    button.upcast()
+}
+
+fn hint_classes(on: bool) -> Vec<&'static str> {
+    if on {
+        vec!["act", "selected"]
+    } else {
+        vec!["act"]
+    }
+}
+
+fn refresh_hints(shared: &Rc<Shared>) {
+    for (_, bar) in shared.hints.borrow().iter() {
+        fill_hints(shared, bar);
+    }
+}
+
+fn hint_reserve(shared: &Shared) -> i32 {
+    if !shared.hints_on.get() {
+        return 0;
+    }
+    shared.hints.borrow().first().map_or(0, |(_, bar)| {
+        let (_, natural, _, _) = bar.measure(gtk::Orientation::Vertical, -1);
+        natural + bar.margin_bottom()
+    })
+}
+
+fn toggle_hints(shared: &Shared) {
+    let on = !shared.hints_on.get();
+    shared.hints_on.set(on);
+    show_hints(shared, on);
+    if let Some(inline) = shared.inline.borrow().as_ref() {
+        inline.reserve(0, hint_reserve(shared));
+    }
+}
+
+fn mode_bar(shared: &Rc<Shared>, frame_index: usize) -> ModeBar {
+    let region = !picks_windows(shared);
+    let column = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .halign(gtk::Align::Center)
         .valign(gtk::Align::Start)
-        .margin_top(32)
+        .margin_top(if region { 8 } else { 32 })
+        .can_focus(false)
+        .css_classes(["editor"])
+        .build();
+    if region {
+        let weak = Rc::downgrade(shared);
+        column.append(&shared.starter.bar(move |tool| {
+            if let Some(shared) = weak
+                .upgrade()
+                .filter(|shared| shared.chosen.get().is_none())
+            {
+                begin_edit(&shared, frame_index, None, Some(tool));
+            }
+        }));
+    }
+    let bar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(2)
+        .halign(gtk::Align::Center)
         .css_classes(["panel", "overlay-modes"])
         .build();
     let mut buttons = Vec::new();
@@ -850,7 +1046,11 @@ fn mode_bar(shared: &Rc<Shared>) -> ModeBar {
         bar.append(&button);
         buttons.push((film, button));
     }
-    ModeBar { bar, buttons }
+    column.append(&bar);
+    ModeBar {
+        bar: column,
+        buttons,
+    }
 }
 
 fn mode_classes(button: Film, current: Film) -> Vec<&'static str> {
@@ -877,19 +1077,82 @@ fn show_modes(shared: &Shared, shown: bool) {
 }
 
 fn show_hints(shared: &Shared, shown: bool) {
-    for hints in shared.hints.borrow().iter() {
+    for (_, hints) in shared.hints.borrow().iter() {
         hints.set_visible(shown);
     }
+}
+
+fn set_lens(shared: &Rc<Shared>, on: bool) {
+    shared.lens.set(on);
+    redraw_lens(shared);
+    refresh_hints(shared);
+}
+
+fn redraw_lens(shared: &Shared) {
+    if let Some(mounted) = shared.mounted.borrow().as_ref() {
+        mounted.lens.queue_draw();
+    }
+}
+
+fn lens_layer(shared: &Rc<Shared>, frame_index: usize) -> SelectionLayer {
+    let weak = Rc::downgrade(shared);
+    let lens = SelectionLayer::new(move |widget, snapshot| {
+        if let Some(shared) = weak.upgrade().filter(|shared| shared.lens.get()) {
+            shared
+                .magnifier
+                .draw(&shared.frames[frame_index], widget, snapshot);
+        }
+    });
+    lens.set_can_target(false);
+    lens.set_hexpand(true);
+    lens.set_vexpand(true);
+    lens
+}
+
+fn record_from_drawing(shared: &Rc<Shared>, inline: &Inline) {
+    if inline.has_region() {
+        inline.record(false);
+        return;
+    }
+    stop_drawing(shared);
+    set_film(shared, Film::Video);
+}
+
+fn stop_drawing(shared: &Rc<Shared>) {
+    shared.inline.replace(None);
+    if let Some(mounted) = shared.mounted.take()
+        && let Some((_, surface)) = shared
+            .surfaces
+            .borrow()
+            .iter()
+            .find(|(index, _)| *index == mounted.frame_index)
+    {
+        surface.remove_overlay(&mounted.layer);
+        surface.remove_overlay(&mounted.lens);
+    }
+    shared.editing.set(None);
+    shared.chosen.set(None);
+    shared.lens.set(false);
+    shared.keyboard.set(keyboard::State::default());
+    shared.starter.reset();
+    for area in shared.areas.borrow().iter() {
+        area.layer.set_cursor_from_name(Some("crosshair"));
+        area.layer.queue_draw();
+    }
+    refresh_hints(shared);
+    show_hints(shared, shared.hints_on.get());
+    show_modes(shared, true);
 }
 
 fn begin_edit(
     shared: &Rc<Shared>,
     frame_index: usize,
     region: Option<LogicalRect>,
-    first_key: Option<gdk::Key>,
+    first: Option<Tool>,
 ) {
     let monitor = shared.frames[frame_index].monitor.logical;
     shared.chosen.set(Some(region.unwrap_or(monitor)));
+    set_film(shared, Film::Off);
     show_hints(shared, false);
     show_modes(shared, false);
     for area in shared.areas.borrow().iter() {
@@ -919,7 +1182,7 @@ fn begin_edit(
             frames,
             frame_index,
             shared.mode,
-            shared.drawing,
+            shared.starter.drawing(),
             suspend,
             move |end| {
                 let Some(shared) = ending.upgrade() else {
@@ -995,14 +1258,49 @@ fn begin_edit(
         });
         let layer = gtk::Fixed::new();
         surface.add_overlay(&layer);
-        inline.mount(&layer, (monitor.width, monitor.height), pixels);
+        let lens = lens_layer(&shared, frame_index);
+        surface.add_overlay(&lens);
+        refresh_hints(&shared);
+        show_hints(&shared, shared.hints_on.get());
+        for (_, bar) in shared
+            .hints
+            .borrow()
+            .iter()
+            .filter(|(index, _)| *index == frame_index)
+        {
+            surface.remove_overlay(bar);
+            surface.add_overlay(bar);
+        }
+        inline.mount(
+            &layer,
+            (monitor.width, monitor.height),
+            pixels,
+            (0, hint_reserve(&shared)),
+        );
         drop(surfaces);
+        let pointed = Rc::downgrade(&shared);
+        inline.on_pointer(move |point| {
+            let Some(shared) = pointed.upgrade() else {
+                return;
+            };
+            shared
+                .magnifier
+                .move_to(point.map(|(x, y)| (f64::from(monitor.x) + x, f64::from(monitor.y) + y)));
+            if shared.lens.get() {
+                redraw_lens(&shared);
+            }
+        });
+        shared.mounted.replace(Some(Mounted {
+            frame_index,
+            layer,
+            lens,
+        }));
         shared.editing.set(Some(frame_index));
         for area in shared.areas.borrow().iter() {
             area.layer.queue_draw();
         }
-        if let Some(key) = first_key {
-            inline.key(key, gdk::ModifierType::empty());
+        if let Some(tool) = first {
+            inline.pick(tool);
         }
         shared.inline.replace(Some(inline));
     });
@@ -1169,6 +1467,7 @@ fn finish(shared: &Shared, outcome: Outcome) {
     }
     shared.areas.borrow_mut().clear();
     shared.surfaces.borrow_mut().clear();
+    shared.mounted.borrow_mut().take();
     shared.inline.borrow_mut().take();
 }
 
@@ -1181,6 +1480,67 @@ mod tests {
         assert_eq!(Film::Off.next(), Film::Video);
         assert_eq!(Film::Video.next(), Film::Gif);
         assert_eq!(Film::Gif.next(), Film::Off);
+    }
+
+    fn labels(stage: Stage) -> Vec<&'static str> {
+        hints_for(stage).iter().map(|hint| hint.label).collect()
+    }
+
+    #[test]
+    fn keeps_record_and_loupe_in_the_hint_bar_while_drawing() {
+        let drawing = Stage {
+            drawing: true,
+            region: true,
+            record_key: true,
+            ..Stage::default()
+        };
+        assert_eq!(
+            labels(drawing),
+            ["region", "accept", "record", "loupe", "hide", "cancel"]
+        );
+        let lens = Stage {
+            loupe: true,
+            ..drawing
+        };
+        assert!(labels(lens).contains(&"colour"));
+        let loupe = hints_for(lens)
+            .into_iter()
+            .find(|hint| hint.label == "loupe")
+            .unwrap();
+        assert!(loupe.on);
+        assert_eq!(loupe.press, Some((gdk::Key::z, gdk::ModifierType::empty())));
+    }
+
+    #[test]
+    fn drops_the_record_hint_when_g_draws_instead() {
+        let drawing = Stage {
+            drawing: true,
+            region: true,
+            ..Stage::default()
+        };
+        assert!(!labels(drawing).contains(&"record"));
+    }
+
+    #[test]
+    fn lists_region_keys_before_a_selection() {
+        let selecting = Stage {
+            region: true,
+            last_region: true,
+            ..Stage::default()
+        };
+        let hints = hints_for(selecting);
+        assert!(hints.iter().any(|hint| hint.label == "film mode"));
+        assert!(hints.iter().any(|hint| hint.label == "draw"));
+        let last = hints
+            .iter()
+            .find(|hint| hint.label == "last region")
+            .unwrap();
+        assert_eq!(
+            last.press,
+            Some((gdk::Key::R, gdk::ModifierType::SHIFT_MASK))
+        );
+        let drag = hints.iter().find(|hint| hint.label == "select").unwrap();
+        assert_eq!(drag.press, None);
     }
 
     #[test]

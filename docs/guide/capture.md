@@ -30,13 +30,13 @@ The overlay dims the frozen frame and shows the selection with a 1 px accent bor
 | <kbd>W</kbd>, <kbd>Enter</kbd> | Take the hovered window |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Take the last region |
 | <kbd>G</kbd> | Cycle Screenshot, Video and GIF; a selection then records instead of taking a screenshot |
-| <kbd>D</kbd>, or a tool key | Start drawing first, pick the region afterwards with <kbd>S</kbd> |
+| <kbd>D</kbd>, a tool key or a tool in the top bar | Start drawing first, pick the region afterwards with <kbd>S</kbd> |
 | <kbd>Z</kbd> | Show or hide the loupe for this capture |
 | <kbd>C</kbd> | Copy the colour under the pointer |
 | <kbd>?</kbd> | Show or hide the hint bar |
 | <kbd>Esc</kbd> | Cancel, nothing is saved |
 
-A small bar at the top of the overlay shows the same choice as three buttons: Screenshot, Video and GIF. With Video or GIF selected, a drag, a click on a window, <kbd>F</kbd> or <kbd>Enter</kbd> starts a recording of that region instead of taking a screenshot, and the inline editor is skipped. See [Record and share](/guide/record-and-share#record-a-region). The choice resets to Screenshot for every capture.
+A small bar at the top of the overlay shows the same choice as three buttons: Screenshot, Video and GIF. Above it sits the inline editor's drawing palette, with Region picked because a drag selects a region. Clicking another tool starts drawing on that monitor with it, like <kbd>D</kbd> does with the pen, and the colour, size and opacity picked there carry over into the editor. With Video or GIF selected, a drag, a click on a window, <kbd>F</kbd> or <kbd>Enter</kbd> starts a recording of that region instead of taking a screenshot, and the inline editor is skipped. See [Record and share](/guide/record-and-share#record-a-region). The choice resets to Screenshot for every capture.
 
 Hold <kbd>Shift</kbd> while moving to slow the pointer to an eighth of its speed, which makes single pixels easy to hit. The factor is set under Settings, Capture, Magnifier.
 
@@ -44,7 +44,7 @@ With **Snap to windows** on, the window under the pointer lights up and one clic
 
 ### Window snapping and the hint bar
 
-The hint bar lists the keys at the bottom of the overlay. `[overlay] hints = false` hides it for good; <kbd>?</kbd> hides it once.
+The hint bar lists the keys at the bottom of the overlay, and every key that does something is also a button. It stays while you draw, with <kbd>S</kbd> for the region, <kbd>Enter</kbd> to accept, <kbd>G</kbd> to record, <kbd>Z</kbd> for the loupe and <kbd>C</kbd> to copy a colour while the loupe shows. <kbd>G</kbd> records the region when there is one and otherwise goes back to selecting with Video on; the annotations are dropped either way. `[overlay] hints = false` hides the bar for good; <kbd>?</kbd> hides it once.
 
 ## Selecting across monitors
 

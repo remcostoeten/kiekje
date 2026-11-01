@@ -1295,7 +1295,17 @@ window.settings-window .sidebar {
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
   box-shadow: var(--specular);
-  padding: 8px 14px;
+  padding: 4px;
+}
+
+.overlay-hints .hint-item,
+.panel.overlay-hints button.act {
+  min-height: 26px;
+  padding: 0 6px;
+}
+
+.overlay-hints button.act .hint {
+  color: inherit;
 }
 
 .recording-count {

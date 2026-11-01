@@ -4,7 +4,7 @@ use gtk::prelude::*;
 
 use super::Editor;
 use super::document::{Color, Tool};
-use super::keys::{DrawAction, DrawKey};
+use super::keys::{DrawAction, DrawKey, DrawingKeys};
 
 const SWATCH: i32 = 14;
 
@@ -38,7 +38,65 @@ pub(super) fn build(editor: &Rc<Editor>) -> gtk::Box {
     bar
 }
 
+pub(super) struct Row<T> {
+    pub(super) row: gtk::Box,
+    pub(super) buttons: Vec<(T, gtk::ToggleButton)>,
+}
+
 pub(super) fn palette(editor: &Rc<Editor>) -> gtk::Box {
+    let target = Rc::downgrade(editor);
+    let tools = tool_row(
+        &editor.keys,
+        editor.is_inline(),
+        editor.tool.get(),
+        &editor.emoji_button,
+        move |tool| {
+            if let Some(editor) = target.upgrade() {
+                editor.set_tool(tool);
+            }
+        },
+    );
+    on_click(editor, &editor.emoji_button, Editor::open_emoji_picker);
+    for (button, run) in [
+        (&editor.undo, Editor::undo as fn(&Editor)),
+        (&editor.redo, Editor::redo),
+        (&editor.clear, Editor::clear),
+    ] {
+        let target = Rc::downgrade(editor);
+        button.connect_clicked(move |_| {
+            if let Some(editor) = target.upgrade() {
+                run(&editor);
+            }
+        });
+    }
+    let target = Rc::downgrade(editor);
+    let styles = style_row(
+        &editor.keys,
+        editor.color.get(),
+        &editor.size,
+        &editor.opacity,
+        move |color| {
+            if let Some(editor) = target.upgrade() {
+                editor.color.set(color);
+                editor.restyle();
+                editor.remember();
+            }
+        },
+    );
+    editor.tools.replace(tools.buttons);
+    editor.swatches.replace(styles.buttons);
+    assemble(
+        &tools.row,
+        [&editor.undo, &editor.redo, &editor.clear],
+        &styles.row,
+    )
+}
+
+pub(super) fn assemble(
+    tools: &gtk::Box,
+    history: [&gtk::Button; 3],
+    styles: &gtk::Box,
+) -> gtk::Box {
     let palette = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
@@ -46,13 +104,25 @@ pub(super) fn palette(editor: &Rc<Editor>) -> gtk::Box {
         .css_classes(["palette"])
         .build();
     let top = row();
-    top.append(&tools(editor));
+    top.append(tools);
     top.append(&divider(gtk::Orientation::Vertical));
-    history(editor, &top);
+    let buttons = group();
+    for button in history {
+        buttons.append(button);
+    }
+    top.append(&buttons);
     palette.append(&top);
     palette.append(&divider(gtk::Orientation::Horizontal));
-    palette.append(&styles(editor));
+    palette.append(styles);
     palette
+}
+
+pub(super) fn history_buttons() -> [gtk::Button; 3] {
+    [
+        icon_action("kiekje-undo-symbolic", "Undo", "Undo (Ctrl+Z)"),
+        icon_action("kiekje-redo-symbolic", "Redo", "Redo (Ctrl+Shift+Z)"),
+        icon_action("kiekje-clear-symbolic", "Clear", "Remove every annotation"),
+    ]
 }
 
 pub(super) fn footer(editor: &Editor, width: u32, height: u32) -> gtk::Box {
@@ -69,101 +139,95 @@ pub(super) fn footer(editor: &Editor, width: u32, height: u32) -> gtk::Box {
     footer
 }
 
-fn tools(editor: &Rc<Editor>) -> gtk::Box {
-    let top = group();
-    let mut group: Option<gtk::ToggleButton> = None;
-    let mut tools = Vec::new();
+pub(super) fn tool_row(
+    keys: &DrawingKeys,
+    inline: bool,
+    active: Tool,
+    emoji: &gtk::Button,
+    pick: impl Fn(Tool) + 'static,
+) -> Row<Tool> {
+    let row = group();
+    let mut first: Option<gtk::ToggleButton> = None;
+    let mut buttons = Vec::new();
+    let pick = Rc::new(pick);
     for tool in Tool::ALL {
         let (label, key) = match tool {
-            Tool::Crop if editor.is_inline() => ("Region", DrawKey::Key('s')),
-            _ => (tool.label(), editor.keys.get(DrawAction::Tool(tool))),
+            Tool::Crop if inline => ("Region", DrawKey::Key('s')),
+            _ => (tool.label(), keys.get(DrawAction::Tool(tool))),
         };
-        let button = chip(icon(tool, editor.is_inline()), label, &mut group);
+        let button = chip(icon(tool, inline), label, &mut first);
         button.set_tooltip_text(Some(&hinted(label, key)));
-        button.set_active(tool == editor.tool.get());
-        let target = Rc::downgrade(editor);
+        button.set_active(tool == active);
+        let pick = pick.clone();
         button.connect_toggled(move |button| {
-            if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
-                editor.set_tool(tool);
+            if button.is_active() {
+                pick(tool);
             }
         });
-        top.append(&button);
-        tools.push((tool, button));
+        row.append(&button);
+        buttons.push((tool, button));
         if tool == Tool::Emoji {
-            on_click(editor, &editor.emoji_button, Editor::open_emoji_picker);
-            top.append(&editor.emoji_button);
+            row.append(emoji);
         }
     }
-    editor.tools.replace(tools);
-    top
+    Row { row, buttons }
 }
 
-fn history(editor: &Rc<Editor>, row: &gtk::Box) {
-    let buttons = group();
-    for (button, run) in [
-        (&editor.undo, Editor::undo as fn(&Editor)),
-        (&editor.redo, Editor::redo),
-        (&editor.clear, Editor::clear),
-    ] {
-        let target = Rc::downgrade(editor);
-        button.connect_clicked(move |_| {
-            if let Some(editor) = target.upgrade() {
-                run(&editor);
-            }
-        });
-        buttons.append(button);
-    }
-    row.append(&buttons);
-}
-
-fn styles(editor: &Rc<Editor>) -> gtk::Box {
+pub(super) fn style_row(
+    keys: &DrawingKeys,
+    active: Color,
+    size: &gtk::Adjustment,
+    opacity: &gtk::Adjustment,
+    choose: impl Fn(Color) + 'static,
+) -> Row<Color> {
     let bottom = row();
     let colors = group();
-    let mut group: Option<gtk::ToggleButton> = None;
-    let mut swatches = Vec::new();
+    let mut first: Option<gtk::ToggleButton> = None;
+    let mut buttons = Vec::new();
+    let choose = Rc::new(choose);
     for (digit, color) in ('1'..).zip(Color::ALL) {
-        let key = match editor.keys.action(digit) {
+        let key = match keys.action(digit) {
             None => DrawKey::Key(digit),
             Some(_) => DrawKey::Off,
         };
-        let button = swatch(color, &mut group);
+        let button = swatch(color, &mut first);
         button.set_tooltip_text(Some(&hinted(color.label(), key)));
-        button.set_active(color == editor.color.get());
-        let target = Rc::downgrade(editor);
+        button.set_active(color == active);
+        let choose = choose.clone();
         button.connect_toggled(move |button| {
-            if let (true, Some(editor)) = (button.is_active(), target.upgrade()) {
-                editor.color.set(color);
-                editor.restyle();
-                editor.remember();
+            if button.is_active() {
+                choose(color);
             }
         });
         colors.append(&button);
-        swatches.push((color, button));
+        buttons.push((color, button));
     }
-    editor.swatches.replace(swatches);
     colors.set_tooltip_text(Some("Alt+scroll on the image cycles the colour"));
     bottom.append(&colors);
     bottom.append(&divider(gtk::Orientation::Vertical));
-    let keys = [DrawAction::Smaller, DrawAction::Larger]
-        .map(|action| editor.keys.get(action))
+    let resize_keys = [DrawAction::Smaller, DrawAction::Larger]
+        .map(|action| keys.get(action))
         .into_iter()
         .filter(|key| *key != DrawKey::Off)
         .map(DrawKey::label)
         .collect::<Vec<_>>();
-    let size_tip = match keys.as_slice() {
+    let size_tip = match resize_keys.as_slice() {
         [] => "Line and text size (Ctrl+scroll)".to_owned(),
         keys => format!("Line and text size ({} or Ctrl+scroll)", keys.join(" and ")),
     };
-    bottom.append(&slider("Size", &size_tip, &editor.size, |value| {
+    bottom.append(&slider("Size", &size_tip, size, |value| {
         format!("{value} px")
     }));
     bottom.append(&slider(
         "Opacity",
         "Opacity of lines, shapes and text (Shift+scroll)",
-        &editor.opacity,
+        opacity,
         |value| format!("{value}%"),
     ));
-    bottom
+    Row {
+        row: bottom,
+        buttons,
+    }
 }
 
 fn slider(

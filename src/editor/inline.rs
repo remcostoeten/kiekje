@@ -9,7 +9,9 @@ use super::canvas::View;
 use super::document::{Area, Point};
 use super::pixels::{self, LoadError};
 use super::render::{self, Layers};
-use super::{DrawAction, DrawingKeys, Editor, Host, Input, Loaded, SaveError, prepare, toolbar};
+use super::{
+    DrawAction, DrawingKeys, Editor, Host, Input, Loaded, SaveError, Tool, prepare, toolbar,
+};
 use crate::capture::mapping::PixelRect;
 use crate::capture::{CaptureMode, Frame, LogicalRect};
 use crate::config;
@@ -53,6 +55,7 @@ pub(super) struct Bars {
     actions: gtk::Box,
     size: gtk::Label,
     surface: (i32, i32),
+    reserve: (i32, i32),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -106,14 +109,21 @@ impl Inline {
     /// Covers `layer` with the frame and puts the tool and action bars around the region.
     ///
     /// `layer` covers a surface of `surface` logical size. `region` is the part of the frame to
-    /// keep, in frame pixels; `None` starts with the whole frame and no region yet.
+    /// keep, in frame pixels; `None` starts with the whole frame and no region yet. `reserve`
+    /// keeps that many pixels free of bars at the top and bottom of the surface.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// inline.mount(&fixed, (1920, 1080), Some(PixelRect { x: 40, y: 40, width: 640, height: 360 }));
+    /// inline.mount(&fixed, (1920, 1080), Some(PixelRect { x: 40, y: 40, width: 640, height: 360 }), (0, 80));
     /// ```
-    pub fn mount(&self, layer: &gtk::Fixed, surface: (i32, i32), region: Option<PixelRect>) {
+    pub fn mount(
+        &self,
+        layer: &gtk::Fixed,
+        surface: (i32, i32),
+        region: Option<PixelRect>,
+        reserve: (i32, i32),
+    ) {
         ui::load_stylesheet();
         let editor = &self.0;
         layer.add_css_class("editor");
@@ -146,6 +156,7 @@ impl Inline {
             actions,
             size,
             surface,
+            reserve,
         }));
         editor.place_bars();
 
@@ -153,18 +164,89 @@ impl Inline {
         editor.canvas.grab_focus();
     }
 
-    /// Whether `key` picks an annotation tool, so the overlay can start drawing with it.
+    /// The annotation tool `key` picks, so the overlay can start drawing with it.
     ///
     /// # Examples
     ///
     /// ```ignore
-    /// if Inline::is_tool_key(&keys, gdk::Key::a) { start_drawing(); }
+    /// if let Some(tool) = Inline::tool_for_key(&keys, gdk::Key::a) { start_drawing(tool); }
     /// ```
-    pub fn is_tool_key(keys: &DrawingKeys, key: gdk::Key) -> bool {
-        key.to_lower()
+    pub fn tool_for_key(keys: &DrawingKeys, key: gdk::Key) -> Option<Tool> {
+        match key
+            .to_lower()
             .to_unicode()
             .and_then(|typed| keys.action(typed))
-            .is_some_and(|action| matches!(action, DrawAction::Tool(_)))
+        {
+            Some(DrawAction::Tool(tool)) => Some(tool),
+            _ => None,
+        }
+    }
+
+    pub fn pick(&self, tool: Tool) {
+        self.0.pick(tool);
+    }
+
+    /// Ends editing with a recording of the region, or of the whole frame without one.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// inline.record(false);
+    /// ```
+    pub fn record(&self, gif: bool) {
+        self.0.record(gif);
+    }
+
+    pub fn has_region(&self) -> bool {
+        self.0.document.borrow().crop().is_some()
+    }
+
+    /// Whether a text field in the editor has the keyboard, so typed letters belong to it.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if !inline.typing() { handle_overlay_key(key); }
+    /// ```
+    pub fn typing(&self) -> bool {
+        self.0.busy.get()
+            || self
+                .0
+                .entry
+                .state_flags()
+                .contains(gtk::StateFlags::FOCUS_WITHIN)
+    }
+
+    /// Keeps `top` and `bottom` pixels of the surface free of bars and moves the bars to fit.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// inline.reserve(0, 72);
+    /// ```
+    pub fn reserve(&self, top: i32, bottom: i32) {
+        if let Some(bars) = self.0.bars.borrow_mut().as_mut() {
+            bars.reserve = (top, bottom);
+        }
+        self.0.place_bars();
+    }
+
+    /// Reports the pointer over the frame in surface coordinates, and `None` when it leaves.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// inline.on_pointer(|point| loupe.move_to(point));
+    /// ```
+    pub fn on_pointer(&self, moved: impl Fn(Option<(f64, f64)>) + 'static) {
+        let motion = gtk::EventControllerMotion::new();
+        let moved = Rc::new(moved);
+        let entered = moved.clone();
+        motion.connect_enter(move |_, x, y| entered(Some((x, y))));
+        let went = moved.clone();
+        motion.connect_motion(move |_, x, y| went(Some((x, y))));
+        motion.connect_leave(move |_| moved(None));
+        self.0.canvas.add_controller(motion);
     }
 
     /// Handles a key pressed anywhere on the overlay.
@@ -290,6 +372,7 @@ impl Editor {
         let (top, bottom) = place_bars(
             selection,
             bars.surface,
+            bars.reserve,
             natural(&bars.tools),
             natural(&bars.actions),
         );
@@ -400,7 +483,7 @@ fn pin(editor: &Rc<Editor>) {
     editor.conclude(Finish::Pin);
 }
 
-fn bar() -> gtk::Box {
+pub(super) fn bar() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
@@ -408,7 +491,7 @@ fn bar() -> gtk::Box {
         .build()
 }
 
-fn keep_focus(widget: &gtk::Widget) {
+pub(super) fn keep_focus(widget: &gtk::Widget) {
     widget.set_focus_on_click(false);
     let mut child = widget.first_child();
     while let Some(current) = child {
@@ -426,6 +509,7 @@ fn natural(widget: &impl IsA<gtk::Widget>) -> (i32, i32) {
 fn place_bars(
     selection: LogicalRect,
     surface: (i32, i32),
+    reserve: (i32, i32),
     tools: (i32, i32),
     actions: (i32, i32),
 ) -> ((i32, i32), (i32, i32)) {
@@ -436,27 +520,22 @@ fn place_bars(
             surface.0 - width - MARGIN,
         )
     };
+    let (ceiling, floor) = (MARGIN + reserve.0, surface.1 - MARGIN - reserve.1);
     let above = selection.y - GAP - tools.1;
-    let top = if above >= MARGIN {
+    let top = if above >= ceiling {
         above
     } else {
         selection.y + GAP
     };
     let below = selection.bottom() + GAP;
-    let bottom = if below + actions.1 <= surface.1 - MARGIN {
+    let bottom = if below + actions.1 <= floor {
         below
     } else {
         selection.bottom() - GAP - actions.1
     };
     (
-        (
-            centered(tools.0),
-            fit(top, MARGIN, surface.1 - tools.1 - MARGIN),
-        ),
-        (
-            centered(actions.0),
-            fit(bottom, MARGIN, surface.1 - actions.1 - MARGIN),
-        ),
+        (centered(tools.0), fit(top, ceiling, floor - tools.1)),
+        (centered(actions.0), fit(bottom, ceiling, floor - actions.1)),
     )
 }
 
@@ -481,30 +560,88 @@ mod tests {
 
     #[test]
     fn puts_tools_above_and_actions_below_a_centered_selection() {
-        let (tools, actions) = place_bars(rect(400, 300, 800, 400), SURFACE, (600, 80), (500, 40));
+        let (tools, actions) = place_bars(
+            rect(400, 300, 800, 400),
+            SURFACE,
+            (0, 0),
+            (600, 80),
+            (500, 40),
+        );
         assert_eq!(tools, (500, 300 - GAP - 80));
         assert_eq!(actions, (550, 700 + GAP));
     }
 
     #[test]
     fn moves_the_bars_inside_a_full_screen_selection() {
-        let (tools, actions) = place_bars(rect(0, 0, 1920, 1080), SURFACE, (600, 80), (500, 40));
+        let (tools, actions) = place_bars(
+            rect(0, 0, 1920, 1080),
+            SURFACE,
+            (0, 0),
+            (600, 80),
+            (500, 40),
+        );
         assert_eq!(tools.1, GAP);
         assert_eq!(actions.1, 1080 - GAP - 40);
     }
 
     #[test]
     fn keeps_bars_on_screen_near_an_edge() {
-        let (tools, actions) = place_bars(rect(1800, 200, 100, 100), SURFACE, (600, 80), (500, 40));
+        let (tools, actions) = place_bars(
+            rect(1800, 200, 100, 100),
+            SURFACE,
+            (0, 0),
+            (600, 80),
+            (500, 40),
+        );
         assert_eq!(tools.0, 1920 - 600 - MARGIN);
         assert_eq!(actions.0, 1920 - 500 - MARGIN);
-        let (tools, _) = place_bars(rect(10, 200, 100, 100), SURFACE, (600, 80), (500, 40));
+        let (tools, _) = place_bars(
+            rect(10, 200, 100, 100),
+            SURFACE,
+            (0, 0),
+            (600, 80),
+            (500, 40),
+        );
         assert_eq!(tools.0, MARGIN);
     }
 
     #[test]
+    fn keeps_the_bars_clear_of_the_reserved_bottom_strip() {
+        let (_, actions) = place_bars(
+            rect(0, 0, 1920, 1080),
+            SURFACE,
+            (0, 72),
+            (600, 80),
+            (500, 40),
+        );
+        assert_eq!(actions.1, 1080 - MARGIN - 72 - 40);
+        let (_, actions) = place_bars(
+            rect(400, 300, 800, 960),
+            SURFACE,
+            (0, 72),
+            (600, 80),
+            (500, 40),
+        );
+        assert!(actions.1 + 40 <= 1080 - 72);
+        let (_, actions) = place_bars(
+            rect(400, 300, 800, 400),
+            SURFACE,
+            (0, 72),
+            (600, 80),
+            (500, 40),
+        );
+        assert_eq!(actions.1, 700 + GAP);
+    }
+
+    #[test]
     fn prefers_the_left_margin_when_a_bar_is_wider_than_the_screen() {
-        let (tools, _) = place_bars(rect(100, 200, 100, 100), (400, 1080), (600, 80), (500, 40));
+        let (tools, _) = place_bars(
+            rect(100, 200, 100, 100),
+            (400, 1080),
+            (0, 0),
+            (600, 80),
+            (500, 40),
+        );
         assert_eq!(tools.0, MARGIN);
     }
 }

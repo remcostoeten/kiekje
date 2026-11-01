@@ -14,7 +14,7 @@ description: Every key on the overlay, in window capture, in the inline editor a
 | <kbd>F</kbd> | Take the monitor under the pointer |
 | <kbd>W</kbd>, <kbd>Enter</kbd> | Take the hovered window |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Take the last region |
-| <kbd>D</kbd>, or a tool key | Start drawing first, pick the region afterwards with <kbd>S</kbd> |
+| <kbd>D</kbd>, a tool key or a tool in the top bar | Start drawing first, pick the region afterwards with <kbd>S</kbd> |
 | <kbd>Shift</kbd> while moving | Slow the pointer for pixel-exact selection |
 | <kbd>Z</kbd> | Show or hide the loupe |
 | Scroll | Zoom the loupe |
@@ -40,6 +40,10 @@ description: Every key on the overlay, in window capture, in the inline editor a
 | <kbd>Ctrl</kbd>+<kbd>C</kbd> | Copy only |
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save only |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save as |
+| <kbd>G</kbd> | Record the region, or go back to selecting with Video on when there is no region yet |
+| <kbd>Z</kbd> | Show or hide the loupe |
+| <kbd>C</kbd> | Copy the colour under the pointer while the loupe shows |
+| <kbd>?</kbd> | Show or hide the hint bar |
 | Arrows | Move the region |
 | <kbd>Ctrl</kbd>+arrows | Resize the region |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> | Undo |
