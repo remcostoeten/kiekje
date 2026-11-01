@@ -11,11 +11,13 @@ Kiekje has two places to draw. The **inline editor** keeps the overlay open afte
 
 | Where | How |
 | --- | --- |
-| On the overlay | `kiekje capture --edit`, Annotate region in the tray, or `[capture] after_selection = "edit"` |
+| On the overlay | `kiekje capture --edit`, Annotate region in the tray, or `[capture] after_selection = "edit"` (the default) |
 | On the overlay, before selecting | Press <kbd>D</kbd> or a tool key to draw on the whole frame first, then <kbd>S</kbd> to pick the region |
 | Editor window | Edit in the gallery, or `capture fullscreen --edit` and `capture window --edit` |
 
 The inline editor works on the whole frozen monitor frame with the region as its crop. The region keeps its handles, arrows move it and <kbd>Ctrl</kbd>+arrows resize it, so you can draw outside the current crop and widen it afterwards.
+
+The action bar below the region also has Record and Record GIF, which record the region instead of taking a screenshot. See [Record and share](/guide/record-and-share#record-a-region).
 
 ## Tools
 

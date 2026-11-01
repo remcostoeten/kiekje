@@ -15,13 +15,14 @@ use crate::notify::FdoNotifier;
 use crate::overlay::{self};
 use crate::pin;
 use crate::record::Recording;
-use crate::shortcuts::{PortalGuard, ShortcutHost};
+use crate::shortcuts::{PortalGuard, ShortcutAction, ShortcutHost};
 use crate::sound;
 use crate::tray::TrayGuard;
 use crate::ui::{self, fonts, gallery, settings};
 
 mod countdown;
 mod deliver;
+mod escape;
 mod flow;
 mod notice;
 mod panels;
@@ -44,6 +45,13 @@ struct Recorder {
     active: RefCell<Option<Recording>>,
     live: Cell<bool>,
     exporting_gif: Cell<bool>,
+    gif_after: Cell<bool>,
+    countdown: RefCell<Option<recording::Ticker>>,
+    escape: escape::Escape,
+    escape_grabbed: Cell<bool>,
+    marker: RefCell<Option<overlay::recording::Marker>>,
+    frame: RefCell<Option<overlay::recording::RecordingFrame>>,
+    badge: RefCell<Option<overlay::recording::CountdownBadge>>,
 }
 
 struct Panels {
@@ -57,7 +65,7 @@ struct Panels {
 struct ShortcutState {
     guard: RefCell<Option<PortalGuard>>,
     host: RefCell<ShortcutHost>,
-    labels: RefCell<Vec<(CaptureMode, String)>>,
+    labels: RefCell<Vec<(ShortcutAction, String)>>,
 }
 
 struct Session {
@@ -205,6 +213,13 @@ pub fn run(command: Command) -> glib::ExitCode {
             active: RefCell::new(None),
             live: Cell::new(false),
             exporting_gif: Cell::new(false),
+            gif_after: Cell::new(false),
+            countdown: RefCell::new(None),
+            escape: escape::Escape::new(),
+            escape_grabbed: Cell::new(false),
+            marker: RefCell::new(None),
+            frame: RefCell::new(None),
+            badge: RefCell::new(None),
         },
         window_capture: Cell::new(None),
         trigger_config: RefCell::new(None),

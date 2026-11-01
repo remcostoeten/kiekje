@@ -299,7 +299,7 @@ Other distributions need GTK 4.14 or newer and gtk4-layer-shell 1.1. [.github/wo
 3. On Hyprland, add the `source` line that `kiekje doctor` prints to your `hyprland.conf` so the Print binds load.
 4. Press Print, drag, and let go. The region is on your clipboard and in `~/Pictures/Kiekje`.
 
-Settings live in `~/.config/kiekje/config.toml`. Set `[capture] after_selection = "edit"` to always open the inline editor after selecting.
+Settings live in `~/.config/kiekje/config.toml`. The inline editor opens after every selection by default. Set `[capture] after_selection = "finish"` to copy and save as soon as you let go.
 
 Set `[saving] enabled = false`, or switch off Save captures to the folder in Settings, to only copy captures. Each one still lands in the gallery as Unsaved, kept in `~/.cache/kiekje/unsaved` for `keep_unsaved_days` (7 by default) and deleted at the first start after that. Keep in the gallery moves it to the capture folder. The editor's Save and Save as always write to the folder.
 

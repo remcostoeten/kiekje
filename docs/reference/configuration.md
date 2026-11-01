@@ -26,7 +26,7 @@ enabled = true
 keep_unsaved_days = 7
 
 [capture]
-after_selection = "finish"
+after_selection = "edit"
 
 [overlay]
 magnifier = true
@@ -117,7 +117,7 @@ Text around the tokens is kept as is. A template that would exceed the file syst
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `after_selection` | `"finish"` | `"finish"` copies and saves when you let go. `"edit"` keeps the overlay open with the drawing tools |
+| `after_selection` | `"edit"` | `"edit"` keeps the overlay open with the drawing tools. `"finish"` copies and saves when you let go |
 
 ## `[overlay]`
 
@@ -134,7 +134,7 @@ Text around the tokens is kept as is. A template that would exceed the file syst
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `true` | Show a notification after each capture, with Open and Show in folder |
-| `sound` | `true` | Play the capture sound. Uses the sound theme's shutter or a bundled fallback and needs the GStreamer base plugins |
+| `sound` | `true` | Play the capture sound and the recording countdown beeps. Uses the sound theme's shutter or a bundled fallback and needs the GStreamer base plugins |
 
 ## `[drawing]`
 
@@ -185,6 +185,7 @@ One key per drawing action, pressed without modifiers. A letter, a digit or punc
 | `capture-region` | `"Print"` | Freeze the screen and select a region |
 | `capture-fullscreen` | `"SHIFT+Print"` | Capture every monitor |
 | `capture-window` | off | Freeze the screen and pick a window |
+| `record` | off | Start a recording, or stop the one that is running |
 
 A shortcut is modifiers and a key joined with `+`: `CTRL`, `ALT`, `SHIFT` and `LOGO` (also written `SUPER` or `META`), then a key name such as `Print`, `F9` or `s`. An empty string turns a shortcut off. The recorder in Settings enforces the same rules the parser does:
 

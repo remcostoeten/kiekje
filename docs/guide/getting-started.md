@@ -77,7 +77,7 @@ The report names the capture backend, the overlay type, the shortcut host, the t
 
 Two settings people change first:
 
-- `[capture] after_selection = "edit"` opens the inline editor after every selection, so you can draw before the capture is copied and saved.
+- `[capture] after_selection = "finish"` copies and saves as soon as you let go of the selection. The default, `"edit"`, opens the inline editor first so you can draw before the capture is copied and saved.
 - `[saving] enabled = false` only copies captures. They still appear in the gallery as Unsaved for 7 days, and Keep moves one to the capture folder.
 
 Every key is listed in the [configuration reference](/reference/configuration).

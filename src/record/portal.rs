@@ -19,14 +19,24 @@ const PICKER_RESPONSE: Duration = Duration::from_secs(300);
 const SOURCE_MONITOR: u32 = 1;
 const SOURCE_WINDOW: u32 = 2;
 const CURSOR_EMBEDDED: u32 = 2;
+const PERSIST_UNTIL_REVOKED: u32 = 2;
 
 static TOKEN_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A ScreenCast session with one PipeWire stream; dropping it closes the session.
 pub struct Stream {
     pub node: u32,
+    pub position: Option<(i32, i32)>,
     pub fd: OwnedFd,
+    pub restore_token: Option<String>,
     _session: Session,
+}
+
+struct Granted {
+    node: u32,
+    position: Option<(i32, i32)>,
+    fd: OwnedFd,
+    restore_token: Option<String>,
 }
 
 struct Session {
@@ -48,17 +58,18 @@ impl Drop for Session {
     }
 }
 
-/// Asks the ScreenCast portal for one monitor or window and opens its PipeWire stream.
+/// Asks the ScreenCast portal for one monitor, or one monitor or window, and opens its PipeWire stream.
 ///
-/// The desktop shows its own picker; closing it returns [`RecordError::Canceled`]. Blocks until
-/// the user picks, so call it off the GTK main thread.
+/// The desktop shows its own picker unless `restore` is a token the portal still accepts; closing
+/// the picker returns [`RecordError::Canceled`]. The returned stream carries the token for next
+/// time. Blocks until the user picks, so call it off the GTK main thread.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let stream = portal::open()?;
+/// let stream = portal::open(false, None)?;
 /// ```
-pub fn open() -> Result<Stream, RecordError> {
+pub fn open(monitors_only: bool, restore: Option<&str>) -> Result<Stream, RecordError> {
     let connection = connection::Builder::session()?
         .method_timeout(QUICK_RESPONSE)
         .build()?;
@@ -96,16 +107,29 @@ pub fn open() -> Result<Stream, RecordError> {
         connection,
         session,
     };
-    let (node, fd) = start(
+    let sources = if monitors_only {
+        SOURCE_MONITOR
+    } else {
+        sources
+    };
+    let Granted {
+        node,
+        position,
+        fd,
+        restore_token,
+    } = start(
         &guard.connection,
         &screen_cast,
         &guard.session,
         sources,
         cursors,
+        restore,
     )?;
     Ok(Stream {
         node,
+        position,
         fd,
+        restore_token,
         _session: guard,
     })
 }
@@ -116,13 +140,18 @@ fn start(
     session: &OwnedObjectPath,
     sources: u32,
     cursors: u32,
-) -> Result<(u32, OwnedFd), RecordError> {
+    restore: Option<&str>,
+) -> Result<Granted, RecordError> {
     respond(connection, QUICK_RESPONSE, |token| {
         let mut options: HashMap<&str, Value> = HashMap::from([
             ("handle_token", Value::from(token)),
             ("types", Value::from(source_types(sources))),
             ("multiple", Value::from(false)),
+            ("persist_mode", Value::from(PERSIST_UNTIL_REVOKED)),
         ]);
+        if let Some(token) = restore {
+            options.insert("restore_token", Value::from(token));
+        }
         if cursors & CURSOR_EMBEDDED != 0 {
             options.insert("cursor_mode", Value::from(CURSOR_EMBEDDED));
         }
@@ -132,13 +161,24 @@ fn start(
         let options: HashMap<&str, Value> = HashMap::from([("handle_token", Value::from(token))]);
         screen_cast.call("Start", &(session, "", options))
     })?;
-    let node = started
+    let (node, position) = started
         .get("streams")
-        .and_then(first_node)
+        .and_then(first_stream)
         .ok_or_else(|| RecordError::Portal("the portal returned no stream".into()))?;
+    let restore_token = started
+        .get("restore_token")
+        .and_then(|value| match &**value {
+            Value::Str(token) => Some(token.as_str().to_owned()),
+            _ => None,
+        });
     let options: HashMap<&str, Value> = HashMap::new();
     let fd: zvariant::OwnedFd = screen_cast.call("OpenPipeWireRemote", &(session, options))?;
-    Ok((node, fd.into()))
+    Ok(Granted {
+        node,
+        position,
+        fd: fd.into(),
+        restore_token,
+    })
 }
 
 fn source_types(available: u32) -> u32 {
@@ -148,16 +188,26 @@ fn source_types(available: u32) -> u32 {
     }
 }
 
-fn first_node(streams: &OwnedValue) -> Option<u32> {
+fn first_stream(streams: &OwnedValue) -> Option<(u32, Option<(i32, i32)>)> {
     let Value::Array(streams) = &**streams else {
         return None;
     };
-    streams.iter().find_map(|stream| match stream {
-        Value::Structure(fields) => match fields.fields().first() {
-            Some(Value::U32(node)) => Some(*node),
+    streams.iter().find_map(|stream| {
+        let Value::Structure(fields) = stream else {
+            return None;
+        };
+        let fields = fields.fields();
+        let Some(Value::U32(node)) = fields.first() else {
+            return None;
+        };
+        let position = match fields.get(1) {
+            Some(Value::Dict(properties)) => properties
+                .get::<&str, (i32, i32)>(&"position")
+                .ok()
+                .flatten(),
             _ => None,
-        },
-        _ => None,
+        };
+        Some((*node, position))
     })
 }
 
@@ -221,9 +271,18 @@ mod tests {
         let properties: HashMap<String, Value> = HashMap::new();
         let streams = Value::from(vec![(42u32, properties)]);
         let owned = OwnedValue::try_from(streams).unwrap();
-        assert_eq!(first_node(&owned), Some(42));
+        assert_eq!(first_stream(&owned), Some((42, None)));
         let empty =
             OwnedValue::try_from(Value::from(Vec::<(u32, HashMap<String, Value>)>::new())).unwrap();
-        assert_eq!(first_node(&empty), None);
+        assert_eq!(first_stream(&empty), None);
+    }
+
+    #[test]
+    fn reads_the_position_of_a_monitor_stream() {
+        let properties: HashMap<String, Value> =
+            HashMap::from([("position".to_owned(), Value::from((2560i32, 0i32)))]);
+        let streams = Value::from(vec![(7u32, properties)]);
+        let owned = OwnedValue::try_from(streams).unwrap();
+        assert_eq!(first_stream(&owned), Some((7, Some((2560, 0)))));
     }
 }

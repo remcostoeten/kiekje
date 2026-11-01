@@ -5,7 +5,12 @@ use gtk::gio::{self, DBusCallFlags, DBusSignalFlags, SignalSubscription};
 use gtk::glib::{Variant, variant::ObjectPath};
 use gtk::prelude::*;
 
-use super::{Binding, ShortcutAction, ShortcutError, ShortcutRegistrar, Shortcuts};
+use std::rc::Rc;
+
+use super::{
+    Binding, STOP_RECORDING_DESCRIPTION, STOP_RECORDING_ID, ShortcutAction, ShortcutError,
+    ShortcutRegistrar, Shortcuts,
+};
 
 const DESTINATION: &str = "org.freedesktop.portal.Desktop";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
@@ -16,10 +21,18 @@ static TOKEN_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 type Results = HashMap<String, Variant>;
 
+/// Whether the key held for the recording stop shortcut went down or came back up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StopKey {
+    Down,
+    Up,
+}
+
 pub struct PortalShortcuts {
     connection: gio::DBusConnection,
     shortcuts: Shortcuts,
     actions: Vec<ShortcutAction>,
+    on_stop_key: Rc<dyn Fn(StopKey)>,
 }
 
 pub struct PortalGuard {
@@ -28,6 +41,7 @@ pub struct PortalGuard {
     session: String,
     version: u32,
     _activated: SignalSubscription,
+    _deactivated: SignalSubscription,
     changed: Option<SignalSubscription>,
 }
 
@@ -36,11 +50,13 @@ impl PortalShortcuts {
         connection: gio::DBusConnection,
         shortcuts: Shortcuts,
         actions: Vec<ShortcutAction>,
+        on_stop_key: impl Fn(StopKey) + 'static,
     ) -> Self {
         Self {
             connection,
             shortcuts,
             actions,
+            on_stop_key: Rc::new(on_stop_key),
         }
     }
 
@@ -169,6 +185,13 @@ impl PortalShortcuts {
                 }
                 (action.id().to_owned(), options)
             })
+            .chain(std::iter::once((
+                STOP_RECORDING_ID.to_owned(),
+                HashMap::from([(
+                    "description".to_owned(),
+                    STOP_RECORDING_DESCRIPTION.to_variant(),
+                )]),
+            )))
             .collect();
         let results = self
             .request("BindShortcuts", Results::new(), |options| {
@@ -310,6 +333,7 @@ impl ShortcutRegistrar for PortalShortcuts {
         let session = self.create_session().await?;
         let activated_session = session.clone();
         let actions = self.actions.clone();
+        let stop_down = self.on_stop_key.clone();
         let activated = self.connection.subscribe_to_signal(
             Some(DESTINATION),
             Some(INTERFACE),
@@ -328,9 +352,34 @@ impl ShortcutRegistrar for PortalShortcuts {
                 if handle.as_str() != activated_session {
                     return;
                 }
+                if id == STOP_RECORDING_ID {
+                    stop_down(StopKey::Down);
+                    return;
+                }
                 match ShortcutAction::parse(&id).filter(|action| actions.contains(action)) {
                     Some(action) => on_activated(action),
                     None => warn!("ignored unknown shortcut {id}"),
+                }
+            },
+        );
+        let deactivated_session = session.clone();
+        let stop_up = self.on_stop_key.clone();
+        let deactivated = self.connection.subscribe_to_signal(
+            Some(DESTINATION),
+            Some(INTERFACE),
+            Some("Deactivated"),
+            Some(PORTAL_PATH),
+            None,
+            DBusSignalFlags::NONE,
+            move |signal| {
+                let Some((handle, id, _, _)) = signal
+                    .parameters
+                    .get::<(ObjectPath, String, u64, Results)>()
+                else {
+                    return;
+                };
+                if handle.as_str() == deactivated_session && id == STOP_RECORDING_ID {
+                    stop_up(StopKey::Up);
                 }
             },
         );
@@ -342,6 +391,7 @@ impl ShortcutRegistrar for PortalShortcuts {
                 session,
                 version,
                 _activated: activated,
+                _deactivated: deactivated,
                 changed: None,
             },
             bindings,
@@ -379,6 +429,10 @@ mod tests {
                 Binding {
                     action: ShortcutAction::Window,
                     trigger: Some("Alt+W".into()),
+                },
+                Binding {
+                    action: ShortcutAction::Record,
+                    trigger: None,
                 },
             ]
         );

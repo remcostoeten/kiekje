@@ -7,6 +7,7 @@ use gtk::{gdk, gio, glib};
 use super::countdown;
 use super::deliver::{Filing, deliver, finish_delivery, finish_edit};
 use super::notice::notify;
+use super::recording::record_region;
 use super::{Request, Session};
 use crate::backends;
 use crate::backends::windows::{self, WindowError};
@@ -272,6 +273,15 @@ fn handle_capture(
                             return;
                         }
                         finish_edit(image, finish, annotated, request, session);
+                    }
+                    Outcome::Record {
+                        selection: Selection { rect, plan },
+                        gif,
+                    } => {
+                        remember_region(&session, rect);
+                        log_selection(&selection_frames, plan);
+                        record_region(&session, &selection_frames, plan, gif);
+                        session.busy.set(false);
                     }
                     Outcome::Saved(notice) => finish_delivery(&session, notice),
                     Outcome::Canceled => {

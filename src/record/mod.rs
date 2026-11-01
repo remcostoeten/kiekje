@@ -1,6 +1,7 @@
 mod animation;
 mod gst;
 mod portal;
+mod tokens;
 
 use std::fs;
 use std::os::fd::AsRawFd;
@@ -17,6 +18,7 @@ use gtk::glib;
 use thiserror::Error;
 
 use crate::storage::{self, Stamp};
+use crate::{config, sound};
 
 const FINISH_WAIT: Duration = Duration::from_secs(10);
 const POSTER_WAIT: Duration = Duration::from_secs(10);
@@ -50,8 +52,48 @@ pub enum RecordError {
     },
 }
 
+/// A region of one monitor to record, in the monitor's frame pixels.
+///
+/// `origin` is the monitor's logical position, used to check that the screen picked in the
+/// portal is the one the region was selected on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Area {
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+    pub frame: (u32, u32),
+    pub origin: (i32, i32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Edges {
+    left: u32,
+    right: u32,
+    top: u32,
+    bottom: u32,
+}
+
+impl Area {
+    fn edges(self) -> Option<Edges> {
+        let left = self.left & !1;
+        let top = self.top & !1;
+        let right_edge = (self.left + self.width).min(self.frame.0);
+        let bottom_edge = (self.top + self.height).min(self.frame.1);
+        let width = right_edge.checked_sub(left)? & !1;
+        let height = bottom_edge.checked_sub(top)? & !1;
+        (width >= 2 && height >= 2).then_some(Edges {
+            left,
+            right: self.frame.0 - left - width,
+            top,
+            bottom: self.frame.1 - top - height,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub enum Event {
+    Countdown { beeps: bool, proceed: Sender<bool> },
     Started,
     Saved(PathBuf),
     Partial { path: PathBuf, error: RecordError },
@@ -60,7 +102,13 @@ pub enum Event {
 
 /// A recording in progress; [`Recording::stop`] finishes the file.
 pub struct Recording {
-    stop: Sender<()>,
+    stop: Sender<Stop>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stop {
+    Save,
+    Discard,
 }
 
 impl Recording {
@@ -73,7 +121,20 @@ impl Recording {
     /// ```
     pub fn stop(&self) {
         // A gone worker has already sent its last event, so there is nothing left to stop.
-        let _ = self.stop.send(());
+        let _ = self.stop.send(Stop::Save);
+    }
+
+    /// Asks the worker to stop and delete what it recorded; a [`Event::Failed`] with
+    /// [`RecordError::Canceled`] follows.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// recording.cancel();
+    /// ```
+    pub fn cancel(&self) {
+        // A gone worker has already sent its last event, so there is nothing left to cancel.
+        let _ = self.stop.send(Stop::Discard);
     }
 }
 
@@ -106,18 +167,19 @@ pub fn folder() -> PathBuf {
 
 /// Starts a recording on a worker thread and reports its progress over `events`.
 ///
-/// The desktop's screen picker opens first. The file is written to the cache and moved into
-/// [`folder`] when the recording finishes.
+/// The desktop's screen picker opens first. With an `area` the picker offers monitors only and the
+/// recording is cropped to that region. The file is written to the cache and moved into [`folder`]
+/// when the recording finishes.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let recording = record::start(sender);
+/// let recording = record::start(sender, None);
 /// ```
-pub fn start(events: async_channel::Sender<Event>) -> Recording {
+pub fn start(events: async_channel::Sender<Event>, area: Option<Area>) -> Recording {
     let (stop, stopped) = mpsc::channel();
     thread::spawn(move || {
-        let event = outcome(run(&events, &stopped));
+        let event = outcome(run(&events, &stopped, area));
         if events.send_blocking(event).is_err() {
             warn!("a recording event was dropped, the app is shutting down");
         }
@@ -138,21 +200,46 @@ fn outcome(result: Result<PathBuf, RecordError>) -> Event {
 
 fn run(
     events: &async_channel::Sender<Event>,
-    stopped: &Receiver<()>,
+    stopped: &Receiver<Stop>,
+    area: Option<Area>,
 ) -> Result<PathBuf, RecordError> {
     gst::check()?;
-    let stream = portal::open()?;
+    let edges =
+        match area {
+            Some(area) => Some(area.edges().ok_or_else(|| {
+                RecordError::Unavailable("the region is too small to record".into())
+            })?),
+            None => None,
+        };
+    let key = area.map_or_else(
+        || "any".to_owned(),
+        |area| format!("monitor-{}-{}", area.origin.0, area.origin.1),
+    );
+    let stream = portal::open(area.is_some(), tokens::load(&key).as_deref())?;
+    if let (Some(area), Some(position)) = (area, stream.position)
+        && position != area.origin
+    {
+        tokens::forget(&key);
+        return Err(RecordError::Unavailable(
+            "the screen you picked is not the one the region is on".into(),
+        ));
+    }
+    if let Some(token) = &stream.restore_token {
+        tokens::store(&key, token);
+    }
+    await_countdown(events, stopped)?;
     if stopped.try_recv().is_ok() {
         return Err(RecordError::Canceled);
     }
     let scratch = glib::user_cache_dir().join("kiekje").join("recording");
     fs::create_dir_all(&scratch)?;
     let file = scratch.join(format!("{}.webm", file_stem(&storage::now())));
-    let description = pipeline(stream.fd.as_raw_fd(), stream.node, &file)?;
+    let description = pipeline(stream.fd.as_raw_fd(), stream.node, &file, area.zip(edges))?;
     let pipeline = gst::Pipeline::start(&description)?;
     if events.send_blocking(Event::Started).is_err() {
         return Err(RecordError::Canceled);
     }
+    let mut stop = Stop::Save;
     let finished = loop {
         match pipeline.poll(Duration::ZERO) {
             Some(gst::Poll::Failed(reason)) => break Err(RecordError::Pipeline(reason)),
@@ -160,12 +247,20 @@ fn run(
             None => {}
         }
         match stopped.recv_timeout(ERROR_POLL) {
-            Ok(()) | Err(RecvTimeoutError::Disconnected) => break pipeline.finish(FINISH_WAIT),
+            Ok(requested) => {
+                stop = requested;
+                break pipeline.finish(FINISH_WAIT);
+            }
+            Err(RecvTimeoutError::Disconnected) => break pipeline.finish(FINISH_WAIT),
             Err(RecvTimeoutError::Timeout) => {}
         }
     };
     drop(pipeline);
     drop(stream);
+    if stop == Stop::Discard {
+        discard(&file);
+        return Err(RecordError::Canceled);
+    }
     let finished = match finished {
         Err(error) if fs::metadata(&file).map_or(0, |metadata| metadata.len()) == 0 => {
             discard(&file);
@@ -191,6 +286,31 @@ fn run(
             path,
             source: Box::new(source),
         }),
+    }
+}
+
+fn await_countdown(
+    events: &async_channel::Sender<Event>,
+    stopped: &Receiver<Stop>,
+) -> Result<(), RecordError> {
+    let beeps = config::load().notifications.sound;
+    if beeps {
+        sound::check();
+    }
+    let (proceed, answer) = mpsc::channel();
+    events
+        .send_blocking(Event::Countdown { beeps, proceed })
+        .map_err(|_| RecordError::Canceled)?;
+    loop {
+        match answer.recv_timeout(ERROR_POLL) {
+            Ok(true) => return Ok(()),
+            Ok(false) | Err(RecvTimeoutError::Disconnected) => return Err(RecordError::Canceled),
+            Err(RecvTimeoutError::Timeout) => {
+                if stopped.try_recv().is_ok() {
+                    return Err(RecordError::Canceled);
+                }
+            }
+        }
     }
 }
 
@@ -220,14 +340,30 @@ fn quoted(file: &Path) -> Result<&str, RecordError> {
         })
 }
 
-fn pipeline(fd: i32, node: u32, file: &Path) -> Result<String, RecordError> {
+fn crop_stage(region: Option<(Area, Edges)>) -> String {
+    region.map_or_else(String::new, |(area, edges)| {
+        format!(
+            "! videoscale ! video/x-raw,width={},height={},pixel-aspect-ratio=1/1 \
+             ! videocrop left={} right={} top={} bottom={} ",
+            area.frame.0, area.frame.1, edges.left, edges.right, edges.top, edges.bottom
+        )
+    })
+}
+
+fn pipeline(
+    fd: i32,
+    node: u32,
+    file: &Path,
+    region: Option<(Area, Edges)>,
+) -> Result<String, RecordError> {
     let location = quoted(file)?;
     let threads = thread::available_parallelism().map_or(2, |count| count.get().min(8));
+    let crop = crop_stage(region);
     Ok(format!(
         "pipewiresrc fd={fd} path={node} do-timestamp=true \
          ! video/x-raw \
          ! videorate drop-only=true max-rate={MAX_RATE} \
-         ! videoscale ! video/x-raw,width=[1,{MAX_WIDTH}],pixel-aspect-ratio=1/1 \
+         {crop}! videoscale ! video/x-raw,width=[1,{MAX_WIDTH}],pixel-aspect-ratio=1/1 \
          ! videoconvert \
          ! queue leaky=downstream max-size-buffers=4 max-size-time=0 max-size-bytes=0 \
          ! vp8enc deadline=1 cpu-used=8 threads={threads} end-usage=vbr target-bitrate=8000000 \
@@ -326,14 +462,14 @@ mod tests {
 
     #[test]
     fn quotes_the_file_in_the_pipeline() {
-        let description = pipeline(7, 42, Path::new("/home/a b/rec.webm")).unwrap();
+        let description = pipeline(7, 42, Path::new("/home/a b/rec.webm"), None).unwrap();
         assert!(description.starts_with("pipewiresrc fd=7 path=42 "));
         assert!(description.ends_with("filesink location=\"/home/a b/rec.webm\""));
     }
 
     #[test]
     fn caps_the_recording_rate_and_width_before_the_encoder() {
-        let description = pipeline(7, 42, Path::new("/rec.webm")).unwrap();
+        let description = pipeline(7, 42, Path::new("/rec.webm"), None).unwrap();
         let system_memory = description.find("! video/x-raw ").unwrap();
         let rate = description
             .find("videorate drop-only=true max-rate=30")
@@ -344,6 +480,60 @@ mod tests {
         let queue = description.find("queue leaky=downstream").unwrap();
         let encoder = description.find("vp8enc").unwrap();
         assert!(system_memory < rate && rate < scale && scale < queue && queue < encoder);
+    }
+
+    fn area(left: u32, top: u32, width: u32, height: u32) -> Area {
+        Area {
+            left,
+            top,
+            width,
+            height,
+            frame: (3840, 2160),
+            origin: (0, 0),
+        }
+    }
+
+    #[test]
+    fn crops_a_region_to_even_edges() {
+        let edges = area(101, 51, 400, 301).edges().unwrap();
+        assert_eq!(
+            edges,
+            Edges {
+                left: 100,
+                right: 3840 - 100 - 400,
+                top: 50,
+                bottom: 2160 - 50 - 302,
+            }
+        );
+    }
+
+    #[test]
+    fn keeps_a_region_inside_its_frame() {
+        let edges = area(3800, 2100, 500, 500).edges().unwrap();
+        assert_eq!((edges.right, edges.bottom), (0, 0));
+        assert_eq!(area(10, 10, 1, 1).edges(), None);
+        assert_eq!(area(4000, 0, 100, 100).edges(), None);
+    }
+
+    #[test]
+    fn crops_after_scaling_to_the_frame_and_before_the_encoder() {
+        let area = area(100, 50, 400, 300);
+        let description = pipeline(
+            7,
+            42,
+            Path::new("/rec.webm"),
+            area.edges().map(|edges| (area, edges)),
+        )
+        .unwrap();
+        let rate = description.find("videorate").unwrap();
+        let frame = description
+            .find("video/x-raw,width=3840,height=2160")
+            .unwrap();
+        let crop = description
+            .find("videocrop left=100 right=3340 top=50 bottom=1810")
+            .unwrap();
+        let limit = description.find("width=[1,2560]").unwrap();
+        assert!(rate < frame && frame < crop && crop < limit);
     }
 
     #[test]
@@ -390,7 +580,7 @@ mod tests {
     #[test]
     fn refuses_a_file_gstreamer_would_misread() {
         assert!(matches!(
-            pipeline(7, 42, Path::new("/home/a\"b/rec.webm")),
+            pipeline(7, 42, Path::new("/home/a\"b/rec.webm"), None),
             Err(RecordError::Unavailable(_))
         ));
     }

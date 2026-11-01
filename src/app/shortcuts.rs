@@ -3,7 +3,9 @@ use std::rc::Rc;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
+use super::escape;
 use super::flow::start_capture;
+use super::recording::toggle_recording;
 use super::{Request, Session};
 use crate::capture::{Availability, CaptureMode};
 use crate::config::{self};
@@ -35,12 +37,16 @@ pub(super) fn register_shortcuts(
     };
     let weak_app = app.downgrade();
     let weak_session = Rc::downgrade(session);
+    let stop_session = Rc::downgrade(session);
     let on_activated = move |action: ShortcutAction| {
         let (Some(app), Some(session)) = (weak_app.upgrade(), weak_session.upgrade()) else {
             return;
         };
         info!("shortcut {}", action.id());
-        start_capture(&app, Request::saved(action_mode(action)), &session);
+        match action_mode(action) {
+            Some(mode) => start_capture(&app, Request::saved(mode), &session),
+            None => toggle_recording(&session),
+        }
     };
     let session = Rc::downgrade(session);
     glib::spawn_future_local(async move {
@@ -51,6 +57,11 @@ pub(super) fn register_shortcuts(
             connection.clone(),
             shortcuts.clone(),
             offered_actions(window),
+            move |key| {
+                if let Some(session) = stop_session.upgrade() {
+                    escape::handle(&session, key);
+                }
+            },
         );
         match registrar.bind(on_activated).await {
             Ok((mut guard, bindings)) => {
@@ -58,7 +69,7 @@ pub(super) fn register_shortcuts(
                 let mut unbound = false;
                 let mut labels = Vec::new();
                 for binding in bindings {
-                    let mode = action_mode(binding.action);
+                    let mode = binding.action;
                     match binding.trigger {
                         Some(trigger) => {
                             info!(
@@ -85,6 +96,9 @@ pub(super) fn register_shortcuts(
                     install_hyprland_binds(shortcuts);
                 }
                 let on_kde = !on_hyprland && kde::holds(&connection, APP_ID).await;
+                if on_kde {
+                    release_stop_key();
+                }
                 if let Some(session) = session.upgrade() {
                     if !on_hyprland {
                         let changed_session = Rc::downgrade(&session);
@@ -136,12 +150,10 @@ fn desktop_changed(session: &Session, bindings: Vec<Binding>) {
     if let Some(handle) = session.panels.settings_handle.borrow().as_ref() {
         handle.show_bound(&labels);
     }
-    session.shortcuts.labels.replace(
-        labels
-            .into_iter()
-            .map(|(action, label)| (action_mode(action), label))
-            .collect(),
-    );
+    session
+        .shortcuts
+        .labels
+        .replace(labels.into_iter().collect());
 }
 
 pub(super) fn configure_shortcuts(session: &Session) {
@@ -195,22 +207,37 @@ fn install_hyprland_binds(shortcuts: Shortcuts) {
     });
 }
 
-pub(super) fn action_mode(action: ShortcutAction) -> CaptureMode {
+pub(super) fn release_stop_key() {
+    set_stop_key(false);
+}
+
+pub(super) fn set_stop_key(on: bool) {
+    glib::spawn_future_local(async move {
+        match gio::spawn_blocking(move || kde::set_stop_key(APP_ID, on)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => warn!("could not change the recording stop key: {error}"),
+            Err(_) => error!("the stop key worker stopped"),
+        }
+    });
+}
+
+pub(super) fn action_mode(action: ShortcutAction) -> Option<CaptureMode> {
     match action {
-        ShortcutAction::Region => CaptureMode::Region,
-        ShortcutAction::Fullscreen => CaptureMode::Fullscreen,
-        ShortcutAction::Window => CaptureMode::Window,
+        ShortcutAction::Region => Some(CaptureMode::Region),
+        ShortcutAction::Fullscreen => Some(CaptureMode::Fullscreen),
+        ShortcutAction::Window => Some(CaptureMode::Window),
+        ShortcutAction::Record => None,
     }
 }
 
-pub(super) fn hyprland_labels(shortcuts: &Shortcuts) -> Vec<(CaptureMode, String)> {
+pub(super) fn hyprland_labels(shortcuts: &Shortcuts) -> Vec<(ShortcutAction, String)> {
     ShortcutAction::ALL
         .into_iter()
         .filter_map(|action| {
             shortcuts
                 .slot(action)
                 .trigger()
-                .map(|trigger| (action_mode(action), trigger.label()))
+                .map(|trigger| (action, trigger.label()))
         })
         .collect()
 }
@@ -219,6 +246,15 @@ pub(super) fn hyprland_labels(shortcuts: &Shortcuts) -> Vec<(CaptureMode, String
 mod tests {
     use super::*;
     use crate::backends::windows;
+
+    #[test]
+    fn starts_no_capture_for_the_record_shortcut() {
+        assert_eq!(action_mode(ShortcutAction::Record), None);
+        assert_eq!(
+            action_mode(ShortcutAction::Window),
+            Some(CaptureMode::Window)
+        );
+    }
 
     #[test]
     fn offers_the_window_shortcut_only_where_window_capture_works() {

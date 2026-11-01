@@ -10,6 +10,7 @@ use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 mod keyboard;
 mod magnifier;
 mod precision;
+pub mod recording;
 
 use magnifier::Magnifier;
 use precision::Precision;
@@ -57,6 +58,10 @@ pub enum Outcome {
         image: Image,
         finish: Finish,
         annotated: bool,
+    },
+    Record {
+        selection: Selection,
+        gif: bool,
     },
     Canceled,
     MonitorLost(String),
@@ -125,6 +130,38 @@ struct Area {
     showing: Cell<bool>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Film {
+    Off,
+    Video,
+    Gif,
+}
+
+impl Film {
+    const ALL: [Self; 3] = [Self::Off, Self::Video, Self::Gif];
+
+    fn next(self) -> Self {
+        match self {
+            Self::Off => Self::Video,
+            Self::Video => Self::Gif,
+            Self::Gif => Self::Off,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Screenshot",
+            Self::Video => "Video",
+            Self::Gif => "GIF",
+        }
+    }
+}
+
+struct ModeBar {
+    bar: gtk::Box,
+    buttons: Vec<(Film, gtk::Button)>,
+}
+
 struct Shared {
     frames: Arc<Vec<Frame>>,
     geometry: Vec<(LogicalRect, (u32, u32))>,
@@ -149,6 +186,8 @@ struct Shared {
     pointer: Cell<Option<(f64, f64)>>,
     hints: RefCell<Vec<gtk::Box>>,
     hints_on: Cell<bool>,
+    film: Cell<Film>,
+    modes: RefCell<Vec<ModeBar>>,
     drawing: config::Drawing,
 }
 
@@ -210,6 +249,8 @@ pub fn show(
         pointer: Cell::new(None),
         hints: RefCell::new(Vec::new()),
         hints_on: Cell::new(options.overlay.hints),
+        film: Cell::new(Film::Off),
+        modes: RefCell::new(Vec::new()),
         drawing: options.drawing,
     });
 
@@ -335,6 +376,9 @@ fn build_surface(
     hints.set_visible(shared.hints_on.get());
     overlay.add_overlay(&hints);
     shared.hints.borrow_mut().push(hints);
+    let modes = mode_bar(shared);
+    overlay.add_overlay(&modes.bar);
+    shared.modes.borrow_mut().push(modes);
     window.set_child(Some(&overlay));
 
     let drag = gtk::GestureDrag::new();
@@ -356,6 +400,7 @@ fn build_surface(
         }));
         point_at(&begin_shared, Some(start));
         show_hints(&begin_shared, false);
+        show_modes(&begin_shared, false);
         redraw(&begin_shared);
     });
     let update_shared = shared.clone();
@@ -397,6 +442,7 @@ fn build_surface(
             .is_some_and(|rect| choose(&end_shared, rect));
         if !chosen {
             show_hints(&end_shared, end_shared.hints_on.get());
+            show_modes(&end_shared, true);
             redraw(&end_shared);
         }
     });
@@ -663,6 +709,10 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
             .is_some_and(|region| choose(shared, region)),
         _ if shift => false,
         gdk::Key::f => choose(shared, shared.geometry[pointer_frame(shared)].0),
+        gdk::Key::g => {
+            set_film(shared, shared.film.get().next());
+            true
+        }
         gdk::Key::d => {
             begin_edit(shared, pointer_frame(shared), None, Some(gdk::Key::p));
             true
@@ -679,11 +729,19 @@ fn choose(shared: &Rc<Shared>, rect: LogicalRect) -> bool {
     let Some(plan) = plan_selection(rect, &shared.geometry) else {
         return false;
     };
+    let selection = Selection { rect, plan };
     match plan {
+        _ if shared.film.get() != Film::Off => finish(
+            shared,
+            Outcome::Record {
+                selection,
+                gif: shared.film.get() == Film::Gif,
+            },
+        ),
         SelectionPlan::Crop { frame_index, .. } if shared.edit => {
             begin_edit(shared, frame_index, Some(rect), None);
         }
-        _ => finish(shared, Outcome::Selected(Selection { rect, plan })),
+        _ => finish(shared, Outcome::Selected(selection)),
     }
     true
 }
@@ -732,6 +790,7 @@ fn hint_bar(shared: &Shared) -> gtk::Box {
             "last region",
             region && shared.last_region.is_some(),
         ),
+        ("G", "film mode", true),
         ("D", "draw", region),
         ("Z", "loupe", true),
         ("C", "colour", magnifier),
@@ -764,6 +823,59 @@ fn hint_bar(shared: &Shared) -> gtk::Box {
     bar
 }
 
+fn mode_bar(shared: &Rc<Shared>) -> ModeBar {
+    let bar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(2)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Start)
+        .margin_top(32)
+        .css_classes(["panel", "overlay-modes"])
+        .build();
+    let mut buttons = Vec::new();
+    for film in Film::ALL {
+        let button = gtk::Button::builder()
+            .label(film.label())
+            .tooltip_text("Choose what a selection makes (G)")
+            .css_classes(["act"])
+            .focus_on_click(false)
+            .build();
+        button.set_css_classes(&mode_classes(film, shared.film.get()));
+        let weak = Rc::downgrade(shared);
+        button.connect_clicked(move |_| {
+            if let Some(shared) = weak.upgrade() {
+                set_film(&shared, film);
+            }
+        });
+        bar.append(&button);
+        buttons.push((film, button));
+    }
+    ModeBar { bar, buttons }
+}
+
+fn mode_classes(button: Film, current: Film) -> Vec<&'static str> {
+    if button == current {
+        vec!["act", "selected"]
+    } else {
+        vec!["act"]
+    }
+}
+
+fn set_film(shared: &Shared, film: Film) {
+    shared.film.set(film);
+    for modes in shared.modes.borrow().iter() {
+        for (own, button) in &modes.buttons {
+            button.set_css_classes(&mode_classes(*own, film));
+        }
+    }
+}
+
+fn show_modes(shared: &Shared, shown: bool) {
+    for modes in shared.modes.borrow().iter() {
+        modes.bar.set_visible(shown);
+    }
+}
+
 fn show_hints(shared: &Shared, shown: bool) {
     for hints in shared.hints.borrow().iter() {
         hints.set_visible(shown);
@@ -779,6 +891,7 @@ fn begin_edit(
     let monitor = shared.frames[frame_index].monitor.logical;
     shared.chosen.set(Some(region.unwrap_or(monitor)));
     show_hints(shared, false);
+    show_modes(shared, false);
     for area in shared.areas.borrow().iter() {
         area.layer.set_cursor_from_name(Some("default"));
     }
@@ -815,6 +928,17 @@ fn begin_edit(
                 match end {
                     Ending::Canceled => finish(&shared, Outcome::Canceled),
                     Ending::Saved(notice) => finish(&shared, Outcome::Saved(notice)),
+                    Ending::Record { region, gif } => {
+                        match edited_selection(&shared, frame_index, region) {
+                            Some(selection) => finish(&shared, Outcome::Record { selection, gif }),
+                            None => {
+                                warn!(
+                                    "the region to record is not on its monitor, nothing recorded"
+                                );
+                                finish(&shared, Outcome::Canceled);
+                            }
+                        }
+                    }
                     Ending::Finished {
                         image,
                         finish: how,
@@ -1046,4 +1170,22 @@ fn finish(shared: &Shared, outcome: Outcome) {
     shared.areas.borrow_mut().clear();
     shared.surfaces.borrow_mut().clear();
     shared.inline.borrow_mut().take();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cycles_through_every_film_mode_back_to_screenshot() {
+        assert_eq!(Film::Off.next(), Film::Video);
+        assert_eq!(Film::Video.next(), Film::Gif);
+        assert_eq!(Film::Gif.next(), Film::Off);
+    }
+
+    #[test]
+    fn marks_only_the_current_film_mode_as_selected() {
+        assert_eq!(mode_classes(Film::Video, Film::Video), ["act", "selected"]);
+        assert_eq!(mode_classes(Film::Gif, Film::Video), ["act"]);
+    }
 }

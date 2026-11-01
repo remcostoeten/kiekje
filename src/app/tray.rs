@@ -8,6 +8,7 @@ use gtk::prelude::*;
 use super::flow::start_capture;
 use super::panels::{open_captures, open_gallery, open_settings, window_capture};
 use super::recording::toggle_recording;
+use super::shortcuts::action_mode;
 use super::{Request, Session};
 use crate::capture::Availability;
 use crate::tray::popover::{self, Pick};
@@ -97,7 +98,13 @@ pub(super) fn toggle_menu(
     let session = session.clone();
     glib::spawn_future_local(async move {
         let content = popover::Content {
-            shortcuts: session.shortcuts.labels.borrow().clone(),
+            shortcuts: session
+                .shortcuts
+                .labels
+                .borrow()
+                .iter()
+                .filter_map(|(action, label)| Some((action_mode(*action)?, label.clone())))
+                .collect(),
             window: window_capture(&session),
             recording: session.recorder.active.borrow().is_some(),
         };

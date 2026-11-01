@@ -4,7 +4,7 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 
 use super::Session;
-use super::shortcuts::{action_mode, configure_shortcuts, hyprland_labels};
+use super::shortcuts::{configure_shortcuts, hyprland_labels};
 use crate::capture::Availability;
 use crate::config::{self};
 use crate::pin;
@@ -97,13 +97,12 @@ pub(super) fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
         let bound = ShortcutAction::ALL
             .into_iter()
             .filter_map(|action| {
-                let mode = action_mode(action);
                 session
                     .shortcuts
                     .labels
                     .borrow()
                     .iter()
-                    .find(|(bound, _)| *bound == mode)
+                    .find(|(bound, _)| *bound == action)
                     .map(|(_, label)| (action, label.clone()))
             })
             .collect();

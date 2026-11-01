@@ -42,6 +42,10 @@ pub enum Ending {
         region: Option<PixelRect>,
         annotated: bool,
     },
+    Record {
+        region: Option<PixelRect>,
+        gif: bool,
+    },
 }
 
 pub(super) struct Bars {
@@ -176,6 +180,26 @@ impl Inline {
 }
 
 impl Editor {
+    pub(super) fn record(self: &Rc<Self>, gif: bool) {
+        let Some((picture, _, crop)) = self.begin() else {
+            return;
+        };
+        let region = crop
+            .and_then(|area| pixels::region(area, picture.width, picture.height))
+            .map(|region| PixelRect {
+                x: region.x,
+                y: region.y,
+                width: region.width,
+                height: region.height,
+            });
+        self.busy.set(false);
+        if let Host::Inline(ending) = &self.host
+            && let Some(end) = ending.take()
+        {
+            end(Ending::Record { region, gif });
+        }
+    }
+
     pub(super) fn conclude(self: &Rc<Self>, finish: Finish) {
         if finish == Finish::SaveAs {
             self.save_as();
@@ -311,6 +335,18 @@ fn action_bar(editor: &Rc<Editor>) -> (gtk::Box, gtk::Label) {
         ),
         ("Copy", "Copy to the clipboard (Ctrl+C)", false, copy),
         (
+            "Record",
+            "Record this region as a video (Ctrl+R)",
+            false,
+            record,
+        ),
+        (
+            "Record GIF",
+            "Record this region, then make a GIF (Ctrl+Shift+R)",
+            false,
+            record_gif,
+        ),
+        (
             "Pin",
             "Keep it on screen above other windows (Ctrl+P)",
             false,
@@ -350,6 +386,14 @@ fn save_as(editor: &Rc<Editor>) {
 
 fn copy(editor: &Rc<Editor>) {
     editor.conclude(Finish::Copy);
+}
+
+fn record(editor: &Rc<Editor>) {
+    editor.record(false);
+}
+
+fn record_gif(editor: &Rc<Editor>) {
+    editor.record(true);
 }
 
 fn pin(editor: &Rc<Editor>) {

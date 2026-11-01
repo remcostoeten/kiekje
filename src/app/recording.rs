@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::rc::{Rc, Weak};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use gtk::prelude::*;
@@ -7,11 +9,18 @@ use gtk::{gio, glib};
 use super::Session;
 use super::notice::notify;
 use super::panels::with_gallery;
-use crate::capture::CaptureMode;
+use super::shortcuts::set_stop_key;
+use crate::capture::mapping::SelectionPlan;
+use crate::capture::{CaptureMode, Frame};
 use crate::library::{self, Library, NewCapture, thumbs};
 use crate::notify::Notice;
+use crate::overlay;
 use crate::record::{self};
+use crate::shortcuts::ShortcutHost;
+use crate::sound;
 
+const RECORDING_COUNTDOWN_SECONDS: u32 = 3;
+const UNMAP_WAIT: Duration = Duration::from_millis(150);
 const RECORDING_QUIT_POLL: Duration = Duration::from_millis(100);
 const RECORDING_QUIT_WAIT: Duration = Duration::from_secs(12);
 
@@ -36,9 +45,55 @@ pub(super) fn toggle_recording(session: &Rc<Session>) {
         recording.stop();
         return;
     }
+    begin_recording(session, None, false);
+}
+
+pub(super) fn record_region(
+    session: &Rc<Session>,
+    frames: &[Frame],
+    plan: SelectionPlan,
+    gif: bool,
+) {
+    let refused = |reason: &str| {
+        warn!("not recording the region: {reason}");
+        notify(
+            session,
+            Notice::CaptureFailed {
+                reason: reason.to_owned(),
+            },
+        );
+    };
+    if session.recorder.active.borrow().is_some() {
+        refused("a recording is already running, stop it first");
+        return;
+    }
+    let SelectionPlan::Crop { frame_index, rect } = plan else {
+        refused("a region recording needs a region on one screen");
+        return;
+    };
+    let frame = &frames[frame_index];
+    let area = record::Area {
+        left: rect.x,
+        top: rect.y,
+        width: rect.width,
+        height: rect.height,
+        frame: (frame.width, frame.height),
+        origin: (frame.monitor.logical.x, frame.monitor.logical.y),
+    };
+    let marker =
+        overlay::recording::marker_for(&area, &frame.monitor.connector, frame.monitor.logical);
+    begin_recording(session, Some(area), gif);
+    session.recorder.marker.replace(Some(marker));
+}
+
+fn begin_recording(session: &Rc<Session>, area: Option<record::Area>, gif: bool) {
     info!("starting a recording");
+    session.recorder.gif_after.set(gif);
     let (events, received) = async_channel::unbounded();
-    session.recorder.active.replace(Some(record::start(events)));
+    session
+        .recorder
+        .active
+        .replace(Some(record::start(events, area)));
     let weak = Rc::downgrade(session);
     glib::spawn_future_local(async move {
         while let Ok(event) = received.recv().await {
@@ -52,15 +107,29 @@ pub(super) fn toggle_recording(session: &Rc<Session>) {
 
 fn recording_event(session: &Rc<Session>, event: record::Event) {
     let notice = match event {
+        record::Event::Countdown { beeps, proceed } => {
+            start_countdown(session, beeps, proceed);
+            return;
+        }
         record::Event::Started => {
             session.recorder.live.set(true);
             set_tray_recording(session, true);
+            grab_stop_key(session);
+            if let Some(marker) = session.recorder.marker.take() {
+                session
+                    .recorder
+                    .frame
+                    .replace(overlay::recording::show(&marker));
+            }
             Notice::RecordingStarted
         }
         record::Event::Saved(path) => {
             info!("recording saved to {}", path.display());
             end_recording(session);
             add_recording(session, path.clone());
+            if session.recorder.gif_after.replace(false) {
+                start_gif_export(session, path.clone());
+            }
             Notice::RecordingSaved { path }
         }
         record::Event::Partial { path, error } => {
@@ -86,6 +155,93 @@ fn recording_event(session: &Rc<Session>, event: record::Event) {
         }
     };
     notify(session, notice);
+}
+
+pub(super) struct Ticker {
+    source: Option<glib::SourceId>,
+    proceed: mpsc::Sender<bool>,
+}
+
+impl Drop for Ticker {
+    fn drop(&mut self) {
+        if let Some(source) = self.source.take() {
+            source.remove();
+        }
+    }
+}
+
+fn start_countdown(session: &Rc<Session>, beeps: bool, proceed: mpsc::Sender<bool>) {
+    if beeps {
+        sound::prepare();
+        sound::play_beep();
+    }
+    grab_stop_key(session);
+    let marker = session.recorder.marker.take();
+    let badge = overlay::recording::show_countdown(marker.as_ref());
+    if let Some(badge) = &badge {
+        badge.set(RECORDING_COUNTDOWN_SECONDS);
+    }
+    session.recorder.badge.replace(badge);
+    if let Some(marker) = &marker {
+        session
+            .recorder
+            .frame
+            .replace(overlay::recording::show(marker));
+    }
+    let elapsed = Cell::new(0u32);
+    let weak = Rc::downgrade(session);
+    let source = glib::timeout_add_seconds_local(1, move || {
+        elapsed.set(elapsed.get() + 1);
+        let Some(session) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        if elapsed.get() < RECORDING_COUNTDOWN_SECONDS {
+            if beeps {
+                sound::play_beep();
+            }
+            if let Some(badge) = session.recorder.badge.borrow().as_ref() {
+                badge.set(RECORDING_COUNTDOWN_SECONDS - elapsed.get());
+            }
+            return glib::ControlFlow::Continue;
+        }
+        session.recorder.badge.take();
+        if let Some(mut ticker) = session.recorder.countdown.take() {
+            ticker.source.take();
+            let proceed = ticker.proceed.clone();
+            glib::timeout_add_local_once(UNMAP_WAIT, move || answer(&proceed, true));
+        }
+        glib::ControlFlow::Break
+    });
+    session.recorder.countdown.replace(Some(Ticker {
+        source: Some(source),
+        proceed,
+    }));
+}
+
+pub(super) fn cancel_countdown(session: &Session) -> bool {
+    let Some(mut ticker) = session.recorder.countdown.take() else {
+        return false;
+    };
+    if let Some(source) = ticker.source.take() {
+        source.remove();
+    }
+    session.recorder.badge.take();
+    info!("cancelling the recording before it started");
+    answer(&ticker.proceed, false);
+    true
+}
+
+fn grab_stop_key(session: &Session) {
+    if matches!(*session.shortcuts.host.borrow(), ShortcutHost::Kde) {
+        session.recorder.escape_grabbed.set(true);
+        set_stop_key(true);
+    }
+}
+
+fn answer(proceed: &mpsc::Sender<bool>, go: bool) {
+    if proceed.send(go).is_err() {
+        debug!("the recording stopped before the countdown ended");
+    }
 }
 
 fn list_media(
@@ -216,6 +372,15 @@ pub(super) fn start_gif_export(session: &Rc<Session>, video: std::path::PathBuf)
 
 fn end_recording(session: &Session) {
     session.recorder.active.take();
+    session.recorder.countdown.take();
+    session.recorder.badge.take();
+    session.recorder.escape.reset();
+    if session.recorder.escape_grabbed.replace(false) {
+        set_stop_key(false);
+    }
+    session.recorder.marker.take();
+    session.recorder.frame.take();
+    session.recorder.gif_after.set(false);
     if session.recorder.live.replace(false) {
         set_tray_recording(session, false);
     }
