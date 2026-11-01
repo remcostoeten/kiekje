@@ -4,9 +4,10 @@ use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
+use super::capture::{self, Capture};
 use super::{Model, Pages};
 use crate::capture::CaptureMode;
-use crate::config::{self, AfterSelection, Config, Folder, SlowPointer, Theme};
+use crate::config::{self, Config, Folder, Theme};
 use crate::storage::{
     self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
 };
@@ -14,8 +15,8 @@ use crate::ui::set_theme;
 use crate::ui::widgets::{group, note, problem, row, switch};
 use crate::upload::{self, Expiry};
 
-type Change = Box<dyn FnOnce(&mut Config) + Send>;
-type Changes = async_channel::Sender<(Page, Change)>;
+pub(super) type Change = Box<dyn FnOnce(&mut Config) + Send>;
+pub(super) type Changes = async_channel::Sender<(Page, Change)>;
 
 const PREVIEW_WIDTH: u32 = 1920;
 const PREVIEW_HEIGHT: u32 = 1080;
@@ -23,7 +24,7 @@ const ENTRY_WIDTH: i32 = 280;
 const MAX_KEEP_DAYS: u32 = 365;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Page {
+pub(super) enum Page {
     Capture,
     Saving,
     General,
@@ -44,19 +45,13 @@ pub(super) struct General {
     quality_row: gtk::ListBoxRow,
     enabled: gtk::Switch,
     sound: gtk::Switch,
-    edit: gtk::Switch,
-    magnifier: gtk::Switch,
-    slow_pointer: gtk::DropDown,
-    slow_pointer_row: gtk::ListBoxRow,
-    window_snap: gtk::Switch,
-    hints: gtk::Switch,
+    capture: Rc<Capture>,
     autostart: gtk::Switch,
     light_theme: gtk::Switch,
     updates: gtk::Switch,
     upload: gtk::Switch,
     expiry: gtk::DropDown,
     expiry_row: gtk::ListBoxRow,
-    capture_problem: gtk::Label,
     saving_problem: gtk::Label,
     general_problem: gtk::Label,
 }
@@ -65,50 +60,9 @@ pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
     let storage = &model.storage;
     let saving_settings = model.saving;
     let notifications = model.notifications;
-    let capture = model.capture;
-    let overlay = model.overlay;
     let preferences = model.general;
     let (changes, receiver) = async_channel::unbounded::<(Page, Change)>();
-
-    let selection = group(&pages.capture, "Selection");
-    let edit = switch(capture.after_selection == AfterSelection::Edit);
-    selection.add(row(
-        "Edit a region before it is copied and saved",
-        Some("Enter accepts, Esc cancels. Off: the region is copied and saved when you let go."),
-        Some(&edit),
-    ));
-    let window_snap = switch(overlay.window_snap);
-    selection.add(row(
-        "Snap to the window under the pointer",
-        Some("Highlights the window; one click selects it. KDE Plasma 6 and Hyprland."),
-        Some(&window_snap),
-    ));
-    let hints = switch(overlay.hints);
-    selection.add(row(
-        "Show the keyboard hints",
-        Some("A bar at the bottom lists the keys: F screen, W window, D draw. ? hides it once."),
-        Some(&hints),
-    ));
-
-    let loupe = group(&pages.capture, "Magnifier");
-    let magnifier = switch(overlay.magnifier);
-    loupe.add(row(
-        "Show a magnifier with the pixel colour",
-        Some("Z hides it for one capture, C copies the colour, scrolling zooms."),
-        Some(&magnifier),
-    ));
-    let labels: Vec<&str> = SlowPointer::ALL.iter().map(|speed| speed.label()).collect();
-    let slow_pointer = gtk::DropDown::from_strings(&labels);
-    slow_pointer.set_selected(slow_index(overlay.slow_pointer));
-    slow_pointer.update_property(&[gtk::accessible::Property::Label("Shift pointer speed")]);
-    let slow_pointer_row = loupe.add(row(
-        "Pointer speed while holding Shift",
-        Some("Slower movement makes single pixels easy to hit."),
-        Some(&slow_pointer),
-    ));
-    slow_pointer_row.set_sensitive(overlay.magnifier);
-    let capture_problem = problem();
-    loupe.footer(&capture_problem);
+    let capture = capture::append(&pages.capture, model, &changes);
 
     let saving = group(&pages.saving, "Location");
     let save_to_disk = switch(saving_settings.enabled);
@@ -271,19 +225,13 @@ pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
         quality_row,
         enabled,
         sound,
-        edit,
-        magnifier,
-        slow_pointer,
-        slow_pointer_row,
-        window_snap,
-        hints,
+        capture,
         autostart,
         light_theme,
         updates,
         upload,
         expiry,
         expiry_row,
-        capture_problem,
         saving_problem,
         general_problem,
     });
@@ -471,82 +419,6 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
     });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
-    general.edit.connect_active_notify(move |check| {
-        let after = after_selection(check.is_active());
-        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
-            return;
-        }
-        send(
-            &sender,
-            Page::Capture,
-            Box::new(move |config| config.capture.after_selection = after),
-        );
-    });
-    let weak = Rc::downgrade(general);
-    let sender = changes.clone();
-    general.magnifier.connect_active_notify(move |check| {
-        let on = check.is_active();
-        let Some(general) = weak.upgrade() else {
-            return;
-        };
-        general.slow_pointer_row.set_sensitive(on);
-        if general.quiet.get() {
-            return;
-        }
-        send(
-            &sender,
-            Page::Capture,
-            Box::new(move |config| config.overlay.magnifier = on),
-        );
-    });
-    let weak = Rc::downgrade(general);
-    let sender = changes.clone();
-    general
-        .slow_pointer
-        .connect_selected_notify(move |dropdown| {
-            let picked = usize::try_from(dropdown.selected())
-                .ok()
-                .and_then(|index| SlowPointer::ALL.get(index).copied());
-            let Some(speed) = picked else {
-                return;
-            };
-            if weak.upgrade().is_none_or(|general| general.quiet.get()) {
-                return;
-            }
-            send(
-                &sender,
-                Page::Capture,
-                Box::new(move |config| config.overlay.slow_pointer = speed),
-            );
-        });
-    let weak = Rc::downgrade(general);
-    let sender = changes.clone();
-    general.window_snap.connect_active_notify(move |check| {
-        let on = check.is_active();
-        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
-            return;
-        }
-        send(
-            &sender,
-            Page::Capture,
-            Box::new(move |config| config.overlay.window_snap = on),
-        );
-    });
-    let weak = Rc::downgrade(general);
-    let sender = changes.clone();
-    general.hints.connect_active_notify(move |check| {
-        let on = check.is_active();
-        if weak.upgrade().is_none_or(|general| general.quiet.get()) {
-            return;
-        }
-        send(
-            &sender,
-            Page::Capture,
-            Box::new(move |config| config.overlay.hints = on),
-        );
-    });
-    let weak = Rc::downgrade(general);
-    let sender = changes.clone();
     general.format.connect_selected_notify(move |dropdown| {
         let picked = usize::try_from(dropdown.selected())
             .ok()
@@ -647,14 +519,6 @@ fn connect_autostart(general: &Rc<General>) {
     });
 }
 
-fn after_selection(on: bool) -> AfterSelection {
-    if on {
-        AfterSelection::Edit
-    } else {
-        AfterSelection::Finish
-    }
-}
-
 fn pick_folder(button: &gtk::Button, general: Weak<General>, changes: Changes) {
     let window = button.root().and_downcast::<gtk::Window>();
     let dialog = gtk::FileDialog::builder()
@@ -696,7 +560,7 @@ fn pick_folder(button: &gtk::Button, general: Weak<General>, changes: Changes) {
     });
 }
 
-fn send(changes: &Changes, page: Page, change: Change) {
+pub(super) fn send(changes: &Changes, page: Page, change: Change) {
     if changes.try_send((page, change)).is_err() {
         error!("the settings worker stopped, a change was not saved");
     }
@@ -773,13 +637,7 @@ impl General {
             .set_value(f64::from(config.saving.keep_unsaved_days));
         self.enabled.set_active(config.notifications.enabled);
         self.sound.set_active(config.notifications.sound);
-        self.edit
-            .set_active(config.capture.after_selection == AfterSelection::Edit);
-        self.magnifier.set_active(config.overlay.magnifier);
-        self.slow_pointer
-            .set_selected(slow_index(config.overlay.slow_pointer));
-        self.window_snap.set_active(config.overlay.window_snap);
-        self.hints.set_active(config.overlay.hints);
+        self.capture.reset(config);
         self.light_theme
             .set_active(config.general.theme == Theme::Light);
         self.updates.set_active(config.general.check_for_updates);
@@ -797,7 +655,10 @@ impl General {
 
     fn complain(&self, page: Page, message: &str) {
         let label = match page {
-            Page::Capture => &self.capture_problem,
+            Page::Capture => {
+                self.capture.complain(message);
+                return;
+            }
             Page::Saving => &self.saving_problem,
             Page::General => &self.general_problem,
         };
@@ -815,14 +676,6 @@ fn controls(widgets: &[&gtk::Widget]) -> gtk::Box {
         controls.append(*widget);
     }
     controls
-}
-
-fn slow_index(speed: SlowPointer) -> u32 {
-    SlowPointer::ALL
-        .iter()
-        .position(|candidate| *candidate == speed)
-        .and_then(|index| u32::try_from(index).ok())
-        .unwrap_or(0)
 }
 
 fn expiry_index(expiry: Expiry) -> u32 {

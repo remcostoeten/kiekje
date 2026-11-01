@@ -12,6 +12,7 @@ mod save_as;
 mod select;
 mod shapes;
 mod stamp;
+mod starter;
 mod text;
 mod toolbar;
 mod wheel;
@@ -35,16 +36,17 @@ use crate::{storage, ui};
 use canvas::View;
 use document::{
     Area, DEFAULT_EMOJI, Document, Edit, MAX_SIZE_PX, MIN_OPACITY, MIN_SIZE_PX, Point, Shape,
-    Stroke, Tool,
+    Stroke,
 };
 use pixels::{LoadError, Picture};
 use render::Layers;
 
 pub(super) const TURN_STEP_DEGREES: f64 = 15.0;
 
-pub use document::Color;
+pub use document::{Color, Tool};
 pub use inline::{Ending, Finish, Inline};
 pub use keys::{DrawAction, DrawKey, DrawingKeys, KeyConflict};
+pub use starter::Starter;
 
 /// What an editor window works on: a saved capture, or a fresh one that is not on disk yet.
 pub enum Source {
@@ -113,8 +115,7 @@ struct Editor {
     opacity: gtk::Adjustment,
     keys: DrawingKeys,
     menu: RefCell<Option<menu::Menu>>,
-    remembered: Cell<config::Drawing>,
-    remembering: RefCell<Option<glib::SourceId>>,
+    remembered: Remembered,
     draft: RefCell<Vec<Point>>,
     view: Cell<View>,
     canvas: gtk::DrawingArea,
@@ -212,6 +213,66 @@ enum Input {
     Frame(Arc<Vec<Frame>>, usize),
 }
 
+fn style_adjustments(drawing: &config::Drawing) -> [gtk::Adjustment; 2] {
+    [
+        gtk::Adjustment::new(
+            f64::from(drawing.size),
+            f64::from(MIN_SIZE_PX),
+            f64::from(MAX_SIZE_PX),
+            1.0,
+            4.0,
+            0.0,
+        ),
+        gtk::Adjustment::new(
+            f64::from(drawing.opacity),
+            f64::from(MIN_OPACITY),
+            100.0,
+            5.0,
+            10.0,
+            0.0,
+        ),
+    ]
+}
+
+struct Remembered {
+    drawing: Cell<config::Drawing>,
+    pending: Rc<RefCell<Option<glib::SourceId>>>,
+}
+
+impl Remembered {
+    fn new(drawing: config::Drawing) -> Self {
+        Self {
+            drawing: Cell::new(drawing),
+            pending: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    fn keep(&self, drawing: config::Drawing) {
+        if drawing == self.drawing.replace(drawing) {
+            return;
+        }
+        if let Some(pending) = self.pending.take() {
+            pending.remove();
+        }
+        let slot = Rc::downgrade(&self.pending);
+        let source = glib::timeout_add_local_once(Duration::from_millis(400), move || {
+            if let Some(slot) = slot.upgrade() {
+                slot.take();
+            }
+            gio::spawn_blocking(move || {
+                if let Err(error) = config::update(&config::path(), |config| {
+                    config.drawing.color = drawing.color;
+                    config.drawing.size = drawing.size;
+                    config.drawing.opacity = drawing.opacity;
+                }) {
+                    error!("could not remember the drawing style: {error}");
+                }
+            });
+        });
+        self.pending.replace(Some(source));
+    }
+}
+
 fn prepare(input: Input) -> Result<Prepared, LoadError> {
     let picture = match input {
         Input::File(path) => Picture::from_image(&pixels::decode(&path)?),
@@ -291,6 +352,8 @@ impl Editor {
             .label("Drag on the image to annotate. Letters pick a tool, digits a colour, Ctrl+scroll sizes.")
             .css_classes(["note"])
             .build();
+        let [undo, redo, clear] = toolbar::history_buttons();
+        let [size, opacity] = style_adjustments(&drawing);
         let editor = Rc::new(Self {
             host,
             suspend: RefCell::new(None),
@@ -310,37 +373,18 @@ impl Editor {
             stamp_at: Cell::new(None),
             keyboard_cursor: Cell::new(false),
             keyboard_drawing: Cell::new(false),
-            size: gtk::Adjustment::new(
-                f64::from(drawing.size),
-                f64::from(MIN_SIZE_PX),
-                f64::from(MAX_SIZE_PX),
-                1.0,
-                4.0,
-                0.0,
-            ),
-            opacity: gtk::Adjustment::new(
-                f64::from(drawing.opacity),
-                f64::from(MIN_OPACITY),
-                100.0,
-                5.0,
-                10.0,
-                0.0,
-            ),
+            size,
+            opacity,
             keys: drawing.keys,
             menu: RefCell::new(None),
-            remembered: Cell::new(drawing),
-            remembering: RefCell::new(None),
+            remembered: Remembered::new(drawing),
             draft: RefCell::new(Vec::new()),
             view: Cell::new(View::IDENTITY),
             canvas,
             status,
-            undo: toolbar::icon_action("kiekje-undo-symbolic", "Undo", "Undo (Ctrl+Z)"),
-            redo: toolbar::icon_action("kiekje-redo-symbolic", "Redo", "Redo (Ctrl+Shift+Z)"),
-            clear: toolbar::icon_action(
-                "kiekje-clear-symbolic",
-                "Clear",
-                "Remove every annotation",
-            ),
+            undo,
+            redo,
+            clear,
             tools: RefCell::new(Vec::new()),
             swatches: RefCell::new(Vec::new()),
             adopting: Cell::new(false),
@@ -389,33 +433,10 @@ impl Editor {
         }
     }
 
-    fn remember(self: &Rc<Self>) {
-        if self.adopting.get() {
-            return;
+    fn remember(&self) {
+        if !self.adopting.get() {
+            self.remembered.keep(self.drawing());
         }
-        let drawing = self.drawing();
-        if drawing == self.remembered.replace(drawing) {
-            return;
-        }
-        if let Some(pending) = self.remembering.take() {
-            pending.remove();
-        }
-        let target = Rc::downgrade(self);
-        let source = glib::timeout_add_local_once(Duration::from_millis(400), move || {
-            if let Some(editor) = target.upgrade() {
-                editor.remembering.take();
-            }
-            gio::spawn_blocking(move || {
-                if let Err(error) = config::update(&config::path(), |config| {
-                    config.drawing.color = drawing.color;
-                    config.drawing.size = drawing.size;
-                    config.drawing.opacity = drawing.opacity;
-                }) {
-                    error!("could not remember the drawing style: {error}");
-                }
-            });
-        });
-        self.remembering.replace(Some(source));
     }
 
     fn key_action(&self, key: gdk::Key, shift: bool) -> Option<DrawAction> {

@@ -184,28 +184,39 @@ impl Magnifier {
                 remember(enabled);
                 true
             }
-            gdk::Key::c if self.enabled.get() => {
-                let Some(colour) = self
-                    .pointer
-                    .get()
-                    .and_then(|point| colour_at(frames, point))
-                else {
-                    return false;
-                };
-                let Some(display) = gdk::Display::default() else {
-                    warn!("no display, colour not copied");
-                    return true;
-                };
-                display.clipboard().set_text(&hex(colour));
-                record([colour[0], colour[1], colour[2]]);
-                self.notice.set(Notice::Copied);
-                true
-            }
+            gdk::Key::c if self.enabled.get() => self.copy_colour(frames),
             _ => false,
         }
     }
 
-    /// Draws the loupe on the surface of `frame` when the pointer is over that monitor.
+    /// Copies the hex colour of the pixel under the pointer and adds it to the colour history.
+    ///
+    /// Reports whether the pointer was over a frame.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// if magnifier.copy_colour(&frames) { redraw_loupe(); }
+    /// ```
+    pub fn copy_colour(&self, frames: &[Frame]) -> bool {
+        let Some(colour) = self
+            .pointer
+            .get()
+            .and_then(|point| colour_at(frames, point))
+        else {
+            return false;
+        };
+        let Some(display) = gdk::Display::default() else {
+            warn!("no display, colour not copied");
+            return true;
+        };
+        display.clipboard().set_text(&hex(colour));
+        record([colour[0], colour[1], colour[2]]);
+        self.notice.set(Notice::Copied);
+        true
+    }
+
+    /// Draws the loupe on the surface of `frame` when it is on and the pointer is over that monitor.
     ///
     /// # Examples
     ///
@@ -213,6 +224,20 @@ impl Magnifier {
     /// shared.magnifier.paint(&shared.frames[frame_index], widget, snapshot);
     /// ```
     pub fn paint(&self, frame: &Frame, widget: &gtk::Widget, snapshot: &gtk::Snapshot) {
+        if self.enabled.get() {
+            self.draw(frame, widget, snapshot);
+        }
+    }
+
+    /// Draws the loupe on the surface of `frame` when the pointer is over that monitor, whether
+    /// or not the loupe is on for selecting.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// shared.magnifier.draw(&shared.frames[frame_index], widget, snapshot);
+    /// ```
+    pub fn draw(&self, frame: &Frame, widget: &gtk::Widget, snapshot: &gtk::Snapshot) {
         let monitor = frame.monitor.logical;
         let Some(point) = self
             .pointer
@@ -221,9 +246,6 @@ impl Magnifier {
         else {
             return;
         };
-        if !self.enabled.get() {
-            return;
-        }
         let local = (
             point.0 - f64::from(monitor.x),
             point.1 - f64::from(monitor.y),

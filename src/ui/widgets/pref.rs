@@ -67,15 +67,36 @@ pub fn row(
     subtitle: Option<&str>,
     control: Option<&impl IsA<gtk::Widget>>,
 ) -> gtk::ListBoxRow {
-    let subtitle = subtitle.map(|text| {
-        gtk::Label::builder()
-            .label(text)
-            .xalign(0.0)
-            .wrap(true)
-            .css_classes(["subtitle"])
-            .build()
-    });
-    build_row(title, subtitle, control)
+    build_row(
+        title,
+        title_line(title),
+        subtitle.map(subtitle_label),
+        control,
+    )
+}
+
+/// Builds a row whose title carries a small tag pill, such as the desktops a setting works on.
+///
+/// # Examples
+///
+/// ```ignore
+/// let row = tagged_row("Snap to windows", "Plasma 6 · Hyprland", Some("One click takes it."), Some(&snap));
+/// ```
+pub fn tagged_row(
+    title: &str,
+    tag: &str,
+    subtitle: Option<&str>,
+    control: Option<&impl IsA<gtk::Widget>>,
+) -> gtk::ListBoxRow {
+    let line = title_line(title);
+    line.append(
+        &gtk::Label::builder()
+            .label(tag)
+            .valign(gtk::Align::Center)
+            .css_classes(["tag"])
+            .build(),
+    );
+    build_row(title, line, subtitle.map(subtitle_label), control)
 }
 
 /// Builds a row whose subtitle is a path or other mono value, shortened in the middle.
@@ -97,11 +118,37 @@ pub fn path_row(
         .tooltip_text(value)
         .css_classes(["subtitle", "value"])
         .build();
-    build_row(title, Some(subtitle), control)
+    build_row(title, title_line(title), Some(subtitle), control)
+}
+
+fn title_line(title: &str) -> gtk::Box {
+    let line = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .build();
+    line.append(
+        &gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .wrap(true)
+            .css_classes(["row-title"])
+            .build(),
+    );
+    line
+}
+
+fn subtitle_label(text: &str) -> gtk::Label {
+    gtk::Label::builder()
+        .label(text)
+        .xalign(0.0)
+        .wrap(true)
+        .css_classes(["subtitle"])
+        .build()
 }
 
 fn build_row(
     title: &str,
+    line: gtk::Box,
     subtitle: Option<gtk::Label>,
     control: Option<&impl IsA<gtk::Widget>>,
 ) -> gtk::ListBoxRow {
@@ -111,14 +158,7 @@ fn build_row(
         .hexpand(true)
         .valign(gtk::Align::Center)
         .build();
-    text.append(
-        &gtk::Label::builder()
-            .label(title)
-            .xalign(0.0)
-            .wrap(true)
-            .css_classes(["row-title"])
-            .build(),
-    );
+    text.append(&line);
     if let Some(subtitle) = subtitle {
         text.append(&subtitle);
     }

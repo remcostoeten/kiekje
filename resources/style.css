@@ -1,15 +1,19 @@
 :root {
-  --bg: #090908;
-  --deep: #050504;
-  --surface: #111110;
-  --raised: #161615;
-  --raised-hi: #1e1e1c;
-  --stroke: #1b1b19;
-  --stroke-hi: #252523;
-  --stroke-top: #323230;
-  --fg: #efeeea;
-  --muted: #a3a099;
-  --faint: #6b6962;
+  --ground: color-mix(in srgb, #121212 20%, #000);
+  --light: color-mix(in srgb, #ffffff 92%, #000);
+  --bg: var(--ground);
+  --deep: var(--ground);
+  --surface: var(--ground);
+  --raised: color-mix(in srgb, var(--light) 5%, var(--ground));
+  --raised-hi: color-mix(in srgb, var(--light) 8%, var(--ground));
+  --stroke: color-mix(in srgb, var(--light) 4%, var(--ground));
+  --stroke-hi: color-mix(in srgb, var(--light) 5%, var(--ground));
+  --stroke-top: color-mix(in srgb, var(--light) 8%, var(--ground));
+  --heading: var(--light);
+  --fg: color-mix(in srgb, var(--light) 89.5%, var(--ground));
+  --ink: color-mix(in srgb, var(--light) 84%, var(--ground));
+  --muted: color-mix(in srgb, var(--ink) 80%, transparent);
+  --faint: color-mix(in srgb, var(--light) 51.5%, var(--ground));
   --accent: #fe5101;
   --accent-fill: #fe5101;
   --accent-text: #ff8a52;
@@ -44,7 +48,9 @@
   --stroke: #e6e0d5;
   --stroke-hi: #d7d0c3;
   --stroke-top: #c2baab;
+  --heading: #111111;
   --fg: #1d1b17;
+  --ink: #2f2c27;
   --muted: #686256;
   --faint: #857e71;
   --accent: #fe5101;
@@ -64,7 +70,7 @@ window.kiekje-popover {
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius-xl);
   box-shadow: var(--lift);
@@ -73,7 +79,7 @@ window.kiekje-popover {
 
 .section-title {
   font-family: var(--sans);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--faint);
 }
@@ -82,7 +88,7 @@ window.kiekje-popover {
   background: none;
   background-color: var(--raised);
   color: var(--fg);
-  font-size: 12.5px;
+  font-size: 13.5px;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
   box-shadow: var(--specular);
@@ -150,12 +156,12 @@ popover.context-menu * {
 
 .action-label {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .shortcut {
   font-family: var(--sans);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--faint);
 }
 
@@ -165,7 +171,7 @@ popover.context-menu * {
 
 .keycap {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   background-color: var(--raised);
@@ -192,7 +198,7 @@ popover.context-menu * {
   outline: none;
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   min-height: 0;
   padding: 0;
 }
@@ -324,11 +330,11 @@ popover.context-menu * {
   border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   padding: 8px 12px;
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .popover-panel .pop-hints .keycap {
-  font-size: 10.5px;
+  font-size: 11.5px;
   min-width: 16px;
   min-height: 16px;
 }
@@ -337,11 +343,26 @@ window.settings-window {
   background-color: var(--bg);
 }
 
+window.settings-window,
+window.settings-window * {
+  outline: none;
+}
+
+window.settings-window .titlebar-void {
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}
+
 .settings {
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   padding: 0;
 }
 
@@ -355,35 +376,201 @@ window.settings-window {
   padding-left: 8px;
 }
 
-.settings .page-header {
-  padding: 22px 32px 14px;
+window.settings-window .sidebar {
+  min-width: 207px;
+  padding: 0 10px 12px;
+}
+
+.settings .side-top {
+  min-height: 52px;
+  padding: 0 6px;
+}
+
+.settings .side-mark {
+  background-color: var(--accent-fill);
+  color: var(--on-accent);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--on-accent) 22%, transparent);
+  min-width: 22px;
+  min-height: 22px;
+}
+
+.settings .side-mark image {
+  color: var(--on-accent);
+}
+
+.settings .side-top .name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.settings .side-top .sub {
+  font-size: 14px;
+  color: var(--faint);
+}
+
+.settings .search {
+  margin-bottom: 12px;
+}
+
+.settings .search entry {
+  background: none;
+  background-color: var(--surface);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  border: 1px solid var(--stroke-hi);
+  border-radius: var(--radius);
+  box-shadow: none;
+  min-height: 28px;
+  padding: 0 28px 0 9px;
+  transition: background-color 120ms ease-out;
+}
+
+.settings .search entry > image {
+  color: var(--faint);
+  -gtk-icon-size: 14px;
+  margin-right: 6px;
+}
+
+.settings .search entry > text > placeholder {
+  color: var(--faint);
+}
+
+.settings .search entry:hover {
+  background-color: var(--raised);
+}
+
+.settings .search entry:focus-within {
+  background-color: var(--raised-hi);
+}
+
+.settings .search > .keycap {
+  min-height: 16px;
+  margin-right: 6px;
+}
+
+.settings .side-foot {
+  border-top: 1px solid var(--stroke);
+  padding-top: 10px;
+}
+
+.settings .side-foot .credit-footer {
+  margin-top: 4px;
+  border-top: none;
+}
+
+.settings .headerbar {
+  min-height: 47px;
+  padding: 0 8px 0 36px;
+  border-bottom: 1px solid transparent;
+  transition: border-color 160ms ease-out;
+}
+
+.settings .headerbar.scrolled {
+  border-bottom-color: var(--stroke);
+}
+
+.settings .htitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: transparent;
+  transition: color 160ms ease-out;
+}
+
+.settings .headerbar.scrolled .htitle {
+  color: var(--fg);
+}
+
+.settings windowcontrols.wbtns {
+  border-spacing: 2px;
+}
+
+.settings windowcontrols.wbtns > button {
+  background: none;
+  background-color: transparent;
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: none;
+  color: var(--muted);
+  min-width: 30px;
+  min-height: 28px;
+  padding: 0;
+  margin: 0;
+  transition: color 100ms ease-out;
+}
+
+.settings windowcontrols.wbtns > button > image {
+  -gtk-icon-size: 14px;
+  padding: 0;
+  margin: 0;
+}
+
+.settings windowcontrols.wbtns > button:hover {
+  background-color: transparent;
+  color: var(--fg);
+}
+
+.settings windowcontrols.wbtns > button.close:hover,
+.settings windowcontrols.wbtns > button:focus-visible,
+.settings windowcontrols.wbtns > button:active {
+  background-color: transparent;
+  color: var(--accent);
+}
+
+.settings scrolledwindow.scroll {
+  background: none;
+  background-color: transparent;
+}
+
+.settings .page {
+  padding: 0 36px 56px;
+}
+
+.settings .page-head {
+  margin: 2px 0 24px;
 }
 
 .settings .page-title {
-  font-size: 17px;
+  font-size: 22px;
   font-weight: 600;
+  color: var(--heading);
+  margin-bottom: 4px;
 }
 
 .settings .page-subtitle {
   color: var(--muted);
-  font-size: 12.5px;
-}
-
-.settings .page {
-  padding: 6px 32px 40px;
+  font-size: 14px;
 }
 
 .settings .section-title {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 12px 2px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 28px 2px 8px;
+}
+
+.settings .section-head {
+  margin: 28px 2px 8px;
+}
+
+.settings .section-head .section-title {
+  margin: 0;
+}
+
+.settings .page-head + .section-title,
+.settings .page-head + .section-head,
+.settings .shot + .section-title,
+.settings .shot + .section-head {
+  margin-top: 0;
 }
 
 .settings .group {
   background-color: var(--surface);
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
-  box-shadow: var(--specular);
+  box-shadow: none;
 }
 
 .settings .group .rows {
@@ -394,8 +581,9 @@ window.settings-window {
 .settings .group row.pref {
   background: none;
   background-color: transparent;
-  padding: 11px 14px;
-  min-height: 30px;
+  padding: 11px 16px;
+  min-height: 36px;
+  transition: background-color 1200ms ease-out;
 }
 
 .settings .group row.pref:not(:first-child),
@@ -403,42 +591,87 @@ window.settings-window {
   border-top: 1px solid var(--stroke);
 }
 
-.settings .group row.pref:disabled .row-title,
-.settings .group row.pref:disabled .subtitle {
-  color: var(--faint);
-  opacity: 0.6;
+.settings .group row.pref.flash {
+  background-color: var(--accent-wash);
+  transition: none;
+}
+
+.settings .group row.pref:disabled > box {
+  opacity: 0.4;
 }
 
 .settings .pref .row-title {
-  font-weight: 450;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
 }
 
 .settings .pref .subtitle {
-  color: var(--faint);
-  font-size: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.settings .tag {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background-color: var(--raised-hi);
+  border-radius: 4px;
+  min-height: 20px;
+  padding: 0 7px;
+}
+
+.settings .tag.accent {
+  background-color: var(--accent-wash);
+  color: var(--accent-text);
 }
 
 .settings .group .footer {
-  padding: 9px 14px;
-  font-size: 12px;
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings .group .footer image {
+  color: var(--faint);
 }
 
 .settings .group .footer.problem {
   border-left: none;
-  padding-left: 14px;
+  padding-left: 16px;
   color: var(--danger);
+  background-color: var(--danger-wash);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.settings .group .footer.problem image {
+  color: var(--danger);
+}
+
+.settings button {
+  font-weight: 500;
 }
 
 .settings .group button {
   background-color: var(--raised);
 }
 
+.settings button.ghost,
 .settings .group button.ghost {
   background-color: transparent;
+  border-color: transparent;
+  color: var(--muted);
 }
 
-.settings .group entry {
-  background-color: var(--bg);
+.settings button.ghost:hover {
+  background-color: transparent;
+  color: var(--fg);
+}
+
+.settings button.ghost:focus-visible,
+.settings button.ghost:active {
+  background-color: transparent;
+  color: var(--accent);
 }
 
 .settings button.optional:disabled {
@@ -447,50 +680,78 @@ window.settings-window {
 
 .settings .value {
   font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.settings .keycap {
+  font-family: var(--sans);
   font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  background-color: var(--raised);
+  border: 1px solid var(--stroke-hi);
+  border-radius: 4px;
+  box-shadow: inset 0 -1px var(--stroke);
+  min-width: 8px;
+  min-height: 18px;
+  padding: 0 5px;
 }
 
 .settings entry {
   font-family: var(--mono);
-  font-size: 12px;
-  padding: 0 10px;
+  font-size: 14px;
+  padding: 0 12px;
+  caret-color: var(--accent);
+}
+
+.settings entry > text > selection {
+  background-color: var(--accent-strong);
+  color: var(--fg);
 }
 
 .settings switch,
 .emoji-picker switch {
   background: none;
-  background-color: var(--stroke-hi);
-  border: 1px solid transparent;
+  background-color: var(--stroke-top);
+  border: none;
   border-radius: 999px;
-  box-shadow: var(--specular);
+  box-shadow: none;
   min-width: 32px;
   min-height: 18px;
   padding: 0;
-  transition: background-color 140ms ease-out;
+  transition: background-color 160ms ease-out;
 }
 
 .settings switch > slider,
 .emoji-picker switch > slider {
   background: none;
-  background-color: var(--muted);
+  background-color: var(--ink);
   border: none;
   border-radius: 999px;
   box-shadow: none;
-  min-width: 12px;
-  min-height: 12px;
+  min-width: 14px;
+  min-height: 14px;
   margin: 2px;
-  transition: background-color 140ms ease-out;
+  transition: background-color 160ms ease-out;
 }
 
 .settings switch > image,
 .emoji-picker switch > image {
   color: transparent;
-  -gtk-icon-size: 0;
+  -gtk-icon-size: 1px;
+  margin: 0;
+  padding: 0;
 }
 
 .settings switch:hover,
 .emoji-picker switch:hover {
-  background-color: var(--stroke-top);
+  background-color: color-mix(in srgb, var(--fg) 24%, var(--bg));
+}
+
+.settings switch:focus-visible,
+.emoji-picker switch:focus-visible {
+  background-color: color-mix(in srgb, var(--accent) 60%, var(--stroke-top));
 }
 
 .settings switch:checked,
@@ -508,19 +769,9 @@ window.settings-window {
   background-color: color-mix(in srgb, var(--on-accent) 10%, var(--accent-fill));
 }
 
-.settings switch:focus-visible,
-.emoji-picker switch:focus-visible {
-  background-color: var(--stroke-top);
-}
-
-.settings switch:focus-visible > slider,
-.emoji-picker switch:focus-visible > slider {
-  background-color: var(--fg);
-}
-
 .settings switch:checked:focus-visible,
 .emoji-picker switch:checked:focus-visible {
-  background-color: color-mix(in srgb, var(--on-accent) 22%, var(--accent-fill));
+  background-color: color-mix(in srgb, var(--fg) 26%, var(--accent));
 }
 
 .settings switch:disabled,
@@ -528,24 +779,127 @@ window.settings-window {
   opacity: 0.5;
 }
 
+.settings dropdown > popover > contents {
+  background-color: var(--raised);
+  border: 1px solid var(--stroke-hi);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--lift);
+  padding: 4px;
+}
+
+.settings dropdown > popover listview {
+  background: none;
+  background-color: transparent;
+}
+
+.settings dropdown > popover listview > row {
+  background: none;
+  background-color: transparent;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  border-radius: 4px;
+  min-height: 30px;
+  padding: 0 10px 0 8px;
+  transition: color 100ms ease-out;
+}
+
+.settings dropdown > popover listview > row:hover {
+  background-color: transparent;
+  color: var(--fg);
+}
+
+.settings dropdown > popover listview > row:selected {
+  background-color: transparent;
+  color: var(--fg);
+}
+
+.settings dropdown > popover listview > row:focus-visible,
+.settings dropdown > popover listview > row:active {
+  background-color: transparent;
+  color: var(--accent);
+}
+
+.settings dropdown > popover listview > row image {
+  color: var(--accent);
+}
+
+.settings spinbutton {
+  background: none;
+  background-color: var(--raised);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  border: 1px solid var(--stroke-hi);
+  border-radius: var(--radius);
+  box-shadow: none;
+  min-height: 28px;
+  padding: 0;
+  transition: background-color 100ms ease-out;
+}
+
+.settings spinbutton:focus-within {
+  background-color: var(--raised-hi);
+}
+
+.settings spinbutton > text {
+  background: none;
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+  min-height: 0;
+  min-width: 28px;
+  padding: 0 8px;
+}
+
+.settings spinbutton > button {
+  background: none;
+  background-color: transparent;
+  border: none;
+  border-left: 1px solid var(--stroke-hi);
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--muted);
+  min-width: 28px;
+  min-height: 0;
+  padding: 0;
+  transition: color 100ms ease-out;
+}
+
+.settings spinbutton > button:hover {
+  background-color: transparent;
+  color: var(--fg);
+}
+
+.settings spinbutton > button:focus-visible,
+.settings spinbutton > button:active {
+  background-color: transparent;
+  color: var(--accent);
+}
+
+.settings spinbutton > button:disabled {
+  color: var(--faint);
+}
+
 .settings .about {
   margin: 4px 2px 8px;
 }
 
 .panel button.trigger {
-  font-size: 12px;
-  min-width: 132px;
-  padding: 0 8px;
-  background-color: var(--bg);
+  font-size: 13px;
+  min-width: 96px;
+  padding: 0 11px;
+  background-color: var(--raised);
 }
 
 .panel button.trigger .trigger-note {
   color: var(--faint);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .panel button.trigger.recording {
-  background-color: var(--accent-strong);
+  background-color: var(--accent-wash);
 }
 
 .panel button.trigger.recording .trigger-note {
@@ -555,6 +909,143 @@ window.settings-window {
 .panel button.compact {
   padding: 0 8px;
   min-height: 24px;
+}
+
+.settings .shot {
+  background-color: var(--surface);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  margin-bottom: 28px;
+}
+
+.settings .shot-foot {
+  border-top: 1px solid var(--stroke);
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 39px;
+  padding: 0 14px;
+}
+
+.settings .shot-foot image.info {
+  color: var(--faint);
+  -gtk-icon-size: 14px;
+}
+
+.settings .shot-foot .keycap {
+  font-size: 11.5px;
+  min-height: 16px;
+}
+
+.settings button.choice {
+  background: none;
+  background-color: var(--surface);
+  color: var(--fg);
+  font-weight: 400;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  min-height: 0;
+  padding: 6px 6px 14px;
+  transition: background-color 120ms ease-out;
+}
+
+.settings button.choice .choice-art {
+  border-radius: var(--radius);
+}
+
+.settings button.choice .choice-body {
+  padding: 0 8px;
+}
+
+.settings button.choice .choice-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+  transition: color 100ms ease-out;
+}
+
+.settings button.choice .choice-sub {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings button.choice .radio {
+  min-width: 16px;
+  min-height: 16px;
+}
+
+.settings button.choice:hover {
+  background-color: var(--raised);
+}
+
+.settings button.choice:focus-visible,
+.settings button.choice:active {
+  background-color: var(--raised-hi);
+}
+
+.settings button.choice:focus-visible .choice-title {
+  color: var(--accent-text);
+}
+
+.settings button.choice:checked {
+  background-color: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+.settings button.choice:checked:hover {
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
+.settings button.choice:checked:focus-visible,
+.settings button.choice:checked:active {
+  background-color: color-mix(in srgb, var(--accent) 15%, var(--surface));
+}
+
+.settings .group.results button.result {
+  background: none;
+  background-color: transparent;
+  color: var(--fg);
+  font-weight: 400;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 0;
+  padding: 12px 16px;
+  transition: background-color 100ms ease-out;
+}
+
+.settings .group.results button.result:not(:first-child) {
+  border-top: 1px solid var(--stroke);
+}
+
+.settings .group.results button.result:first-child {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.settings .group.results button.result:last-child {
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.settings .group.results button.result:only-child {
+  border-radius: var(--radius-lg);
+}
+
+.settings .group.results button.result image {
+  color: var(--muted);
+  -gtk-icon-size: 14px;
+}
+
+.settings .group.results button.result:hover {
+  background-color: var(--wash);
+}
+
+.settings .group.results button.result:focus-visible,
+.settings .group.results button.result:active {
+  background-color: var(--focus-wash);
+}
+
+.settings .no-results {
+  color: var(--muted);
+  padding: 28px 16px;
 }
 
 .gallery gridview,
@@ -600,7 +1091,7 @@ window.settings-window {
 
 .colours .hex {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--fg);
 }
 
@@ -624,14 +1115,17 @@ window.settings-window {
 
 .panel button.chip {
   font-family: var(--sans);
-  font-size: 11px;
-  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 0 10px;
   min-height: 24px;
   color: var(--muted);
   background-color: transparent;
-  border-color: transparent;
+  border: none;
+  border-radius: 4px;
   box-shadow: none;
-  transition: color 150ms ease-out, background-color 150ms ease-out, transform 120ms ease-out;
+  font-variant-numeric: tabular-nums;
+  transition: color 120ms ease-out, background-color 120ms ease-out;
 }
 
 .panel button.chip:hover {
@@ -649,25 +1143,6 @@ window.settings-window {
   background-color: var(--accent-wash);
 }
 
-.panel .segmented {
-  background-color: var(--bg);
-  border: 1px solid var(--stroke);
-  border-radius: var(--radius-lg);
-  padding: 3px;
-}
-
-.panel .segmented button.chip:checked {
-  background-color: var(--raised-hi);
-}
-
-.panel .segmented button.chip:checked:hover {
-  background-color: color-mix(in srgb, var(--fg) 8%, var(--raised-hi));
-}
-
-.panel .segmented button.chip:checked:focus-visible {
-  background-color: color-mix(in srgb, var(--fg) 15%, var(--raised-hi));
-}
-
 .panel button.chip:checked:hover {
   background-color: var(--accent-strong);
 }
@@ -676,26 +1151,71 @@ window.settings-window {
   background-color: var(--accent-focus);
 }
 
+.panel .segmented {
+  background-color: var(--deep);
+  border: 1px solid var(--stroke-hi);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.panel .segmented button.chip:hover {
+  color: var(--fg);
+  background-color: transparent;
+}
+
+.panel .segmented button.chip:focus-visible,
+.panel .segmented button.chip:active {
+  color: var(--accent);
+  background-color: transparent;
+}
+
+.panel .segmented button.chip:checked,
+.panel .segmented button.chip:checked:hover {
+  color: var(--fg);
+  background-color: var(--raised-hi);
+}
+
+.panel .segmented button.chip:checked:focus-visible,
+.panel .segmented button.chip:checked:active {
+  color: var(--accent);
+  background-color: var(--raised-hi);
+}
+
 .gallery entry,
 .settings entry {
-  background-color: var(--raised);
+  background: none;
+  background-color: var(--deep);
   color: var(--fg);
-  border: 1px solid var(--stroke);
+  border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
   box-shadow: none;
   min-height: 32px;
+  transition: background-color 120ms ease-out;
 }
 
 .gallery entry:focus-within,
 .settings entry:focus-within {
-  background-color: var(--raised-hi);
+  background-color: var(--raised);
 }
 
 .gallery dropdown > button,
 .settings dropdown > button {
+  background: none;
+  background-color: var(--raised);
   font-family: var(--sans);
-  font-size: 11px;
-  padding: 4px 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  border: 1px solid var(--stroke-hi);
+  border-radius: var(--radius);
+  min-height: 28px;
+  min-width: 91px;
+  padding: 0 8px 0 11px;
+}
+
+.gallery dropdown > button arrow,
+.settings dropdown > button arrow {
+  color: var(--muted);
+  -gtk-icon-size: 14px;
 }
 
 .row picture {
@@ -732,7 +1252,7 @@ window.settings-window {
 }
 
 .editor .footer .note {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .editor .canvas {
@@ -759,7 +1279,7 @@ window.settings-window {
   background-color: var(--surface);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
   box-shadow: var(--specular);
@@ -775,7 +1295,17 @@ window.settings-window {
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
   box-shadow: var(--specular);
-  padding: 8px 14px;
+  padding: 4px;
+}
+
+.overlay-hints .hint-item,
+.panel.overlay-hints button.act {
+  min-height: 26px;
+  padding: 0 6px;
+}
+
+.overlay-hints button.act .hint {
+  color: inherit;
 }
 
 .recording-count {
@@ -800,7 +1330,7 @@ window.settings-window {
 
 .overlay-hints .keycap {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--fg);
   background-color: var(--raised-hi);
   border: 1px solid var(--stroke-hi);
@@ -810,7 +1340,7 @@ window.settings-window {
 
 .overlay-hints .hint {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -851,12 +1381,12 @@ window.settings-window {
 
 .panel button.danger.armed {
   background-color: var(--danger);
-  color: var(--bg);
+  color: var(--on-accent);
   font-weight: 600;
 }
 
 .settings .about-name {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
 }
 
@@ -873,7 +1403,7 @@ window.settings-window {
 
 .panel .brand {
   color: var(--fg);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   margin: 2px 8px 14px;
 }
@@ -888,7 +1418,7 @@ window.settings-window {
 
 .panel .brand-version {
   color: var(--faint);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
 }
 
@@ -903,16 +1433,19 @@ window.settings-window {
 
 .gallery entry {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .panel .title {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 600;
 }
 
-.gallery .count {
-  margin-top: 0;
+.gallery .section-title {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  margin: 0 2px;
 }
 
 .gallery .status spinner {
@@ -934,7 +1467,7 @@ window.settings-window {
 
 .gallery .badge {
   font-family: var(--sans);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--fg);
   background-color: var(--accent-wash);
@@ -945,23 +1478,42 @@ window.settings-window {
 
 .panel button.nav {
   background: none;
+  background-color: transparent;
   border-color: transparent;
   box-shadow: none;
   border-radius: var(--radius);
   padding: 0 8px;
   min-height: 30px;
   color: var(--muted);
-  transition: color 100ms ease-out, background-color 100ms ease-out;
+  font-weight: 400;
+  transition: color 100ms ease-out;
 }
 
 .panel button.nav > label,
 .panel button.nav > box > label {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .panel button.nav image {
   color: var(--faint);
+  transition: color 100ms ease-out;
+}
+
+.panel button.nav .hits,
+.panel button.nav .count {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.panel button.nav .hits {
+  color: var(--accent-text);
+}
+
+.panel button.nav.dim {
+  opacity: 0.4;
 }
 
 .panel .credit-footer {
@@ -970,13 +1522,13 @@ window.settings-window {
 }
 
 .panel button.nav.credit {
-  padding: 4px 6px;
+  padding: 4px 8px 0;
   min-height: 0;
   border-radius: 0;
 }
 
 .panel button.nav.credit > box > label {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--faint);
 }
 
@@ -985,32 +1537,36 @@ window.settings-window {
 }
 
 .panel button.nav:hover {
-  background-color: var(--wash);
+  background-color: transparent;
   color: var(--fg);
 }
 
-.panel button.nav:checked {
-  background-color: var(--raised-hi);
+.panel button.nav:hover image {
   color: var(--fg);
 }
 
-.panel button.nav:checked image {
-  color: var(--accent-text);
-}
-
-.panel button.nav:focus-visible {
-  color: var(--fg);
-  background-color: var(--focus-wash);
-}
-
+.panel button.nav:checked,
 .panel button.nav:checked:hover {
-  background-color: var(--raised-hi);
-  color: var(--fg);
+  background-color: transparent;
+  color: var(--heading);
 }
 
+.panel button.nav:checked image,
+.panel button.nav:checked:hover image {
+  color: var(--accent);
+}
+
+.panel button.nav:focus-visible,
+.panel button.nav:active,
 .panel button.nav:checked:focus-visible {
-  background-color: var(--accent-strong);
-  color: var(--fg);
+  background-color: transparent;
+  color: var(--accent);
+}
+
+.panel button.nav:focus-visible image,
+.panel button.nav:active image,
+.panel button.nav:checked:focus-visible image {
+  color: var(--accent);
 }
 
 .gallery .card picture {
@@ -1029,7 +1585,7 @@ window.kiekje-pin {
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius);
   padding: 4px 8px;
@@ -1104,7 +1660,7 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
 }
 
 .panel .palette button.chip.icon:disabled {
-  color: color-mix(in srgb, var(--muted) 50%, transparent);
+  color: color-mix(in srgb, var(--ink) 40%, transparent);
   background-color: transparent;
 }
 
@@ -1250,10 +1806,10 @@ popover.context-menu > contents {
 
 .emoji-picker label.emoji-choice {
   font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .palette button.emoji-pick label {
   font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 15px;
+  font-size: 16px;
 }

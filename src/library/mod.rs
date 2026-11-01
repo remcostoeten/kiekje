@@ -360,6 +360,20 @@ impl Library {
         )
     }
 
+    /// Counts every capture the gallery lists, missing ones included.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let shown = library.count()?;
+    /// ```
+    pub fn count(&self) -> Result<usize, LibraryError> {
+        let count: i64 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM captures", [], |row| row.get(0))?;
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
+
     /// Moves the unsaved capture `id` into `folder` and records it as saved there.
     ///
     /// The file keeps its name unless one in `folder` is taken, then it gets `-2`, `-3` and so on.
@@ -789,6 +803,17 @@ mod tests {
         drop(library);
         let reopened = Library::open(&path).unwrap();
         assert_eq!(reopened.recent(5).unwrap()[0].path, folder.join("a.png"));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn counts_every_capture_including_missing_ones() {
+        let folder = scratch("count");
+        let library = Library::open(&folder.join("library.db")).unwrap();
+        assert_eq!(library.count().unwrap(), 0);
+        library.insert(&capture(&folder.join("a.png"), 1)).unwrap();
+        library.insert(&capture(&folder.join("b.png"), 2)).unwrap();
+        assert_eq!(library.count().unwrap(), 2);
         std::fs::remove_dir_all(folder).unwrap();
     }
 

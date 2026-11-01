@@ -1,9 +1,12 @@
 mod about;
+mod capture;
 mod clipboard;
 mod danger;
 mod doctor;
 mod drawing;
 mod general;
+mod preview;
+mod search;
 mod zoom;
 
 use std::cell::{Cell, RefCell};
@@ -22,6 +25,7 @@ use crate::config::{
 };
 use crate::editor::DrawingKeys;
 use crate::ids::APP_ID;
+use crate::library::{self, Library};
 use crate::shortcuts::kde::KdeError;
 use crate::shortcuts::{
     Modifiers, Recorded, ShortcutAction, ShortcutHost, Shortcuts, Slot, hyprland, kde, record,
@@ -29,6 +33,7 @@ use crate::shortcuts::{
 use crate::storage;
 use crate::ui;
 use crate::ui::widgets::{footer, group, keycaps, note, problem, row};
+use search::{Indexed, NavItem, Results, Search};
 
 pub struct Model {
     pub shortcuts: Shortcuts,
@@ -47,8 +52,57 @@ pub struct Model {
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
 
-const WINDOW_WIDTH: i32 = 900;
-const WINDOW_HEIGHT: i32 = 640;
+const WINDOW_WIDTH: i32 = 960;
+const WINDOW_HEIGHT: i32 = 700;
+const SIDEBAR_WIDTH: i32 = 228;
+const SCROLLED_PAST: f64 = 4.0;
+const RESULTS_PAGE: &str = "results";
+
+struct PageSpec {
+    name: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    icon: &'static str,
+}
+
+const PAGE_SPECS: [PageSpec; 6] = [
+    PageSpec {
+        name: "capture",
+        title: "Capture",
+        subtitle: "What the overlay does after you press the shortcut. The preview follows your choices.",
+        icon: "kiekje-region-symbolic",
+    },
+    PageSpec {
+        name: "shortcuts",
+        title: "Shortcuts",
+        subtitle: "Global keys that work from anywhere, and the single keys the editor listens for.",
+        icon: "kiekje-keyboard-symbolic",
+    },
+    PageSpec {
+        name: "saving",
+        title: "Saving",
+        subtitle: "Where captures go, what they are called and how long unsaved ones stay.",
+        icon: "kiekje-download-symbolic",
+    },
+    PageSpec {
+        name: "general",
+        title: "General",
+        subtitle: "Appearance, notifications, startup, updates, sharing and the clipboard.",
+        icon: "kiekje-sliders-symbolic",
+    },
+    PageSpec {
+        name: "doctor",
+        title: "Doctor",
+        subtitle: "Every check the doctor runs on this session, with the fix for what is wrong.",
+        icon: "kiekje-check-symbolic",
+    },
+    PageSpec {
+        name: "about",
+        title: "About",
+        subtitle: "Version, where Kiekje keeps its files, support and the danger zone.",
+        icon: "kiekje-info-symbolic",
+    },
+];
 
 pub(super) struct Pages {
     capture: gtk::Box,
@@ -57,97 +111,165 @@ pub(super) struct Pages {
     general: gtk::Box,
     doctor: gtk::Box,
     about: gtk::Box,
+    indexed: Vec<Indexed>,
 }
 
 impl Pages {
-    fn new(stack: &gtk::Stack) -> Self {
+    fn new(shell: &Shell) -> Self {
+        let indexed: Vec<Indexed> = PAGE_SPECS
+            .iter()
+            .map(|spec| Indexed {
+                name: spec.name,
+                title: spec.title,
+                content: shell.page(spec.name, spec.title, spec.subtitle).content,
+            })
+            .collect();
         Self {
-            capture: page(
-                stack,
-                "capture",
-                "Capture",
-                "How the selection overlay and the magnifier behave.",
-            ),
-            shortcuts: page(
-                stack,
-                "shortcuts",
-                "Shortcuts",
-                "Global keys, and the keys you press inside the overlay and the editor.",
-            ),
-            saving: page(
-                stack,
-                "saving",
-                "Saving",
-                "Where captures go, what they are called and how they are encoded.",
-            ),
-            general: page(
-                stack,
-                "general",
-                "General",
-                "Notifications, startup, updates and sharing.",
-            ),
-            doctor: page(
-                stack,
-                "doctor",
-                "Doctor",
-                "Every check the doctor runs on this session, with the fix for what is wrong.",
-            ),
-            about: page(
-                stack,
-                "about",
-                "About",
-                "The version, where Kiekje keeps its files, and the reset buttons.",
-            ),
+            capture: content_of(&indexed, "capture"),
+            shortcuts: content_of(&indexed, "shortcuts"),
+            saving: content_of(&indexed, "saving"),
+            general: content_of(&indexed, "general"),
+            doctor: content_of(&indexed, "doctor"),
+            about: content_of(&indexed, "about"),
+            indexed,
         }
     }
 }
 
-fn page(stack: &gtk::Stack, name: &str, title: &str, subtitle: &str) -> gtk::Box {
-    let header = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(3)
-        .css_classes(["page-header"])
-        .build();
-    header.append(
-        &gtk::Label::builder()
+fn content_of(indexed: &[Indexed], name: &str) -> gtk::Box {
+    indexed
+        .iter()
+        .find(|page| page.name == name)
+        .map(|page| page.content.clone())
+        .unwrap_or_else(|| gtk::Box::new(gtk::Orientation::Vertical, 0))
+}
+
+struct Page {
+    content: gtk::Box,
+    title: gtk::Label,
+    subtitle: gtk::Label,
+}
+
+struct Shell {
+    stack: gtk::Stack,
+    headerbar: gtk::Box,
+    heading: gtk::Label,
+}
+
+impl Shell {
+    fn new() -> (Self, gtk::WindowHandle) {
+        let stack = gtk::Stack::builder()
+            .transition_type(gtk::StackTransitionType::Crossfade)
+            .transition_duration(120)
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        let heading = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .css_classes(["htitle"])
+            .build();
+        let headerbar = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .css_classes(["headerbar"])
+            .build();
+        headerbar.append(&heading);
+        headerbar.append(
+            &gtk::WindowControls::builder()
+                .side(gtk::PackType::End)
+                .valign(gtk::Align::Center)
+                .css_classes(["wbtns"])
+                .build(),
+        );
+        let handle = gtk::WindowHandle::builder().child(&headerbar).build();
+        let shell = Self {
+            stack,
+            headerbar,
+            heading,
+        };
+        shell.follow_pages();
+        (shell, handle)
+    }
+
+    fn page(&self, name: &str, title: &str, subtitle: &str) -> Page {
+        let head = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(4)
+            .css_classes(["page-head"])
+            .build();
+        let title_label = gtk::Label::builder()
             .label(title)
             .xalign(0.0)
+            .wrap(true)
             .css_classes(["page-title"])
-            .build(),
-    );
-    header.append(
-        &gtk::Label::builder()
+            .build();
+        let subtitle_label = gtk::Label::builder()
             .label(subtitle)
             .xalign(0.0)
             .wrap(true)
+            .visible(!subtitle.is_empty())
             .css_classes(["page-subtitle"])
-            .build(),
-    );
-    let page = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
-        .css_classes(["page"])
-        .build();
-    let scroller = gtk::ScrolledWindow::builder()
-        .child(&page)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vexpand(true)
-        .css_classes(["main"])
-        .build();
-    let outer = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .css_classes(["main"])
-        .build();
-    outer.append(&header);
-    outer.append(&scroller);
-    stack.add_titled(&outer, Some(name), title);
-    page
+            .build();
+        head.append(&title_label);
+        head.append(&subtitle_label);
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .css_classes(["page"])
+            .build();
+        content.append(&head);
+        let scroller = gtk::ScrolledWindow::builder()
+            .child(&content)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
+            .css_classes(["scroll"])
+            .build();
+        self.stack.add_titled(&scroller, Some(name), title);
+        let stack = self.stack.clone();
+        let headerbar = self.headerbar.clone();
+        let owner = name.to_owned();
+        scroller
+            .vadjustment()
+            .connect_value_changed(move |adjustment| {
+                if stack.visible_child_name().as_deref() == Some(owner.as_str()) {
+                    mark_scrolled(&headerbar, adjustment.value());
+                }
+            });
+        Page {
+            content,
+            title: title_label,
+            subtitle: subtitle_label,
+        }
+    }
+
+    fn follow_pages(&self) {
+        let headerbar = self.headerbar.clone();
+        let heading = self.heading.clone();
+        self.stack.connect_visible_child_notify(move |stack| {
+            let Some(child) = stack.visible_child() else {
+                return;
+            };
+            heading.set_label(&stack.page(&child).title().unwrap_or_default());
+            let scrolled = child
+                .downcast_ref::<gtk::ScrolledWindow>()
+                .map_or(0.0, |scroller| scroller.vadjustment().value());
+            mark_scrolled(&headerbar, scrolled);
+        });
+    }
 }
 
-fn nav_content(icon_name: &str, title: &str) -> gtk::Box {
+fn mark_scrolled(headerbar: &gtk::Box, offset: f64) {
+    if offset > SCROLLED_PAST {
+        headerbar.add_css_class("scrolled");
+    } else {
+        headerbar.remove_css_class("scrolled");
+    }
+}
+
+fn nav_item(icon_name: &str, title: &str) -> (gtk::ToggleButton, gtk::Label) {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
-        .spacing(9)
+        .spacing(10)
         .build();
     content.append(
         &gtk::Image::builder()
@@ -160,98 +282,169 @@ fn nav_content(icon_name: &str, title: &str) -> gtk::Box {
             .label(title)
             .xalign(0.0)
             .hexpand(true)
+            .css_classes(["label"])
             .build(),
     );
-    content
+    let hits = gtk::Label::builder()
+        .visible(false)
+        .css_classes(["hits"])
+        .build();
+    content.append(&hits);
+    let button = gtk::ToggleButton::builder()
+        .child(&content)
+        .css_classes(["nav"])
+        .build();
+    (button, hits)
 }
 
-fn brand() -> gtk::Box {
-    let brand = gtk::Box::builder()
+fn side_top() -> gtk::WindowHandle {
+    let top = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(9)
-        .css_classes(["brand"])
+        .css_classes(["side-top"])
         .build();
     let mark = gtk::Box::builder()
         .halign(gtk::Align::Start)
         .valign(gtk::Align::Center)
-        .css_classes(["brand-mark"])
+        .css_classes(["side-mark"])
         .build();
     mark.append(
         &gtk::Image::builder()
             .icon_name("kiekje-region-symbolic")
-            .pixel_size(12)
+            .pixel_size(14)
             .halign(gtk::Align::Center)
             .valign(gtk::Align::Center)
             .build(),
     );
-    brand.append(&mark);
-    brand.append(&gtk::Label::new(Some("Kiekje")));
-    brand.append(
+    top.append(&mark);
+    top.append(
         &gtk::Label::builder()
-            .label(about::VERSION)
-            .hexpand(true)
-            .xalign(1.0)
-            .css_classes(["brand-version"])
+            .label("Kiekje")
+            .css_classes(["name"])
             .build(),
     );
-    brand
+    top.append(
+        &gtk::Label::builder()
+            .label("Settings")
+            .css_classes(["sub"])
+            .build(),
+    );
+    gtk::WindowHandle::builder().child(&top).build()
 }
 
-fn sidebar(stack: &gtk::Stack) -> gtk::Box {
-    let sidebar = gtk::Box::builder()
+fn gallery_link() -> gtk::Button {
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(10)
+        .build();
+    content.append(
+        &gtk::Image::builder()
+            .icon_name("kiekje-gallery-symbolic")
+            .pixel_size(16)
+            .build(),
+    );
+    content.append(
+        &gtk::Label::builder()
+            .label("Gallery")
+            .xalign(0.0)
+            .hexpand(true)
+            .css_classes(["label"])
+            .build(),
+    );
+    let count = gtk::Label::builder().css_classes(["count"]).build();
+    content.append(&count);
+    content.append(
+        &gtk::Image::builder()
+            .icon_name("kiekje-open-symbolic")
+            .pixel_size(13)
+            .css_classes(["ext"])
+            .build(),
+    );
+    let button = gtk::Button::builder()
+        .child(&content)
+        .action_name("app.gallery")
+        .css_classes(["nav", "gallery-link"])
+        .build();
+    button.update_property(&[gtk::accessible::Property::Label("Open the gallery")]);
+    let shown = button.clone();
+    glib::spawn_future_local(async move {
+        let counted = gio::spawn_blocking(|| {
+            Library::open(&library::path()).and_then(|library| library.count())
+        })
+        .await;
+        match counted {
+            Ok(Ok(total)) => {
+                count.set_label(&total.to_string());
+                shown.update_property(&[gtk::accessible::Property::Label(&format!(
+                    "Open the gallery, {total} {}",
+                    if total == 1 { "capture" } else { "captures" }
+                ))]);
+            }
+            Ok(Err(error)) => debug!("the gallery count is unknown: {error}"),
+            Err(_) => debug!("the gallery count worker stopped"),
+        }
+    });
+    button
+}
+
+struct Sidebar {
+    widget: gtk::Box,
+    nav: Vec<NavItem>,
+}
+
+fn sidebar(stack: &gtk::Stack, search: &Search) -> Sidebar {
+    let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(1)
+        .width_request(SIDEBAR_WIDTH)
+        .hexpand(false)
         .css_classes(["sidebar"])
         .build();
-    sidebar.append(&brand());
+    widget.append(&side_top());
+    widget.append(search.widget());
+    let list = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(1)
+        .css_classes(["nav"])
+        .build();
+    let mut nav = Vec::new();
     let mut leader: Option<gtk::ToggleButton> = None;
-    for (name, title, icon_name) in [
-        ("capture", "Capture", "kiekje-region-symbolic"),
-        ("shortcuts", "Shortcuts", "kiekje-keyboard-symbolic"),
-        ("saving", "Saving", "kiekje-download-symbolic"),
-        ("general", "General", "kiekje-sliders-symbolic"),
-        ("doctor", "Doctor", "kiekje-check-symbolic"),
-        ("about", "About", "kiekje-info-symbolic"),
-    ] {
-        let button = gtk::ToggleButton::builder()
-            .child(&nav_content(icon_name, title))
-            .active(leader.is_none())
-            .css_classes(["nav"])
-            .build();
+    for spec in &PAGE_SPECS {
+        let (button, hits) = nav_item(spec.icon, spec.title);
+        button.set_active(leader.is_none());
         match &leader {
             Some(first) => button.set_group(Some(first)),
             None => leader = Some(button.clone()),
         }
         let stack = stack.clone();
+        let name = spec.name;
         button.connect_toggled(move |button| {
             if button.is_active() {
                 stack.set_visible_child_name(name);
             }
         });
-        sidebar.append(&button);
+        list.append(&button);
+        nav.push(NavItem {
+            name: spec.name,
+            button,
+            hits,
+        });
     }
-    sidebar.append(
+    widget.append(&list);
+    widget.append(
         &gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .vexpand(true)
             .build(),
     );
-    let gallery = nav_content("kiekje-gallery-symbolic", "Gallery");
-    gallery.append(
-        &gtk::Image::builder()
-            .icon_name("kiekje-open-symbolic")
-            .pixel_size(16)
-            .build(),
-    );
-    sidebar.append(
-        &gtk::Button::builder()
-            .child(&gallery)
-            .action_name("app.gallery")
-            .css_classes(["nav"])
-            .build(),
-    );
-    sidebar.append(&footer());
-    sidebar
+    let foot = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .css_classes(["side-foot"])
+        .build();
+    foot.append(&gallery_link());
+    foot.append(&footer());
+    widget.append(&foot);
+    Sidebar { widget, nav }
 }
 
 struct Editor {
@@ -294,22 +487,36 @@ pub fn show(
         .default_height(WINDOW_HEIGHT)
         .css_classes(["settings-window"])
         .build();
+    window.set_titlebar(Some(
+        &gtk::Box::builder().css_classes(["titlebar-void"]).build(),
+    ));
 
     let root = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .css_classes(["panel", "settings"])
         .build();
-    let stack = gtk::Stack::builder()
-        .transition_type(gtk::StackTransitionType::Crossfade)
-        .transition_duration(120)
+    let (shell, headerbar) = Shell::new();
+    let search = Search::new(&shell.stack);
+    let sidebar = sidebar(&shell.stack, &search);
+    let main = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
         .hexpand(true)
-        .vexpand(true)
+        .css_classes(["main"])
         .build();
-    root.append(&sidebar(&stack));
-    root.append(&stack);
+    main.append(&headerbar);
+    main.append(&shell.stack);
+    root.append(&sidebar.widget);
+    root.append(&main);
     window.set_child(Some(&root));
 
-    let pages = Pages::new(&stack);
+    let pages = Pages::new(&shell);
+    let results = shell.page(RESULTS_PAGE, "Search", "");
+    let hits = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .css_classes(["group", "results"])
+        .build();
+    results.content.append(&hits);
+    shell.stack.set_visible_child_name("capture");
     let general = general::append(&pages, &model);
     clipboard::append(&pages.general);
 
@@ -433,6 +640,21 @@ pub fn show(
     doctor::append(&pages.doctor);
     about::append(&pages.about);
     danger::append(&pages.about, &editor.host, on_done);
+    let current = sidebar
+        .nav
+        .iter()
+        .find(|item| item.button.is_active())
+        .map(|item| item.button.clone());
+    search.index(
+        pages.indexed,
+        sidebar.nav,
+        Results {
+            title: results.title,
+            subtitle: results.subtitle,
+            list: hits,
+        },
+    );
+    search::install_shortcut(&window, search);
 
     let handle = Handle(Rc::downgrade(&editor));
     let zoom_editor = Rc::downgrade(&editor);
@@ -460,6 +682,9 @@ pub fn show(
     window.add_controller(keys);
 
     window.present();
+    if let Some(current) = current {
+        current.grab_focus();
+    }
     (window, handle)
 }
 
@@ -683,8 +908,7 @@ impl Face {
                 .build()
                 .upcast(),
         };
-        widget.set_halign(gtk::Align::End);
-        widget.set_hexpand(true);
+        widget.set_halign(gtk::Align::Center);
         widget
     }
 }
