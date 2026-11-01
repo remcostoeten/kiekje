@@ -11,6 +11,7 @@ mod desktop_file;
 mod doctor;
 mod editor;
 mod fuzzy;
+mod headless;
 mod help;
 mod ids;
 mod library;
@@ -33,7 +34,7 @@ use gtk::glib;
 
 use app::Command;
 use backends::windows;
-use cli::{check_available, is_help_request, parse_capture, parse_pin};
+use cli::{CaptureCommand, check_available, is_help_request, parse_capture, parse_pin};
 use help::Topic;
 
 fn main() -> glib::ExitCode {
@@ -47,7 +48,7 @@ fn main() -> glib::ExitCode {
             glib::ExitCode::SUCCESS
         }
         Some("capture") => match parse_capture(&arguments[1..], trigger_us) {
-            Ok(request) => {
+            Ok(CaptureCommand::Interactive(request)) => {
                 match check_available(request.mode, || windows::availability(windows::detect())) {
                     Ok(()) => app::run(Command::Capture(request)),
                     Err(message) => {
@@ -56,6 +57,16 @@ fn main() -> glib::ExitCode {
                     }
                 }
             }
+            Ok(CaptureCommand::Headless(request)) => match headless::capture(&request) {
+                Ok(()) => {
+                    println!("{}", request.output.display());
+                    glib::ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("kiekje: {error}");
+                    glib::ExitCode::FAILURE
+                }
+            },
             Err(message) => {
                 help::print_error(&message.to_string(), Topic::Capture);
                 glib::ExitCode::FAILURE
@@ -82,6 +93,28 @@ fn main() -> glib::ExitCode {
             doctor::run();
             glib::ExitCode::SUCCESS
         }
+        Some("windows") => match headless::windows() {
+            Ok(windows) => {
+                for window in windows {
+                    let frame = window.frame;
+                    println!(
+                        "{}\t{}x{}+{}+{}\t{}\t{}",
+                        window.id,
+                        frame.width,
+                        frame.height,
+                        frame.x,
+                        frame.y,
+                        window.app,
+                        window.title
+                    );
+                }
+                glib::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("kiekje: {error}");
+                glib::ExitCode::FAILURE
+            }
+        },
         Some("install-desktop-file") => match desktop_file::install() {
             Ok(path) => {
                 println!("kiekje: wrote {}", path.display());

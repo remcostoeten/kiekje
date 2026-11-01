@@ -29,34 +29,64 @@ pub struct Kwin;
 
 impl WindowGeometrySource for Kwin {
     fn windows(&self) -> Result<Vec<LogicalRect>, WindowError> {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let connection = connection::Builder::session()?
-            .method_timeout(CALL_TIMEOUT)
-            .serve_at(REPORT_PATH, ReportSink { sender })?
-            .build()?;
-        let service = connection
-            .unique_name()
-            .ok_or(WindowError::Unavailable)?
-            .to_string();
-        let script = ScriptFile::create(&service)?;
-        let scripting = proxy(&connection, SCRIPTING_PATH.to_owned(), SCRIPTING_INTERFACE)?;
-        let id: i32 = scripting.call(
-            "loadScript",
-            &(
-                script.path.to_string_lossy().as_ref(),
-                script.plugin.as_str(),
-            ),
-        )?;
-        if id < 0 {
-            return Err(WindowError::ScriptRejected);
-        }
-        let report = run_script(&connection, id, &receiver);
-        if let Err(error) = scripting.call::<_, _, bool>("unloadScript", &(script.plugin.as_str(),))
-        {
-            error!("could not unload the KWin window script: {error}");
-        }
-        Ok(parse_report(&report?)?)
+        Ok(parse_report(&report()?)?)
     }
+}
+
+pub struct KwinWindow {
+    pub id: String,
+    pub title: String,
+    pub app: String,
+    pub frame: LogicalRect,
+}
+
+/// Lists the visible windows with their KWin id, title and application, topmost first.
+///
+/// Blocks on D-Bus while a KWin script runs, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// let ids: Vec<String> = kwin::list()?.into_iter().map(|window| window.id).collect();
+/// ```
+pub fn list() -> Result<Vec<KwinWindow>, WindowError> {
+    Ok(visible(serde_json::from_str(&report()?)?)
+        .map(|window| KwinWindow {
+            frame: frame(&window),
+            id: window.id,
+            title: window.title,
+            app: window.app,
+        })
+        .collect())
+}
+
+fn report() -> Result<String, WindowError> {
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let connection = connection::Builder::session()?
+        .method_timeout(CALL_TIMEOUT)
+        .serve_at(REPORT_PATH, ReportSink { sender })?
+        .build()?;
+    let service = connection
+        .unique_name()
+        .ok_or(WindowError::Unavailable)?
+        .to_string();
+    let script = ScriptFile::create(&service)?;
+    let scripting = proxy(&connection, SCRIPTING_PATH.to_owned(), SCRIPTING_INTERFACE)?;
+    let id: i32 = scripting.call(
+        "loadScript",
+        &(
+            script.path.to_string_lossy().as_ref(),
+            script.plugin.as_str(),
+        ),
+    )?;
+    if id < 0 {
+        return Err(WindowError::ScriptRejected);
+    }
+    let report = run_script(&connection, id, &receiver);
+    if let Err(error) = scripting.call::<_, _, bool>("unloadScript", &(script.plugin.as_str(),)) {
+        error!("could not unload the KWin window script: {error}");
+    }
+    report
 }
 
 struct ReportSink {
@@ -144,6 +174,9 @@ const activity = workspace.currentActivity;
 const windows = workspace.stackingOrder.map((window) => {{
   const frame = window.frameGeometry;
   return {{
+    id: String(window.internalId),
+    title: String(window.caption || ""),
+    app: String(window.resourceClass || ""),
     x: frame.x,
     y: frame.y,
     width: frame.width,
@@ -165,6 +198,12 @@ callDBus("{service}", "{REPORT_PATH}", "{REPORT_INTERFACE}", "Windows", JSON.str
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ReportedWindow {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    app: String,
     x: f64,
     y: f64,
     width: f64,
@@ -188,20 +227,25 @@ struct ReportedWindow {
 /// let windows = parse_report(&report)?;
 /// ```
 pub fn parse_report(report: &str) -> Result<Vec<LogicalRect>, serde_json::Error> {
-    let windows: Vec<ReportedWindow> = serde_json::from_str(report)?;
-    Ok(windows
-        .iter()
+    Ok(visible(serde_json::from_str(report)?)
+        .map(|window| frame(&window))
+        .collect())
+}
+
+fn visible(windows: Vec<ReportedWindow>) -> impl Iterator<Item = ReportedWindow> {
+    windows
+        .into_iter()
         .rev()
         .filter(|window| window.normal && !window.minimized && !window.hidden)
         .filter(|window| window.on_desktop && window.on_activity)
         .filter(|window| window.width > 0.0 && window.height > 0.0)
-        .map(|window| {
-            rect_from_drag(
-                (window.x, window.y),
-                (window.x + window.width, window.y + window.height),
-            )
-        })
-        .collect())
+}
+
+fn frame(window: &ReportedWindow) -> LogicalRect {
+    rect_from_drag(
+        (window.x, window.y),
+        (window.x + window.width, window.y + window.height),
+    )
 }
 
 #[cfg(test)]
@@ -273,5 +317,44 @@ mod tests {
         let source = script_source(":1.42");
         assert!(source.contains(r#"callDBus(":1.42", "/dev/remcostoeten/Kiekje/WindowReport""#));
         assert!(source.contains("workspace.stackingOrder"));
+        assert!(source.contains("String(window.internalId)"));
+    }
+
+    #[test]
+    fn keeps_the_id_title_and_app_of_visible_windows_topmost_first() {
+        let report = r#"[
+            {"id": "{a}", "title": "Below", "app": "one", "x": 0, "y": 0, "width": 10,
+             "height": 10, "normal": true, "minimized": false, "hidden": false,
+             "onDesktop": true, "onActivity": true},
+            {"id": "{b}", "title": "Panel", "app": "plasmashell", "x": 0, "y": 0, "width": 10,
+             "height": 10, "normal": false, "minimized": false, "hidden": false,
+             "onDesktop": true, "onActivity": true},
+            {"id": "{c}", "title": "Above", "app": "two", "x": 5, "y": 5, "width": 10,
+             "height": 10, "normal": true, "minimized": false, "hidden": false,
+             "onDesktop": true, "onActivity": true}
+        ]"#;
+        let windows: Vec<_> = visible(serde_json::from_str(report).unwrap())
+            .map(|window| {
+                let bounds = frame(&window);
+                (window.id, window.title, window.app, bounds)
+            })
+            .collect();
+        assert_eq!(
+            windows,
+            [
+                (
+                    "{c}".into(),
+                    "Above".into(),
+                    "two".into(),
+                    rect(5, 5, 10, 10)
+                ),
+                (
+                    "{a}".into(),
+                    "Below".into(),
+                    "one".into(),
+                    rect(0, 0, 10, 10)
+                ),
+            ]
+        );
     }
 }

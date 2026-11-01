@@ -43,17 +43,34 @@ impl Image {
 /// let image = crop(&frame, PixelRect { x: 0, y: 0, width: 100, height: 100 });
 /// ```
 pub fn crop(frame: &Frame, rect: PixelRect) -> Image {
+    copy_rect(&frame.data, frame.stride, frame.format, rect)
+}
+
+/// Copies a pixel rectangle out of an image, or returns `None` when it reaches outside it.
+///
+/// # Examples
+///
+/// ```ignore
+/// let detail = crop_image(&image, PixelRect { x: 40, y: 40, width: 200, height: 120 });
+/// ```
+pub fn crop_image(image: &Image, rect: PixelRect) -> Option<Image> {
+    let fits = rect.x.checked_add(rect.width)? <= image.width
+        && rect.y.checked_add(rect.height)? <= image.height;
+    fits.then(|| copy_rect(&image.data, image.stride, image.format, rect))
+}
+
+fn copy_rect(source: &[u8], source_stride: usize, format: PixelFormat, rect: PixelRect) -> Image {
     let stride = rect.width as usize * 4;
     let mut data = Vec::with_capacity(stride * rect.height as usize);
     for row in rect.y..rect.y + rect.height {
-        let start = row as usize * frame.stride + rect.x as usize * 4;
-        data.extend_from_slice(&frame.data[start..start + stride]);
+        let start = row as usize * source_stride + rect.x as usize * 4;
+        data.extend_from_slice(&source[start..start + stride]);
     }
     Image {
         width: rect.width,
         height: rect.height,
         stride,
-        format: frame.format,
+        format,
         data,
     }
 }
@@ -388,6 +405,28 @@ mod tests {
         let info = reader.next_frame(&mut decoded).unwrap();
         assert_eq!((info.width, info.height), (5, 3));
         assert_eq!(&decoded[..info.buffer_size()], &image.data[..]);
+    }
+
+    #[test]
+    fn crops_an_image_and_refuses_a_rect_outside_it() {
+        let mut image = solid(4, 3);
+        for (index, byte) in image.data.iter_mut().enumerate() {
+            *byte = index as u8;
+        }
+        let rect = |x, y, width, height| PixelRect {
+            x,
+            y,
+            width,
+            height,
+        };
+        let detail = crop_image(&image, rect(1, 1, 2, 2)).unwrap();
+        assert_eq!((detail.width, detail.height, detail.stride), (2, 2, 8));
+        assert_eq!(&detail.data[..8], &image.data[20..28]);
+        assert_eq!(&detail.data[8..], &image.data[36..44]);
+        assert!(crop_image(&image, rect(0, 0, 4, 3)).is_some());
+        assert!(crop_image(&image, rect(1, 0, 4, 3)).is_none());
+        assert!(crop_image(&image, rect(0, 2, 1, 2)).is_none());
+        assert!(crop_image(&image, rect(u32::MAX, 0, 1, 1)).is_none());
     }
 
     #[test]

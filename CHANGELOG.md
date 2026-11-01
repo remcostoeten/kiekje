@@ -4,6 +4,11 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+### Added
+
+- `kiekje capture window --id <id> --output <path>` and `kiekje capture fullscreen --output <path>` write one capture to a new file without the overlay, the clipboard, a notification or a gallery entry, and print the path. `--crop x,y,w,h` keeps part of it, in pixels of the capture. Window capture renders the window on its own through KWin, so windows above it do not show. Plasma only.
+- `kiekje windows` lists the open windows with the ids `--id` takes, their geometry, application and title.
+
 ## [0.1.0-alpha.10] - 2026-11-01
 
 ### Added

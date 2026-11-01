@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "pin",
     "record",
     "doctor",
+    "windows",
     "install-desktop-file",
     "help",
     "version",
@@ -115,6 +116,12 @@ const SETUP: &[Entry] = &[
         note: "",
     },
     Entry {
+        name: "windows",
+        argument: "",
+        description: "List open windows with the ids --id takes",
+        note: "",
+    },
+    Entry {
         name: "install-desktop-file",
         argument: "",
         description: "Register the launcher entry",
@@ -186,6 +193,24 @@ const FLAGS: &[Entry] = &[
         description: "Copy to the clipboard without writing a file",
         note: "",
     },
+    Entry {
+        name: "--output",
+        argument: "<path>",
+        description: "Write fullscreen or window to a new file, with no overlay or clipboard",
+        note: "",
+    },
+    Entry {
+        name: "--id",
+        argument: "<window id>",
+        description: "The window to write with --output, from kiekje windows",
+        note: "",
+    },
+    Entry {
+        name: "--crop",
+        argument: "<x,y,w,h>",
+        description: "Keep part of the --output capture, in its pixels",
+        note: "",
+    },
 ];
 
 const EXAMPLES: &[(&str, &str)] = &[
@@ -198,6 +223,10 @@ const EXAMPLES: &[(&str, &str)] = &[
     (
         "Grab every monitor through KWin, clipboard only",
         "capture fullscreen --backend kwin --no-save",
+    ),
+    (
+        "Write one window to a file, nothing on screen",
+        "capture window --id <id> --output shot.png",
     ),
 ];
 
