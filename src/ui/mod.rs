@@ -16,6 +16,9 @@ use crate::config::{self, Config, Theme};
 
 pub const RESOURCE_PREFIX: &str = "/dev/remcostoeten/Kiekje";
 
+/// The app stylesheet outranks `~/.config/gtk-4.0/gtk.css`, so a user GTK theme cannot recolour it.
+pub const STYLESHEET_PRIORITY: u32 = gtk::STYLE_PROVIDER_PRIORITY_USER + 1;
+
 thread_local! {
     static LOADED: Cell<bool> = const { Cell::new(false) };
     static THEME: Cell<Theme> = const { Cell::new(Theme::Dark) };
@@ -48,11 +51,7 @@ pub fn load_stylesheet() {
     provider.connect_parsing_error(|_, section, error| {
         warn!("style.css {}: {error}", section.to_str());
     });
-    gtk::style_context_add_provider_for_display(
-        &display,
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    gtk::style_context_add_provider_for_display(&display, &provider, STYLESHEET_PRIORITY);
     PROVIDER.with(|slot| slot.replace(Some(provider)));
     apply_theme();
 }

@@ -61,7 +61,7 @@ pub(super) fn install(window: &gtk::Window, is_recording: impl Fn() -> bool + 's
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
+        crate::ui::STYLESHEET_PRIORITY + 1,
     );
     let zoom = Rc::new(Zoom {
         percent: Cell::new(DEFAULT_PERCENT),
