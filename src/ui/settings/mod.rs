@@ -396,6 +396,7 @@ fn sidebar(stack: &gtk::Stack, search: &Search) -> Sidebar {
     let widget = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .width_request(SIDEBAR_WIDTH)
+        .hexpand(false)
         .css_classes(["sidebar"])
         .build();
     widget.append(&side_top());
