@@ -4,6 +4,20 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10] - 2026-11-01
+
+### Added
+
+- Recording a region from the overlay. The overlay has Screenshot, Video and GIF modes, switched with G or the buttons at its top, and the inline editor has Record (Ctrl+R) and Record GIF (Ctrl+Shift+R). A selection then records that region instead of taking a screenshot, and Record GIF also writes a GIF next to the recording.
+- A three second countdown before a recording, with one beep per second when notification sounds are on. The countdown has no window, so nothing of it ends up in the video.
+- A `[shortcuts] record` key that starts and stops a recording. It has no default key; set one in Settings.
+- Escape cancels a recording on KDE Plasma: press it twice quickly or hold it for two seconds, and the recording is deleted. Escape is a global key only while a recording runs.
+- Kiekje remembers the ScreenCast permission per source, so the desktop's picker is skipped on later recordings once access was granted.
+
+### Changed
+
+- `[capture] after_selection` now defaults to `"edit"`: the inline editor opens after every selection. Set it to `"finish"` to copy and save as soon as you let go.
+
 ## [0.1.0-alpha.9] - 2026-10-28
 
 ### Added
