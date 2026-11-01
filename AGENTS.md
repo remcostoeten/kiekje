@@ -90,7 +90,7 @@ The "Crisp tool" direction (2026-10-23), a warm graphite dark UI in the spirit o
 
 - Tokens live once on `:root` in `style.css`, with the light values in `:root.light`. Write `--accent: #fe5101;` with a space after the colon; GTK's parser rejects it without.
 - Derive tints with `color-mix(in srgb, <colour> <n>%, <colour>)`. Don't add colours outside the token list. `build.rs` flattens tokens and `color-mix()` into plain values for GTK 4.14 and fails the build on any other form.
-- One sans family, Geist, in sentence case at 12 to 13px. Geist Mono only for values that are code: file name templates and paths. No uppercase, no letter spacing, no corner marks.
+- One sans family, Geist, in sentence case at 13 to 14px. Geist Mono only for values that are code: file name templates and paths. No uppercase, no letter spacing, no corner marks.
 - One orange accent, the app icon's `#fe5101`, used for selection, switches, the primary button and focus. Red is for danger only.
 - One primary button per view. Selection is a background tint, never an inverted fill.
 - Monochrome symbolic icons only, drawn as filled paths so GTK can recolour them. No emoji anywhere in the UI.

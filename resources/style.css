@@ -70,7 +70,7 @@ window.kiekje-popover {
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius-xl);
   box-shadow: var(--lift);
@@ -79,7 +79,7 @@ window.kiekje-popover {
 
 .section-title {
   font-family: var(--sans);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--faint);
 }
@@ -88,7 +88,7 @@ window.kiekje-popover {
   background: none;
   background-color: var(--raised);
   color: var(--fg);
-  font-size: 12.5px;
+  font-size: 13.5px;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
   box-shadow: var(--specular);
@@ -156,12 +156,12 @@ popover.context-menu * {
 
 .action-label {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .shortcut {
   font-family: var(--sans);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--faint);
 }
 
@@ -171,7 +171,7 @@ popover.context-menu * {
 
 .keycap {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   background-color: var(--raised);
@@ -198,7 +198,7 @@ popover.context-menu * {
   outline: none;
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   min-height: 0;
   padding: 0;
 }
@@ -330,11 +330,11 @@ popover.context-menu * {
   border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   padding: 8px 12px;
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .popover-panel .pop-hints .keycap {
-  font-size: 10.5px;
+  font-size: 11.5px;
   min-width: 16px;
   min-height: 16px;
 }
@@ -362,7 +362,7 @@ window.settings-window .titlebar-void {
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   padding: 0;
 }
 
@@ -400,13 +400,13 @@ window.settings-window .sidebar {
 }
 
 .settings .side-top .name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--fg);
 }
 
 .settings .side-top .sub {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--faint);
 }
 
@@ -419,7 +419,7 @@ window.settings-window .sidebar {
   background-color: var(--surface);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: 13.5px;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
   box-shadow: none;
@@ -473,7 +473,7 @@ window.settings-window .sidebar {
 }
 
 .settings .htitle {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: transparent;
   transition: color 160ms ease-out;
@@ -533,7 +533,7 @@ window.settings-window .sidebar {
 }
 
 .settings .page-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 600;
   color: var(--heading);
   margin-bottom: 4px;
@@ -541,11 +541,11 @@ window.settings-window .sidebar {
 
 .settings .page-subtitle {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .settings .section-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--fg);
   margin: 28px 2px 8px;
@@ -601,18 +601,18 @@ window.settings-window .sidebar {
 }
 
 .settings .pref .row-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--fg);
 }
 
 .settings .pref .subtitle {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .settings .tag {
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 500;
   color: var(--muted);
   background-color: var(--raised-hi);
@@ -628,7 +628,7 @@ window.settings-window .sidebar {
 
 .settings .group .footer {
   padding: 10px 16px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -680,13 +680,13 @@ window.settings-window .sidebar {
 
 .settings .value {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ink);
 }
 
 .settings .keycap {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--ink);
   background-color: var(--raised);
@@ -700,7 +700,7 @@ window.settings-window .sidebar {
 
 .settings entry {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 14px;
   padding: 0 12px;
   caret-color: var(--accent);
 }
@@ -797,7 +797,7 @@ window.settings-window .sidebar {
   background-color: transparent;
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: 13.5px;
   border-radius: 4px;
   min-height: 30px;
   padding: 0 10px 0 8px;
@@ -829,7 +829,7 @@ window.settings-window .sidebar {
   background-color: var(--raised);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
@@ -887,7 +887,7 @@ window.settings-window .sidebar {
 }
 
 .panel button.trigger {
-  font-size: 12px;
+  font-size: 13px;
   min-width: 96px;
   padding: 0 11px;
   background-color: var(--raised);
@@ -895,7 +895,7 @@ window.settings-window .sidebar {
 
 .panel button.trigger .trigger-note {
   color: var(--faint);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .panel button.trigger.recording {
@@ -921,7 +921,7 @@ window.settings-window .sidebar {
 .settings .shot-foot {
   border-top: 1px solid var(--stroke);
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   min-height: 39px;
   padding: 0 14px;
 }
@@ -932,7 +932,7 @@ window.settings-window .sidebar {
 }
 
 .settings .shot-foot .keycap {
-  font-size: 10.5px;
+  font-size: 11.5px;
   min-height: 16px;
 }
 
@@ -958,14 +958,14 @@ window.settings-window .sidebar {
 }
 
 .settings button.choice .choice-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--fg);
   transition: color 100ms ease-out;
 }
 
 .settings button.choice .choice-sub {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -1091,7 +1091,7 @@ window.settings-window .sidebar {
 
 .colours .hex {
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 14px;
   color: var(--fg);
 }
 
@@ -1115,7 +1115,7 @@ window.settings-window .sidebar {
 
 .panel button.chip {
   font-family: var(--sans);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   padding: 0 10px;
   min-height: 24px;
@@ -1203,7 +1203,7 @@ window.settings-window .sidebar {
   background: none;
   background-color: var(--raised);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   border: 1px solid var(--stroke-hi);
   border-radius: var(--radius);
@@ -1252,7 +1252,7 @@ window.settings-window .sidebar {
 }
 
 .editor .footer .note {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .editor .canvas {
@@ -1279,7 +1279,7 @@ window.settings-window .sidebar {
   background-color: var(--surface);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
   box-shadow: var(--specular);
@@ -1320,7 +1320,7 @@ window.settings-window .sidebar {
 
 .overlay-hints .keycap {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--fg);
   background-color: var(--raised-hi);
   border: 1px solid var(--stroke-hi);
@@ -1330,7 +1330,7 @@ window.settings-window .sidebar {
 
 .overlay-hints .hint {
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 
@@ -1376,7 +1376,7 @@ window.settings-window .sidebar {
 }
 
 .settings .about-name {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
 }
 
@@ -1393,7 +1393,7 @@ window.settings-window .sidebar {
 
 .panel .brand {
   color: var(--fg);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   margin: 2px 8px 14px;
 }
@@ -1408,7 +1408,7 @@ window.settings-window .sidebar {
 
 .panel .brand-version {
   color: var(--faint);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
 }
 
@@ -1423,16 +1423,16 @@ window.settings-window .sidebar {
 
 .gallery entry {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .panel .title {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 600;
 }
 
 .gallery .section-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 400;
   color: var(--muted);
   margin: 0 2px;
@@ -1457,7 +1457,7 @@ window.settings-window .sidebar {
 
 .gallery .badge {
   font-family: var(--sans);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 500;
   color: var(--fg);
   background-color: var(--accent-wash);
@@ -1482,7 +1482,7 @@ window.settings-window .sidebar {
 .panel button.nav > label,
 .panel button.nav > box > label {
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .panel button.nav image {
@@ -1492,7 +1492,7 @@ window.settings-window .sidebar {
 
 .panel button.nav .hits,
 .panel button.nav .count {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
@@ -1518,7 +1518,7 @@ window.settings-window .sidebar {
 }
 
 .panel button.nav.credit > box > label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--faint);
 }
 
@@ -1575,7 +1575,7 @@ window.kiekje-pin {
   background-color: var(--bg);
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: 12px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius);
   padding: 4px 8px;
@@ -1796,10 +1796,10 @@ popover.context-menu > contents {
 
 .emoji-picker label.emoji-choice {
   font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .palette button.emoji-pick label {
   font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
-  font-size: 15px;
+  font-size: 16px;
 }

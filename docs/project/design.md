@@ -30,7 +30,7 @@ GTK's CSS parser needs a space after the colon in a custom property. `--accent: 
 
 ## Type
 
-Geist for everything, in sentence case: 13px for rows and actions, 12px for captions, 13px semibold for section headings, 20px for the settings page title and 17px for the gallery title. Geist Mono only for values that are code: file name templates and paths. Both fonts are bundled under the SIL Open Font License and registered with fontconfig for the process at startup, so the app looks the same whether or not they are installed.
+Geist for everything, in sentence case: 14px for rows and actions, 13px for captions, 14px semibold for section headings, 22px for the settings page title and 18px for the gallery title. Geist Mono only for values that are code: file name templates and paths. Both fonts are bundled under the SIL Open Font License and registered with fontconfig for the process at startup, so the app looks the same whether or not they are installed.
 
 ## Components
 
