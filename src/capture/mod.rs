@@ -316,6 +316,8 @@ pub enum CaptureError {
     NoWindowSource(&'static str),
     #[error("could not list the windows: {0}")]
     WindowList(String),
+    #[error("KWin has no window with this id; `kiekje windows` lists the ids")]
+    UnknownWindow,
     #[error("backend unavailable: {0}")]
     Unavailable(String),
     #[error("unsupported pixel format {0}")]

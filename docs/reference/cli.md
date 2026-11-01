@@ -9,7 +9,7 @@ description: Every kiekje command, capture mode and flag.
 kiekje <command> [...flags]
 ```
 
-One instance runs at a time. Every command below talks to the running daemon over D-Bus and starts one when none is running. `kiekje help` prints the overview, `kiekje capture --help` the capture modes and flags.
+One instance runs at a time. Every command below talks to the running daemon over D-Bus and starts one when none is running, except `doctor`, `windows` and `capture --output`, which run in the calling process. `kiekje help` prints the overview, `kiekje capture --help` the capture modes and flags.
 
 ## Capture
 
@@ -37,6 +37,24 @@ kiekje capture --edit                                 # select a region and anno
 kiekje capture fullscreen --backend kwin --no-save    # every monitor through KWin, clipboard only
 ```
 
+### Write to a file without the overlay
+
+`--output <path>` captures straight into a new file from the calling process. Nothing shows on screen, nothing is copied, no notification or sound plays and the gallery and last region stay as they were. The command prints the path and exits non-zero when the capture fails or the file already exists. The extension picks PNG or JPEG.
+
+| Flag | What it does |
+| --- | --- |
+| `--output <path>` | Write `fullscreen` or `window` to this new file. `region`, `repeat`, `--edit` and `--no-save` do not combine with it |
+| `--id <window id>` | The window to capture, as `kiekje windows` prints it. Required for `window` |
+| `--crop <x,y,w,h>` | Keep part of the capture, in its pixels |
+
+`window` asks KWin to render that one window with its title bar and without its shadow, at the window's own scale, so windows stacked above it do not show. It works on Plasma only. `fullscreen` uses the same backends as an interactive capture.
+
+```bash
+kiekje windows                                                     # id, geometry, application and title per window
+kiekje capture window --id '{3edf684d-...}' --output settings.png  # one window, even when it is covered
+kiekje capture fullscreen --output detail.png --crop 0,0,800,600   # the top-left corner of the desktop
+```
+
 ## Session
 
 | Command | What it does |
@@ -54,6 +72,7 @@ kiekje capture fullscreen --backend kwin --no-save    # every monitor through KW
 | Command | What it does |
 | --- | --- |
 | `kiekje doctor` | Report what this session supports and how to fix the rest |
+| `kiekje windows` | List the open windows on this desktop, topmost first: id, size and position, application and title, separated by tabs. Plasma only |
 | `kiekje install-desktop-file` | Register the launcher entry. Required on KDE for ScreenShot2 access |
 | `kiekje help`, `-h`, `--help` | Show the overview |
 | `kiekje version`, `-V`, `--version` | Print the version |

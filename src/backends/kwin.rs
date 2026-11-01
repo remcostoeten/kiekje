@@ -11,6 +11,7 @@ use zbus::zvariant::{Fd, OwnedValue, Value};
 
 use crate::backends::{Capabilities, CaptureBackend};
 use crate::capture::{CaptureError, Frame, MonitorInfo, PixelFormat, check_layout};
+use crate::output::Image;
 
 const DESTINATION: &str = "org.kde.KWin";
 const PATH: &str = "/org/kde/KWin/ScreenShot2";
@@ -111,6 +112,77 @@ fn capture_screen(
     monitor: MonitorInfo,
     include_cursor: bool,
 ) -> Result<Frame, CaptureError> {
+    let options = HashMap::from([
+        ("native-resolution", Value::from(true)),
+        ("include-cursor", Value::from(include_cursor)),
+    ]);
+    let pixels = request(
+        connection,
+        "CaptureScreen",
+        &monitor.connector,
+        options,
+        expected_bytes(&monitor.connector),
+    )?;
+    remember_bytes(&monitor.connector, pixels.data.len());
+
+    Ok(Frame {
+        monitor,
+        width: pixels.width,
+        height: pixels.height,
+        stride: pixels.stride,
+        format: pixels.format,
+        data: pixels.data,
+    })
+}
+
+/// Captures one window by its KWin id, with its title bar and without its shadow, at the
+/// window's native resolution.
+///
+/// KWin renders the window on its own, so windows stacked above it do not show. The id is the
+/// window's `internalId`, as `kiekje windows` and `kdotool` print it.
+///
+/// # Examples
+///
+/// ```ignore
+/// let image = kwin::capture_window("{b4ac2ec8-4500-4f0c-b277-edd28c7aa93c}")?;
+/// ```
+pub fn capture_window(id: &str) -> Result<Image, CaptureError> {
+    let options = HashMap::from([
+        ("native-resolution", Value::from(true)),
+        ("include-cursor", Value::from(false)),
+        ("include-decoration", Value::from(true)),
+        ("include-shadow", Value::from(false)),
+    ]);
+    let connection = connection()?;
+    let pixels = request(&connection, "CaptureWindow", id, options, 0);
+    if matches!(&pixels, Err(CaptureError::Dbus(_) | CaptureError::Io(_))) {
+        forget_connection();
+    }
+    let pixels = pixels?;
+    Ok(Image {
+        width: pixels.width,
+        height: pixels.height,
+        stride: pixels.stride,
+        format: pixels.format,
+        data: pixels.data,
+    })
+}
+
+struct Pixels {
+    width: u32,
+    height: u32,
+    stride: usize,
+    format: PixelFormat,
+    data: Vec<u8>,
+}
+
+fn request(
+    connection: &Connection,
+    method: &str,
+    target: &str,
+    options: HashMap<&str, Value>,
+    expected: usize,
+) -> Result<Pixels, CaptureError> {
     let proxy: Proxy = Builder::new(connection)
         .destination(DESTINATION)?
         .path(PATH)?
@@ -121,7 +193,6 @@ fn capture_screen(
     let (mut reader, writer) = std::io::pipe()?;
     // A bigger pipe means fewer read calls for a frame of tens of megabytes; the default still works if this fails.
     let _ = rustix::pipe::fcntl_setpipe_size(&writer, PIPE_BYTES);
-    let expected = expected_bytes(&monitor.connector);
     let (sender, pixels) = mpsc::sync_channel(1);
     thread::spawn(move || {
         let mut data = Vec::with_capacity(expected);
@@ -129,17 +200,9 @@ fn capture_screen(
         let _ = sender.send(reader.read_to_end(&mut data).map(|_| data));
     });
 
-    let options: HashMap<&str, Value> = HashMap::from([
-        ("native-resolution", Value::from(true)),
-        ("include-cursor", Value::from(include_cursor)),
-    ]);
     let reply = proxy.call::<_, _, HashMap<String, OwnedValue>>(
-        "CaptureScreen",
-        &(
-            monitor.connector.as_str(),
-            options,
-            Fd::from(writer.as_fd()),
-        ),
+        method,
+        &(target, options, Fd::from(writer.as_fd())),
     );
     drop(writer);
 
@@ -159,10 +222,7 @@ fn capture_screen(
         .ok_or(CaptureError::UnsupportedFormat(format_code))?;
 
     check_layout(width, height, stride, data.len())?;
-    remember_bytes(&monitor.connector, data.len());
-
-    Ok(Frame {
-        monitor,
+    Ok(Pixels {
         width,
         height,
         stride,
@@ -195,6 +255,9 @@ fn map_dbus_error(error: zbus::Error) -> CaptureError {
         }
         zbus::Error::MethodError(name, _, _) if name.as_str().ends_with("InvalidScreen") => {
             CaptureError::Unavailable("KWin does not know this monitor".into())
+        }
+        zbus::Error::MethodError(name, _, _) if name.as_str().ends_with("InvalidWindow") => {
+            CaptureError::UnknownWindow
         }
         _ => CaptureError::Dbus(error),
     }

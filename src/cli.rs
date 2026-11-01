@@ -1,11 +1,14 @@
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::slice::Iter;
 use std::time::Duration;
 
 use thiserror::Error;
 
 use crate::app::Request;
+use crate::capture::mapping::PixelRect;
 use crate::capture::{Availability, BackendChoice, CaptureMode};
+use crate::storage::ImageFormat;
 
 pub const MAX_DELAY_SECONDS: u64 = 60;
 
@@ -27,16 +30,51 @@ pub enum CliError {
     Resolve { path: String, source: io::Error },
     #[error("`{0}` is not a file")]
     NotAFile(String),
+    #[error("{0} only works with --output")]
+    NeedsOutput(&'static str),
+    #[error("{0} does not work with --output")]
+    NotWithOutput(&'static str),
+    #[error("capture {0} does not work with --output; use fullscreen or window")]
+    ModeWithOutput(&'static str),
+    #[error("capture window --output needs --id; `kiekje windows` lists the ids")]
+    MissingWindowId,
+    #[error("--id only works with capture window")]
+    IdNeedsWindow,
+    #[error("--crop takes x,y,width,height in pixels of the capture, not `{0}`")]
+    BadCrop(String),
+    #[error("--output must end in .png, .jpg or .jpeg, not `{0}`")]
+    OutputFormat(String),
 }
 
-/// Reads the arguments after `kiekje capture` into a request.
+pub enum CaptureCommand {
+    Interactive(Request),
+    Headless(Headless),
+}
+
+pub struct Headless {
+    pub target: HeadlessTarget,
+    pub output: PathBuf,
+    pub format: ImageFormat,
+    pub crop: Option<PixelRect>,
+    pub backend: BackendChoice,
+    pub delay: Duration,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HeadlessTarget {
+    Screen,
+    Window(String),
+}
+
+/// Reads the arguments after `kiekje capture` into an interactive request, or a headless one
+/// when `--output` is given.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// let request = parse_capture(&["region".into(), "--delay".into(), "3".into()], 0)?;
+/// let command = parse_capture(&["region".into(), "--delay".into(), "3".into()], 0)?;
 /// ```
-pub fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, CliError> {
+pub fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<CaptureCommand, CliError> {
     let mut request = Request {
         mode: CaptureMode::Region,
         backend: BackendChoice::Auto,
@@ -45,29 +83,93 @@ pub fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<Request, C
         delay: Duration::ZERO,
         trigger_us,
     };
+    let mut output = None;
+    let mut id = None;
+    let mut crop = None;
     let mut remaining = arguments.iter();
     while let Some(argument) = remaining.next() {
         match argument.as_str() {
             "--no-save" => request.save = false,
             "--edit" => request.edit = true,
             "--backend" => {
-                let value = remaining
-                    .next()
-                    .ok_or(CliError::MissingValue("--backend"))?;
+                let value = value_of(&mut remaining, "--backend")?;
                 request.backend = BackendChoice::parse(value)
                     .ok_or_else(|| CliError::UnknownBackend(value.clone()))?;
             }
-            "--delay" => {
-                let value = remaining.next().ok_or(CliError::MissingValue("--delay"))?;
-                request.delay = parse_delay(value)?;
-            }
+            "--delay" => request.delay = parse_delay(value_of(&mut remaining, "--delay")?)?,
+            "--output" => output = Some(value_of(&mut remaining, "--output")?),
+            "--id" => id = Some(value_of(&mut remaining, "--id")?.clone()),
+            "--crop" => crop = Some(parse_crop(value_of(&mut remaining, "--crop")?)?),
             value => {
                 request.mode = CaptureMode::parse(value)
                     .ok_or_else(|| CliError::UnknownMode(value.to_owned()))?
             }
         }
     }
-    Ok(request)
+    match output {
+        Some(output) => headless(request, output, id, crop).map(CaptureCommand::Headless),
+        None if id.is_some() => Err(CliError::NeedsOutput("--id")),
+        None if crop.is_some() => Err(CliError::NeedsOutput("--crop")),
+        None => Ok(CaptureCommand::Interactive(request)),
+    }
+}
+
+fn value_of<'a>(
+    remaining: &mut Iter<'a, String>,
+    flag: &'static str,
+) -> Result<&'a String, CliError> {
+    remaining.next().ok_or(CliError::MissingValue(flag))
+}
+
+fn headless(
+    request: Request,
+    output: &str,
+    id: Option<String>,
+    crop: Option<PixelRect>,
+) -> Result<Headless, CliError> {
+    if request.edit {
+        return Err(CliError::NotWithOutput("--edit"));
+    }
+    if !request.save {
+        return Err(CliError::NotWithOutput("--no-save"));
+    }
+    let target = match (request.mode, id) {
+        (CaptureMode::Fullscreen, None) => HeadlessTarget::Screen,
+        (CaptureMode::Window, Some(id)) => HeadlessTarget::Window(id),
+        (CaptureMode::Window, None) => return Err(CliError::MissingWindowId),
+        (CaptureMode::Fullscreen, Some(_)) => return Err(CliError::IdNeedsWindow),
+        (mode, _) => return Err(CliError::ModeWithOutput(mode.as_str())),
+    };
+    let format = ImageFormat::from_path(Path::new(output))
+        .ok_or_else(|| CliError::OutputFormat(output.to_owned()))?;
+    let output = std::path::absolute(output).map_err(|source| CliError::Resolve {
+        path: output.to_owned(),
+        source,
+    })?;
+    Ok(Headless {
+        target,
+        output,
+        format,
+        crop,
+        backend: request.backend,
+        delay: request.delay,
+    })
+}
+
+fn parse_crop(value: &str) -> Result<PixelRect, CliError> {
+    let numbers: Option<Vec<u32>> = value
+        .split(',')
+        .map(|part| part.trim().parse().ok())
+        .collect();
+    match numbers.as_deref() {
+        Some(&[x, y, width, height]) if width > 0 && height > 0 => Ok(PixelRect {
+            x,
+            y,
+            width,
+            height,
+        }),
+        _ => Err(CliError::BadCrop(value.to_owned())),
+    }
 }
 
 /// Refuses a window capture where the session has no window source.
@@ -130,12 +232,132 @@ pub fn is_help_request(arguments: &[String]) -> bool {
 mod tests {
     use super::*;
 
-    fn parse(arguments: &[&str]) -> Result<Request, CliError> {
+    fn parse_command(arguments: &[&str]) -> Result<CaptureCommand, CliError> {
         let arguments: Vec<String> = arguments
             .iter()
             .map(|argument| (*argument).into())
             .collect();
         parse_capture(&arguments, 0)
+    }
+
+    fn parse(arguments: &[&str]) -> Result<Request, CliError> {
+        match parse_command(arguments)? {
+            CaptureCommand::Interactive(request) => Ok(request),
+            CaptureCommand::Headless(_) => panic!("{arguments:?} parsed as a headless capture"),
+        }
+    }
+
+    fn parse_headless(arguments: &[&str]) -> Result<Headless, CliError> {
+        match parse_command(arguments)? {
+            CaptureCommand::Headless(request) => Ok(request),
+            CaptureCommand::Interactive(_) => panic!("{arguments:?} parsed as interactive"),
+        }
+    }
+
+    #[test]
+    fn captures_a_window_by_id_into_a_file_with_output() {
+        let request =
+            parse_headless(&["window", "--id", "{b4ac}", "--output", "shot.png"]).unwrap();
+        assert_eq!(request.target, HeadlessTarget::Window("{b4ac}".into()));
+        assert_eq!(request.format, ImageFormat::Png);
+        assert!(request.output.is_absolute());
+        assert!(request.output.ends_with("shot.png"));
+        assert_eq!(request.crop, None);
+    }
+
+    #[test]
+    fn captures_every_monitor_with_a_crop_and_reads_the_format_from_the_extension() {
+        let request = parse_headless(&[
+            "fullscreen",
+            "--output",
+            "/tmp/detail.JPG",
+            "--crop",
+            "10, 20,300,200",
+            "--delay",
+            "2",
+        ])
+        .unwrap();
+        assert_eq!(request.target, HeadlessTarget::Screen);
+        assert_eq!(request.format, ImageFormat::Jpeg);
+        assert_eq!(
+            request.crop,
+            Some(PixelRect {
+                x: 10,
+                y: 20,
+                width: 300,
+                height: 200
+            })
+        );
+        assert_eq!(request.delay, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn needs_an_id_for_a_window_and_refuses_it_elsewhere() {
+        assert!(matches!(
+            parse_command(&["window", "--output", "a.png"]),
+            Err(CliError::MissingWindowId)
+        ));
+        assert!(matches!(
+            parse_command(&["fullscreen", "--id", "{a}", "--output", "a.png"]),
+            Err(CliError::IdNeedsWindow)
+        ));
+    }
+
+    #[test]
+    fn refuses_interactive_modes_and_flags_with_output() {
+        assert!(matches!(
+            parse_command(&["--output", "a.png"]),
+            Err(CliError::ModeWithOutput("region"))
+        ));
+        assert!(matches!(
+            parse_command(&["repeat", "--output", "a.png"]),
+            Err(CliError::ModeWithOutput("repeat"))
+        ));
+        assert!(matches!(
+            parse_command(&["fullscreen", "--edit", "--output", "a.png"]),
+            Err(CliError::NotWithOutput("--edit"))
+        ));
+        assert!(matches!(
+            parse_command(&["fullscreen", "--no-save", "--output", "a.png"]),
+            Err(CliError::NotWithOutput("--no-save"))
+        ));
+        assert!(matches!(
+            parse_command(&["fullscreen", "--output", "a.webp"]),
+            Err(CliError::OutputFormat(path)) if path == "a.webp"
+        ));
+    }
+
+    #[test]
+    fn refuses_id_and_crop_without_output() {
+        assert!(matches!(
+            parse_command(&["window", "--id", "{a}"]),
+            Err(CliError::NeedsOutput("--id"))
+        ));
+        assert!(matches!(
+            parse_command(&["fullscreen", "--crop", "0,0,1,1"]),
+            Err(CliError::NeedsOutput("--crop"))
+        ));
+        assert!(matches!(
+            parse_command(&["fullscreen", "--output"]),
+            Err(CliError::MissingValue("--output"))
+        ));
+    }
+
+    #[test]
+    fn rejects_a_crop_that_is_not_four_whole_numbers_with_a_size() {
+        for value in [
+            "1,2,3",
+            "1,2,3,4,5",
+            "0,0,0,10",
+            "0,0,10,0",
+            "-1,0,5,5",
+            "a,b,c,d",
+        ] {
+            assert!(
+                matches!(parse_crop(value), Err(CliError::BadCrop(_))),
+                "{value}"
+            );
+        }
     }
 
     #[test]
