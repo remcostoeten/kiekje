@@ -51,13 +51,14 @@ pub(super) fn register_shortcuts(
         }
         info!("shortcut {}", action.id());
         match action_mode(action) {
+            Some(_) if session.recorder.active.borrow().is_some() => toggle_recording(&session),
             Some(mode) => start_capture(&app, Request::saved(mode), &session),
             None => toggle_recording(&session),
         }
     };
     let session = Rc::downgrade(session);
     glib::spawn_future_local(async move {
-        let shortcuts = gio::spawn_blocking(|| config::load().shortcuts)
+        let shortcuts = gio::spawn_blocking(|| config::load().shortcuts.registered())
             .await
             .unwrap_or_default();
         let registrar = PortalShortcuts::new(

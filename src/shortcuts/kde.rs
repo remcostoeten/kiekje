@@ -186,6 +186,7 @@ pub async fn block(connection: &gio::DBusConnection, on: bool) -> Result<(), Kde
 /// ```
 pub fn set_all(app_id: &str, shortcuts: &Shortcuts) -> Result<Vec<KdeError>, KdeError> {
     let mut skipped = Vec::new();
+    let shortcuts = shortcuts.registered();
     for action in ShortcutAction::ALL {
         let trigger = shortcuts.slot(action).trigger();
         if let Some(trigger) = trigger {

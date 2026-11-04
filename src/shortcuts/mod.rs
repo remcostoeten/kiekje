@@ -144,7 +144,9 @@ impl Shortcuts {
         }
     }
 
-    /// Finds the first trigger that two actions share.
+    /// Finds the first trigger that two capture actions share.
+    ///
+    /// The record shortcut may share a capture trigger: while a recording runs that key stops it.
     ///
     /// # Examples
     ///
@@ -156,6 +158,7 @@ impl Shortcuts {
     pub fn conflict(&self) -> Option<Conflict> {
         let assigned: Vec<(ShortcutAction, &Trigger)> = ShortcutAction::ALL
             .into_iter()
+            .filter(|action| *action != ShortcutAction::Record)
             .filter_map(|action| self.slot(action).trigger().map(|trigger| (action, trigger)))
             .collect();
         assigned
@@ -171,6 +174,34 @@ impl Shortcuts {
                         second: *second,
                     })
             })
+    }
+
+    /// The shortcuts to hand to the desktop, with the record key dropped when a capture action has it.
+    ///
+    /// A desktop binds one action per key, so a shared key goes to the capture action, which also
+    /// stops a running recording.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let registered = config::load().shortcuts.registered();
+    /// ```
+    pub fn registered(&self) -> Self {
+        let mut registered = self.clone();
+        if self.shares_record_trigger() {
+            registered.record = Slot::Off;
+        }
+        registered
+    }
+
+    fn shares_record_trigger(&self) -> bool {
+        let Some(record) = self.record.trigger() else {
+            return false;
+        };
+        ShortcutAction::ALL
+            .into_iter()
+            .filter(|action| *action != ShortcutAction::Record)
+            .any(|action| self.slot(action).trigger() == Some(record))
     }
 }
 
@@ -320,5 +351,23 @@ mod tests {
         shortcuts.set(ShortcutAction::Region, Slot::Off);
         shortcuts.set(ShortcutAction::Fullscreen, Slot::Off);
         assert_eq!(shortcuts.conflict(), None);
+    }
+
+    #[test]
+    fn lets_the_record_shortcut_share_a_capture_key() {
+        let mut shortcuts = Shortcuts::default();
+        shortcuts.set(ShortcutAction::Record, shortcuts.capture_region.clone());
+        assert_eq!(shortcuts.conflict(), None);
+        let registered = shortcuts.registered();
+        assert_eq!(registered.record, Slot::Off);
+        assert_eq!(registered.capture_region, shortcuts.capture_region);
+    }
+
+    #[test]
+    fn keeps_the_record_key_when_no_capture_action_shares_it() {
+        let mut shortcuts = Shortcuts::default();
+        let record = Slot::Key(Trigger::parse("ALT+F9").unwrap());
+        shortcuts.set(ShortcutAction::Record, record.clone());
+        assert_eq!(shortcuts.registered().record, record);
     }
 }
