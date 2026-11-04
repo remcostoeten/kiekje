@@ -26,6 +26,8 @@ pub(super) struct Capture {
     magnifier: gtk::Switch,
     speeds: Vec<(SlowPointer, gtk::ToggleButton)>,
     slow_pointer_row: gtk::ListBoxRow,
+    system_audio: gtk::Switch,
+    microphone: gtk::Switch,
     problem: gtk::Label,
 }
 
@@ -35,7 +37,7 @@ struct Foot {
     speed: gtk::Label,
 }
 
-/// Builds the Capture page: the overlay preview, the after-selection choices and the overlay and magnifier rows.
+/// Builds the Capture page: the overlay preview, the after-selection choices and the overlay, magnifier and recording rows.
 ///
 /// # Examples
 ///
@@ -88,6 +90,20 @@ pub(super) fn append(page: &gtk::Box, model: &Model, changes: &Changes) -> Rc<Ca
     let problem = problem();
     magnifier_group.footer(&problem);
 
+    let recording_group = group(page, "Recording");
+    let system_audio = switch(model.recording.system_audio);
+    recording_group.add(row(
+        "Record system audio",
+        Some("Records what plays on the default output, in the same file as the video."),
+        Some(&system_audio),
+    ));
+    let microphone = switch(model.recording.microphone);
+    recording_group.add(row(
+        "Record the microphone",
+        Some("Records the default input. With system audio on, both are mixed into one track."),
+        Some(&microphone),
+    ));
+
     let capture = Rc::new(Capture {
         quiet: Cell::new(false),
         preview,
@@ -101,6 +117,8 @@ pub(super) fn append(page: &gtk::Box, model: &Model, changes: &Changes) -> Rc<Ca
         magnifier,
         speeds,
         slow_pointer_row,
+        system_audio,
+        microphone,
         problem,
     });
     capture.sync();
@@ -299,6 +317,12 @@ fn connect(capture: &Rc<Capture>, changes: &Changes) {
     connect_switch(capture, &capture.magnifier, changes, |config, on| {
         config.overlay.magnifier = on;
     });
+    connect_switch(capture, &capture.system_audio, changes, |config, on| {
+        config.recording.system_audio = on;
+    });
+    connect_switch(capture, &capture.microphone, changes, |config, on| {
+        config.recording.microphone = on;
+    });
     for (speed, chip) in &capture.speeds {
         let speed = *speed;
         let weak = Rc::downgrade(capture);
@@ -481,6 +505,8 @@ impl Capture {
         self.window_snap.set_active(config.overlay.window_snap);
         self.hints.set_active(config.overlay.hints);
         self.magnifier.set_active(config.overlay.magnifier);
+        self.system_audio.set_active(config.recording.system_audio);
+        self.microphone.set_active(config.recording.microphone);
         for (speed, chip) in &self.speeds {
             if *speed == config.overlay.slow_pointer {
                 chip.set_active(true);

@@ -26,6 +26,10 @@ const ERROR_POLL: Duration = Duration::from_millis(200);
 const POSTER_LANES: usize = 2;
 const MAX_RATE: u32 = 30;
 const MAX_WIDTH: u32 = 2560;
+const AUDIO_BITRATE: u32 = 128_000;
+const SYSTEM_SOURCE: &str =
+    "pulsesrc device=@DEFAULT_MONITOR@ provide-clock=false do-timestamp=true";
+const MICROPHONE_SOURCE: &str = "pulsesrc provide-clock=false do-timestamp=true";
 
 #[derive(Debug, Error)]
 pub enum RecordError {
@@ -138,7 +142,8 @@ impl Recording {
     }
 }
 
-/// Checks whether this system can record: GStreamer with the PipeWire, VP8 and WebM elements.
+/// Checks whether this system can record: GStreamer with the PipeWire, VP8 and WebM elements, plus
+/// the PulseAudio and Opus elements when `audio` asks for sound.
 ///
 /// The ScreenCast portal is checked when a recording starts. Loads GStreamer, so call it off the
 /// GTK main thread.
@@ -146,10 +151,14 @@ impl Recording {
 /// # Examples
 ///
 /// ```ignore
-/// if let Err(reason) = record::check() { println!("recording is off: {reason}"); }
+/// if let Err(reason) = record::check(config::load().recording) { println!("recording is off: {reason}"); }
 /// ```
-pub fn check() -> Result<(), GstError> {
-    gst::check()
+pub fn check(audio: config::Recording) -> Result<(), GstError> {
+    gst::check()?;
+    if audio.system_audio || audio.microphone {
+        gst::check_audio()?;
+    }
+    Ok(())
 }
 
 /// Returns `$XDG_VIDEOS_DIR/Kiekje`, where recordings are saved.
@@ -203,7 +212,8 @@ fn run(
     stopped: &Receiver<Stop>,
     area: Option<Area>,
 ) -> Result<PathBuf, RecordError> {
-    gst::check()?;
+    let audio = config::load().recording;
+    check(audio)?;
     let edges =
         match area {
             Some(area) => Some(area.edges().ok_or_else(|| {
@@ -234,7 +244,13 @@ fn run(
     let scratch = glib::user_cache_dir().join("kiekje").join("recording");
     fs::create_dir_all(&scratch)?;
     let file = scratch.join(format!("{}.webm", file_stem(&storage::now())));
-    let description = pipeline(stream.fd.as_raw_fd(), stream.node, &file, area.zip(edges))?;
+    let description = pipeline(
+        stream.fd.as_raw_fd(),
+        stream.node,
+        &file,
+        area.zip(edges),
+        audio,
+    )?;
     let pipeline = gst::Pipeline::start(&description)?;
     if events.send_blocking(Event::Started).is_err() {
         return Err(RecordError::Canceled);
@@ -350,15 +366,33 @@ fn crop_stage(region: Option<(Area, Edges)>) -> String {
     })
 }
 
+fn audio_stage(audio: config::Recording) -> String {
+    let encoder = format!("opusenc bitrate={AUDIO_BITRATE} ! queue ! mux.");
+    let convert = "! queue ! audioconvert ! audioresample";
+    match (audio.system_audio, audio.microphone) {
+        (false, false) => String::new(),
+        (true, false) => format!(" {SYSTEM_SOURCE} {convert} ! {encoder}"),
+        (false, true) => format!(" {MICROPHONE_SOURCE} {convert} ! {encoder}"),
+        (true, true) => format!(
+            " audiomixer name=mix start-time-selection=first latency=50000000 \
+             ! audioconvert ! {encoder} \
+             {SYSTEM_SOURCE} {convert} ! mix. \
+             {MICROPHONE_SOURCE} {convert} ! mix."
+        ),
+    }
+}
+
 fn pipeline(
     fd: i32,
     node: u32,
     file: &Path,
     region: Option<(Area, Edges)>,
+    audio: config::Recording,
 ) -> Result<String, RecordError> {
     let location = quoted(file)?;
     let threads = thread::available_parallelism().map_or(2, |count| count.get().min(8));
     let crop = crop_stage(region);
+    let sound = audio_stage(audio);
     Ok(format!(
         "pipewiresrc fd={fd} path={node} do-timestamp=true \
          ! video/x-raw \
@@ -367,7 +401,7 @@ fn pipeline(
          ! videoconvert \
          ! queue leaky=downstream max-size-buffers=4 max-size-time=0 max-size-bytes=0 \
          ! vp8enc deadline=1 cpu-used=8 threads={threads} end-usage=vbr target-bitrate=8000000 \
-         ! webmmux ! filesink location=\"{location}\""
+         ! webmmux name=mux ! filesink location=\"{location}\"{sound}"
     ))
 }
 
@@ -435,6 +469,11 @@ pub fn poster(video: &Path, png: &Path, edge: Option<u32>) -> Result<(), RecordE
 mod tests {
     use super::*;
 
+    const SILENT: config::Recording = config::Recording {
+        system_audio: false,
+        microphone: false,
+    };
+
     #[test]
     fn maps_a_preserved_partial_recording_to_its_own_event() {
         let path = PathBuf::from("/videos/partial.webm");
@@ -462,14 +501,58 @@ mod tests {
 
     #[test]
     fn quotes_the_file_in_the_pipeline() {
-        let description = pipeline(7, 42, Path::new("/home/a b/rec.webm"), None).unwrap();
+        let description = pipeline(7, 42, Path::new("/home/a b/rec.webm"), None, SILENT).unwrap();
         assert!(description.starts_with("pipewiresrc fd=7 path=42 "));
         assert!(description.ends_with("filesink location=\"/home/a b/rec.webm\""));
     }
 
     #[test]
+    fn records_no_sound_when_both_sources_are_off() {
+        let description = pipeline(7, 42, Path::new("/rec.webm"), None, SILENT).unwrap();
+        assert!(!description.contains("pulsesrc"));
+        assert!(!description.contains("opusenc"));
+    }
+
+    #[test]
+    fn muxes_system_audio_from_the_default_output_monitor() {
+        let audio = config::Recording {
+            system_audio: true,
+            microphone: false,
+        };
+        let description = pipeline(7, 42, Path::new("/rec.webm"), None, audio).unwrap();
+        assert_eq!(description.matches("pulsesrc").count(), 1);
+        assert!(description.contains("pulsesrc device=@DEFAULT_MONITOR@"));
+        assert!(description.contains("opusenc bitrate=128000 ! queue ! mux."));
+        assert!(!description.contains("audiomixer"));
+    }
+
+    #[test]
+    fn records_the_microphone_from_the_default_input() {
+        let audio = config::Recording {
+            system_audio: false,
+            microphone: true,
+        };
+        let description = pipeline(7, 42, Path::new("/rec.webm"), None, audio).unwrap();
+        assert!(description.contains(" pulsesrc provide-clock=false"));
+        assert!(!description.contains("@DEFAULT_MONITOR@"));
+    }
+
+    #[test]
+    fn mixes_system_audio_and_the_microphone_into_one_track() {
+        let audio = config::Recording {
+            system_audio: true,
+            microphone: true,
+        };
+        let description = pipeline(7, 42, Path::new("/rec.webm"), None, audio).unwrap();
+        assert_eq!(description.matches("pulsesrc").count(), 2);
+        assert_eq!(description.matches("! mix.").count(), 2);
+        assert_eq!(description.matches("opusenc").count(), 1);
+        assert!(description.contains("audiomixer name=mix start-time-selection=first"));
+    }
+
+    #[test]
     fn caps_the_recording_rate_and_width_before_the_encoder() {
-        let description = pipeline(7, 42, Path::new("/rec.webm"), None).unwrap();
+        let description = pipeline(7, 42, Path::new("/rec.webm"), None, SILENT).unwrap();
         let system_memory = description.find("! video/x-raw ").unwrap();
         let rate = description
             .find("videorate drop-only=true max-rate=30")
@@ -523,6 +606,7 @@ mod tests {
             42,
             Path::new("/rec.webm"),
             area.edges().map(|edges| (area, edges)),
+            SILENT,
         )
         .unwrap();
         let rate = description.find("videorate").unwrap();
@@ -580,7 +664,7 @@ mod tests {
     #[test]
     fn refuses_a_file_gstreamer_would_misread() {
         assert!(matches!(
-            pipeline(7, 42, Path::new("/home/a\"b/rec.webm"), None),
+            pipeline(7, 42, Path::new("/home/a\"b/rec.webm"), None, SILENT),
             Err(RecordError::Unavailable(_))
         ));
     }

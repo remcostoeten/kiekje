@@ -37,6 +37,8 @@ pub struct Config {
     #[serde(default)]
     pub upload: Upload,
     #[serde(default)]
+    pub recording: Recording,
+    #[serde(default)]
     pub shortcuts: Shortcuts,
 }
 
@@ -69,6 +71,13 @@ impl Theme {
 pub struct Upload {
     pub enabled: bool,
     pub expiry: Expiry,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Recording {
+    pub system_audio: bool,
+    pub microphone: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -201,6 +210,7 @@ impl Default for Config {
             notifications: Notifications::default(),
             drawing: Drawing::default(),
             upload: Upload::default(),
+            recording: Recording::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -223,6 +233,15 @@ impl Default for Overlay {
             slow_pointer: SlowPointer::default(),
             window_snap: true,
             hints: true,
+        }
+    }
+}
+
+impl Default for Recording {
+    fn default() -> Self {
+        Self {
+            system_audio: true,
+            microphone: false,
         }
     }
 }
@@ -778,6 +797,22 @@ mod tests {
         assert_eq!(light.general.theme, Theme::Light);
         assert_eq!(light.general.theme.toggled(), Theme::Dark);
         assert!(parse("[general]\ntheme = \"sepia\"", Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn records_system_audio_and_leaves_the_microphone_off_by_default() {
+        let older = parse("version = 1", Path::new("config.toml")).unwrap();
+        assert_eq!(older.recording, Recording::default());
+        assert!(older.recording.system_audio);
+        assert!(!older.recording.microphone);
+        let custom = parse(
+            "[recording]\nsystem_audio = false\nmicrophone = true",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert!(!custom.recording.system_audio);
+        assert!(custom.recording.microphone);
+        assert!(parse("[recording]\nvolume = 3", Path::new("config.toml")).is_err());
     }
 
     #[test]

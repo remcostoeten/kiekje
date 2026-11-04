@@ -42,6 +42,13 @@ pub(super) fn register_shortcuts(
         let (Some(app), Some(session)) = (weak_app.upgrade(), weak_session.upgrade()) else {
             return;
         };
+        if session.shortcuts.paused.get() {
+            info!(
+                "shortcut {} ignored while a new shortcut is recorded",
+                action.id()
+            );
+            return;
+        }
         info!("shortcut {}", action.id());
         match action_mode(action) {
             Some(mode) => start_capture(&app, Request::saved(mode), &session),

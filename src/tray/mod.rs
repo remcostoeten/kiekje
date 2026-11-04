@@ -13,6 +13,7 @@ pub enum TrayCommand {
     Capture { mode: CaptureMode },
     Annotate,
     Record,
+    Microphone,
     OpenMenu { x: i32, y: i32 },
     OpenCaptures,
     OpenGallery,
@@ -52,4 +53,6 @@ pub trait TrayGuard {
     fn flash(&self);
 
     fn set_recording(&self, recording: bool);
+
+    fn set_microphone(&self, on: bool);
 }

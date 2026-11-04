@@ -60,6 +60,29 @@ const ELEMENTS: [(&CStr, &str); 7] = [
     (c"filesink", "GStreamer's core elements"),
 ];
 
+const AUDIO_ELEMENTS: [(&CStr, &str); 5] = [
+    (
+        c"pulsesrc",
+        "the GStreamer good plugins (gst-plugins-good on Arch, gstreamer1.0-plugins-good on Debian and Ubuntu, gstreamer1-plugins-good on Fedora)",
+    ),
+    (
+        c"opusenc",
+        "the GStreamer base plugins (gst-plugins-base on Arch, gstreamer1.0-plugins-base on Debian and Ubuntu, gstreamer1-plugins-base on Fedora)",
+    ),
+    (
+        c"audiomixer",
+        "the GStreamer base plugins (gst-plugins-base on Arch, gstreamer1.0-plugins-base on Debian and Ubuntu, gstreamer1-plugins-base on Fedora)",
+    ),
+    (
+        c"audioconvert",
+        "the GStreamer base plugins (gst-plugins-base on Arch, gstreamer1.0-plugins-base on Debian and Ubuntu, gstreamer1-plugins-base on Fedora)",
+    ),
+    (
+        c"audioresample",
+        "the GStreamer base plugins (gst-plugins-base on Arch, gstreamer1.0-plugins-base on Debian and Ubuntu, gstreamer1-plugins-base on Fedora)",
+    ),
+];
+
 type Pointer = *mut c_void;
 
 struct Api {
@@ -88,8 +111,25 @@ static API: OnceLock<Result<Api, GstError>> = OnceLock::new();
 /// if let Err(reason) = gst::check() { println!("recording is off: {reason}"); }
 /// ```
 pub fn check() -> Result<(), GstError> {
+    require(&ELEMENTS)
+}
+
+/// Checks whether every element that records system audio or the microphone is installed.
+///
+/// Loads GStreamer on first use, so call it off the GTK main thread.
+///
+/// # Examples
+///
+/// ```ignore
+/// if let Err(reason) = gst::check_audio() { println!("audio is off: {reason}"); }
+/// ```
+pub fn check_audio() -> Result<(), GstError> {
+    require(&AUDIO_ELEMENTS)
+}
+
+fn require(elements: &[(&CStr, &'static str)]) -> Result<(), GstError> {
     let api = api()?;
-    for (element, package) in ELEMENTS {
+    for &(element, package) in elements {
         // SAFETY: `find` takes a nul-terminated factory name and returns an owned reference or null.
         let factory = unsafe { (api.find)(element.as_ptr()) };
         if factory.is_null() {

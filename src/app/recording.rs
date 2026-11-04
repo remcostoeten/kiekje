@@ -17,7 +17,7 @@ use crate::notify::Notice;
 use crate::overlay;
 use crate::record::{self};
 use crate::shortcuts::ShortcutHost;
-use crate::sound;
+use crate::{config, sound};
 
 const RECORDING_COUNTDOWN_SECONDS: u32 = 3;
 const UNMAP_WAIT: Duration = Duration::from_millis(150);
@@ -390,4 +390,33 @@ fn set_tray_recording(session: &Session, recording: bool) {
     if let Some(tray) = session.tray.borrow().as_ref() {
         tray.set_recording(recording);
     }
+}
+
+pub(super) fn toggle_microphone(session: &Rc<Session>) {
+    let session = Rc::downgrade(session);
+    glib::spawn_future_local(async move {
+        let saved = gio::spawn_blocking(|| {
+            config::update(&config::path(), |config| {
+                config.recording.microphone = !config.recording.microphone;
+            })
+        })
+        .await;
+        let on = match saved {
+            Ok(Ok(config)) => config.recording.microphone,
+            Ok(Err(error)) => {
+                warn!("the microphone setting was not saved: {error}");
+                return;
+            }
+            Err(_) => {
+                error!("the config worker stopped");
+                return;
+            }
+        };
+        info!("microphone recording {}", if on { "on" } else { "off" });
+        if let Some(session) = session.upgrade()
+            && let Some(tray) = session.tray.borrow().as_ref()
+        {
+            tray.set_microphone(on);
+        }
+    });
 }

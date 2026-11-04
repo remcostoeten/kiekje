@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use ksni::blocking::{Handle, TrayMethods};
-use ksni::menu::{MenuItem, StandardItem};
+use ksni::menu::{CheckmarkItem, MenuItem, StandardItem};
 use ksni::{Category, ToolTip, Tray};
 
 use super::{TrayCommand, TrayError, TrayGuard, TrayHost, icon};
@@ -13,6 +13,7 @@ use crate::capture::{Availability, CaptureMode};
 
 pub struct SniTray {
     pub window: Availability,
+    pub microphone: bool,
 }
 
 const FRAME_TIME: Duration = Duration::from_millis(40);
@@ -36,6 +37,7 @@ pub struct Item {
     pose: Option<Pose>,
     window: Availability,
     recording: bool,
+    microphone: bool,
 }
 
 impl Item {
@@ -59,6 +61,7 @@ impl TrayHost for SniTray {
             pose: None,
             window: self.window,
             recording: false,
+            microphone: self.microphone,
         }
         .spawn()
         .map(|handle| {
@@ -109,6 +112,12 @@ impl TrayGuard for SniGuard {
             .is_none()
         {
             warn!("the tray is gone, its recording state was not updated");
+        }
+    }
+
+    fn set_microphone(&self, on: bool) {
+        if self.handle.update(|item| item.microphone = on).is_none() {
+            warn!("the tray is gone, its microphone state was not updated");
         }
     }
 }
@@ -191,6 +200,13 @@ impl Tray for Item {
                 },
                 TrayCommand::Record,
             ),
+            CheckmarkItem {
+                label: "Record microphone".into(),
+                checked: self.microphone,
+                activate: Box::new(|item: &mut Item| item.send(TrayCommand::Microphone)),
+                ..Default::default()
+            }
+            .into(),
             command_item("Open gallery", TrayCommand::OpenGallery),
             command_item("Open captures folder", TrayCommand::OpenCaptures),
             command_item("Settings", TrayCommand::OpenSettings),

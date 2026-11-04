@@ -115,6 +115,7 @@ pub(super) fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             overlay: config.overlay,
             general: config.general,
             upload: config.upload,
+            recording: config.recording,
             drawing_keys: config.drawing.keys,
             host: session.shortcuts.host.borrow().clone(),
             bound,
@@ -123,6 +124,7 @@ pub(super) fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
         let saved_session = Rc::downgrade(&session);
         let configure_session = Rc::downgrade(&session);
         let cleared_session = Rc::downgrade(&session);
+        let hold_session = Rc::downgrade(&session);
         let (window, handle) = settings::show(
             &app,
             model,
@@ -141,6 +143,11 @@ pub(super) fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
                     && let Some(gallery) = session.panels.gallery_handle.borrow().as_ref()
                 {
                     gallery.reload();
+                }
+            },
+            move |on| {
+                if let Some(session) = hold_session.upgrade() {
+                    session.shortcuts.paused.set(on);
                 }
             },
         );

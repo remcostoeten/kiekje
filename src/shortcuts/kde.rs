@@ -150,6 +150,31 @@ pub fn set_stop_key(app_id: &str, on: bool) -> Result<(), KdeError> {
     Ok(())
 }
 
+/// Pauses or resumes every global shortcut in kglobalaccel, the way KDE's own key recorder does.
+///
+/// While paused a pressed shortcut reaches the focused window instead of its owner.
+///
+/// # Examples
+///
+/// ```ignore
+/// kde::block(&connection, true).await?;
+/// ```
+pub async fn block(connection: &gio::DBusConnection, on: bool) -> Result<(), KdeError> {
+    connection
+        .call_future(
+            Some(SERVICE),
+            PATH,
+            INTERFACE,
+            "blockGlobalShortcuts",
+            Some(&(on,).to_variant()),
+            None,
+            DBusCallFlags::NONE,
+            TIMEOUT_MS,
+        )
+        .await?;
+    Ok(())
+}
+
 /// Sets every action in kglobalaccel to its trigger in `shortcuts`, skipping keys another app uses.
 ///
 /// Returns why each skipped action was left alone.

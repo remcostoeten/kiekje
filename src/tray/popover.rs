@@ -19,12 +19,14 @@ const THUMBNAIL_WIDTH: i32 = 70;
 const THUMBNAIL_HEIGHT: i32 = 44;
 const MARGIN: i32 = 8;
 const PANEL_WIDTH: i32 = 328;
+const MICROPHONE_TITLE: &str = "Record microphone";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
     Capture(CaptureMode),
     Annotate,
     Record,
+    Microphone,
     OpenCaptures,
     Settings,
     Gallery,
@@ -54,6 +56,7 @@ pub struct Content {
     pub shortcuts: Vec<(CaptureMode, String)>,
     pub window: Availability,
     pub recording: bool,
+    pub microphone: bool,
 }
 
 type PickCallback = Rc<dyn Fn(Pick)>;
@@ -444,6 +447,26 @@ fn build(
     rows.push(ActionRow {
         button: record,
         title: record_title,
+        section: 1,
+    });
+    let microphone = action("kiekje-mic-symbolic", MICROPHONE_TITLE, None);
+    let state = if content.microphone { "On" } else { "Off" };
+    if let Some(row) = microphone.child().and_downcast::<gtk::Box>() {
+        row.append(
+            &gtk::Label::builder()
+                .label(state)
+                .css_classes(["shortcut"])
+                .build(),
+        );
+    }
+    microphone.update_property(&[gtk::accessible::Property::Label(&format!(
+        "{MICROPHONE_TITLE}, {state}"
+    ))]);
+    connect_pick(&microphone, window, picked, Pick::Microphone);
+    list.append(&microphone);
+    rows.push(ActionRow {
+        button: microphone,
+        title: MICROPHONE_TITLE,
         section: 1,
     });
 
