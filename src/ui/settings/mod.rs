@@ -21,7 +21,8 @@ use thiserror::Error;
 
 use crate::capture::Availability;
 use crate::config::{
-    self, Capture, Config, ConfigError, General, Notifications, Overlay, Saving, Storage, Upload,
+    self, Capture, Config, ConfigError, General, Notifications, Overlay, Recording, Saving,
+    Storage, Upload,
 };
 use crate::editor::DrawingKeys;
 use crate::ids::APP_ID;
@@ -47,6 +48,7 @@ pub struct Model {
     pub overlay: Overlay,
     pub general: General,
     pub upload: Upload,
+    pub recording: Recording,
     pub drawing_keys: DrawingKeys,
 }
 

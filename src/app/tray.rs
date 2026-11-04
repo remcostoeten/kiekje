@@ -2,26 +2,31 @@ use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 
-use gtk::glib;
 use gtk::prelude::*;
+use gtk::{gio, glib};
 
 use super::flow::start_capture;
 use super::panels::{open_captures, open_gallery, open_settings, window_capture};
-use super::recording::toggle_recording;
+use super::recording::{toggle_microphone, toggle_recording};
 use super::shortcuts::action_mode;
 use super::{Request, Session};
 use crate::capture::Availability;
+use crate::config;
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 
 const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
 
 pub(super) fn start_tray(app: &gtk::Application, session: &Rc<Session>, window: Availability) {
-    let host = SniTray { window };
+    let mut host = SniTray {
+        window,
+        microphone: false,
+    };
     let name = host.name();
     let (commands, received) = async_channel::unbounded();
     let (started_sender, started) = async_channel::bounded(1);
     thread::spawn(move || {
+        host.microphone = config::load().recording.microphone;
         // The receiver only disappears when the app is quitting.
         let _ = started_sender.send_blocking(host.start(commands));
     });
@@ -65,6 +70,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
             capture_after_menu(app, session, Request::annotated());
         }
         TrayCommand::Record => toggle_recording(session),
+        TrayCommand::Microphone => toggle_microphone(session),
         TrayCommand::OpenMenu { x, y } => toggle_menu(app, session, Some((x, y))),
         TrayCommand::OpenCaptures => open_captures(),
         TrayCommand::OpenGallery => open_gallery(app, session),
@@ -97,6 +103,12 @@ pub(super) fn toggle_menu(
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
+        let microphone = gio::spawn_blocking(|| config::load().recording.microphone)
+            .await
+            .unwrap_or_else(|_| {
+                error!("the config worker stopped");
+                false
+            });
         let content = popover::Content {
             shortcuts: session
                 .shortcuts
@@ -107,6 +119,7 @@ pub(super) fn toggle_menu(
                 .collect(),
             window: window_capture(&session),
             recording: session.recorder.active.borrow().is_some(),
+            microphone,
         };
         let pick_app = app.downgrade();
         let pick_session = Rc::downgrade(&session);
@@ -124,6 +137,7 @@ pub(super) fn toggle_menu(
                     capture_after_menu(&app, &session, Request::annotated());
                 }
                 Pick::Record => toggle_recording(&session),
+                Pick::Microphone => toggle_microphone(&session),
                 Pick::OpenCaptures => open_captures(),
                 Pick::Settings => open_settings(&app, &session),
                 Pick::Gallery => open_gallery(&app, &session),

@@ -149,6 +149,11 @@ fn collect() -> Report {
         .map(|kind| (kind, backend(kind).capabilities()))
         .collect();
 
+    let config = config::load_from(&config_path);
+    let audio = match &config {
+        Ok(Some(config)) => config.recording,
+        Ok(None) | Err(_) => config::Recording::default(),
+    };
     Report {
         session_type: variable("XDG_SESSION_TYPE"),
         desktop: variable("XDG_CURRENT_DESKTOP"),
@@ -160,12 +165,12 @@ fn collect() -> Report {
         kwin_present: environment.has_kwin(),
         kwin_access: environment.has_kwin().then(kwin_access),
         window_snap: windows::choose(windows::hyprland::socket_path().is_some(), &environment),
-        config: config::load_from(&config_path),
+        config,
         config_path,
         hyprland: std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").map(|_| hyprland_binds()),
         fonts: fonts::locate(&fonts::search_dirs()),
         clipboard_manager: clipboard::detect(),
-        recording: record::check(),
+        recording: record::check(audio),
     }
 }
 
