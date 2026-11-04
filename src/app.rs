@@ -66,6 +66,7 @@ struct ShortcutState {
     guard: RefCell<Option<PortalGuard>>,
     host: RefCell<ShortcutHost>,
     labels: RefCell<Vec<(ShortcutAction, String)>>,
+    paused: Cell<bool>,
 }
 
 struct Session {
@@ -201,6 +202,7 @@ pub fn run(command: Command) -> glib::ExitCode {
             guard: RefCell::new(None),
             host: RefCell::new(ShortcutHost::Starting),
             labels: RefCell::new(Vec::new()),
+            paused: Cell::new(false),
         },
         panels: Panels {
             popover: RefCell::new(None),

@@ -53,6 +53,7 @@ pub struct Model {
 }
 
 type SavedCallback = Rc<dyn Fn(&Shortcuts)>;
+type HoldCallback = Rc<dyn Fn(bool)>;
 
 const WINDOW_WIDTH: i32 = 960;
 const WINDOW_HEIGHT: i32 = 700;
@@ -460,6 +461,9 @@ struct Editor {
     resets: HashMap<&'static str, gtk::Button>,
     problem: gtk::Label,
     on_saved: SavedCallback,
+    window: glib::WeakRef<gtk::Window>,
+    held: Cell<bool>,
+    on_hold: HoldCallback,
 }
 
 /// Opens the settings window, or brings the open one to the front.
@@ -472,7 +476,7 @@ struct Editor {
 /// # Examples
 ///
 /// ```ignore
-/// let (window, handle) = settings::show(&app, model, save, configure, reload_gallery);
+/// let (window, handle) = settings::show(&app, model, save, configure, reload_gallery, pause);
 /// ```
 pub fn show(
     app: &gtk::Application,
@@ -480,6 +484,7 @@ pub fn show(
     on_saved: impl Fn(&Shortcuts) + 'static,
     on_configure: impl Fn() + 'static,
     on_cleared: impl Fn() + 'static,
+    on_hold: impl Fn(bool) + 'static,
 ) -> (gtk::Window, Handle) {
     ui::load_stylesheet();
     let window = gtk::Window::builder()
@@ -598,6 +603,9 @@ pub fn show(
             .collect(),
         problem,
         on_saved: Rc::new(on_saved),
+        window: window.downgrade(),
+        held: Cell::new(false),
+        on_hold: Rc::new(on_hold),
     });
     editor.refresh();
     for action in ShortcutAction::ALL {
@@ -665,6 +673,13 @@ pub fn show(
             .upgrade()
             .is_some_and(|editor| editor.recording.get().is_some())
     });
+    let closing_editor = Rc::downgrade(&editor);
+    window.connect_close_request(move |_| {
+        if let Some(editor) = closing_editor.upgrade() {
+            editor.stop();
+        }
+        glib::Propagation::Proceed
+    });
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     keys.connect_key_pressed(move |controller, keyval, keycode, state| {
@@ -716,6 +731,7 @@ impl Editor {
         }
         self.stop();
         self.recording.set(Some(action));
+        self.hold_desktop_keys(true);
         self.complain("");
         if let Some(button) = self.buttons.get(action.id()) {
             set_trigger(button, action, &Face::Waiting);
@@ -725,10 +741,45 @@ impl Editor {
 
     fn stop(&self) {
         self.recording.set(None);
+        self.hold_desktop_keys(false);
         for button in self.buttons.values() {
             button.remove_css_class("recording");
         }
         self.refresh();
+    }
+
+    fn hold_desktop_keys(&self, on: bool) {
+        if self.held.replace(on) == on {
+            return;
+        }
+        (self.on_hold)(on);
+        if let Some(toplevel) = self
+            .window
+            .upgrade()
+            .and_then(|window| window.surface())
+            .and_then(|surface| surface.downcast::<gdk::Toplevel>().ok())
+        {
+            if on {
+                toplevel.inhibit_system_shortcuts(None::<&gdk::Event>);
+            } else {
+                toplevel.restore_system_shortcuts();
+            }
+        }
+        if self.host != ShortcutHost::Kde {
+            return;
+        }
+        glib::spawn_future_local(async move {
+            let blocked = match gio::bus_get_future(gio::BusType::Session).await {
+                Ok(connection) => kde::block(&connection, on).await,
+                Err(error) => Err(KdeError::Dbus(error)),
+            };
+            if let Err(error) = blocked {
+                warn!(
+                    "global shortcuts not {}: {error}",
+                    if on { "paused" } else { "resumed" }
+                );
+            }
+        });
     }
 
     fn refresh(&self) {
@@ -760,6 +811,7 @@ impl Editor {
             return;
         }
         self.recording.set(None);
+        self.hold_desktop_keys(false);
         let host = self.host.clone();
         let editor = self.clone();
         glib::spawn_future_local(async move {
