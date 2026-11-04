@@ -183,6 +183,7 @@ impl Shell {
                 .side(gtk::PackType::End)
                 .valign(gtk::Align::Center)
                 .css_classes(["wbtns"])
+                .decoration_layout(":minimize,maximize,close")
                 .build(),
         );
         let handle = gtk::WindowHandle::builder().child(&headerbar).build();
