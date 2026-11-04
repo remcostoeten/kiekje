@@ -868,7 +868,6 @@ fn store(action: ShortcutAction, slot: Slot, host: &ShortcutHost) -> Result<Shor
     if on_kde && let Some(trigger) = slot.trigger() {
         kde::check(APP_ID, trigger).map_err(StoreError::KdeCheck)?;
     }
-    let trigger = slot.trigger().cloned();
     let shortcuts =
         config::set_shortcut(&config::path(), action, slot).map_err(|error| match error {
             ConfigError::Shortcuts { source, .. } => {
@@ -885,7 +884,11 @@ fn store(action: ShortcutAction, slot: Slot, host: &ShortcutHost) -> Result<Shor
             other => StoreError::Config(other),
         })?;
     if on_kde {
-        kde::set(APP_ID, action, trigger.as_ref()).map_err(StoreError::KdeKept)?;
+        let registered = shortcuts.registered();
+        for synced in [action, ShortcutAction::Record] {
+            kde::set(APP_ID, synced, registered.slot(synced).trigger())
+                .map_err(StoreError::KdeKept)?;
+        }
     }
     if *host == ShortcutHost::Hyprland {
         let include = hyprland::include_path();

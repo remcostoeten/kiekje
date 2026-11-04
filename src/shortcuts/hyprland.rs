@@ -43,6 +43,7 @@ pub fn include_text(app_id: &str, shortcuts: &Shortcuts) -> String {
     let mut text = String::from(
         "# Written by Kiekje. Edits are replaced; copy a bind into your own config to change it.\n",
     );
+    let shortcuts = shortcuts.registered();
     for action in ShortcutAction::ALL {
         if let Some(trigger) = shortcuts.slot(action).trigger() {
             text.push_str(&hyprland_bind(action, trigger, app_id));
