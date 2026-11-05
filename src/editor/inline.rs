@@ -13,7 +13,7 @@ use super::{
     DrawAction, DrawingKeys, Editor, Host, Input, Loaded, SaveError, Tool, prepare, toolbar,
 };
 use crate::capture::mapping::PixelRect;
-use crate::capture::{CaptureMode, Frame, LogicalRect};
+use crate::capture::{Availability, CaptureMode, Frame, LogicalRect};
 use crate::config;
 use crate::output::Image;
 use crate::ui;
@@ -47,6 +47,9 @@ pub enum Ending {
     Record {
         region: Option<PixelRect>,
         gif: bool,
+    },
+    Text {
+        region: Option<PixelRect>,
     },
 }
 
@@ -263,6 +266,17 @@ impl Inline {
 
 impl Editor {
     pub(super) fn record(self: &Rc<Self>, gif: bool) {
+        self.end_with_region(|region| Ending::Record { region, gif });
+    }
+
+    pub(super) fn read_text(self: &Rc<Self>) {
+        if !crate::ocr::availability().is_available() {
+            return;
+        }
+        self.end_with_region(|region| Ending::Text { region });
+    }
+
+    fn end_with_region(self: &Rc<Self>, ending: impl FnOnce(Option<PixelRect>) -> Ending) {
         let Some((picture, _, crop)) = self.begin() else {
             return;
         };
@@ -275,10 +289,10 @@ impl Editor {
                 height: region.height,
             });
         self.busy.set(false);
-        if let Host::Inline(ending) = &self.host
-            && let Some(end) = ending.take()
+        if let Host::Inline(end) = &self.host
+            && let Some(end) = end.take()
         {
-            end(Ending::Record { region, gif });
+            end(ending(region));
         }
     }
 
@@ -430,6 +444,12 @@ fn action_bar(editor: &Rc<Editor>) -> (gtk::Box, gtk::Label) {
             record_gif,
         ),
         (
+            "Copy text",
+            "Copy the text in this region (Ctrl+T)",
+            false,
+            read_text,
+        ),
+        (
             "Pin",
             "Keep it on screen above other windows (Ctrl+P)",
             false,
@@ -439,6 +459,12 @@ fn action_bar(editor: &Rc<Editor>) -> (gtk::Box, gtk::Label) {
         let button = toolbar::action(label, tooltip);
         if primary {
             button.add_css_class("primary");
+        }
+        if label == "Copy text"
+            && let Availability::Unavailable(reason) = crate::ocr::availability()
+        {
+            button.set_sensitive(false);
+            button.set_tooltip_text(Some(reason));
         }
         toolbar::on_click(editor, &button, run);
         row.append(&button);
@@ -477,6 +503,10 @@ fn record(editor: &Rc<Editor>) {
 
 fn record_gif(editor: &Rc<Editor>) {
     editor.record(true);
+}
+
+fn read_text(editor: &Rc<Editor>) {
+    editor.read_text();
 }
 
 fn pin(editor: &Rc<Editor>) {

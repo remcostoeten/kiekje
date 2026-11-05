@@ -11,6 +11,7 @@ use crate::capture::Availability;
 use crate::config::{self};
 use crate::library::{self, Library, thumbs};
 use crate::notify::Notice;
+use crate::ocr;
 use crate::update;
 
 const FIRST_UPDATE_CHECK: Duration = Duration::from_secs(30);
@@ -20,18 +21,31 @@ pub(super) fn start_session_services(app: &gtk::Application, session: &Rc<Sessio
     let app = app.clone();
     let session = session.clone();
     glib::spawn_future_local(async move {
-        let window = match gio::spawn_blocking(|| windows::availability(windows::detect())).await {
-            Ok(window) => window,
+        let detected = gio::spawn_blocking(|| {
+            (
+                windows::availability(windows::detect()),
+                ocr::availability(),
+            )
+        })
+        .await;
+        let (window, text) = match detected {
+            Ok(detected) => detected,
             Err(_) => {
-                error!("the window detection worker stopped");
-                Availability::Unavailable(windows::UNAVAILABLE)
+                error!("the capability detection worker stopped");
+                (
+                    Availability::Unavailable(windows::UNAVAILABLE),
+                    Availability::Unavailable(ocr::NOT_INSTALLED),
+                )
             }
         };
         if let Availability::Unavailable(reason) = window {
             info!("window capture is off: {reason}");
         }
+        if let Availability::Unavailable(reason) = text {
+            info!("text capture is off: {reason}");
+        }
         session.window_capture.set(Some(window));
-        register_shortcuts(&app, &session, window);
+        register_shortcuts(&app, &session, window, text);
         start_tray(&app, &session, window);
     });
 }

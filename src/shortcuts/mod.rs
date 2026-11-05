@@ -18,17 +18,25 @@ pub enum ShortcutAction {
     Region,
     Fullscreen,
     Window,
+    Text,
     Record,
 }
 
 impl ShortcutAction {
-    pub const ALL: [Self; 4] = [Self::Region, Self::Fullscreen, Self::Window, Self::Record];
+    pub const ALL: [Self; 5] = [
+        Self::Region,
+        Self::Fullscreen,
+        Self::Window,
+        Self::Text,
+        Self::Record,
+    ];
 
     pub fn id(self) -> &'static str {
         match self {
             Self::Region => "capture-region",
             Self::Fullscreen => "capture-fullscreen",
             Self::Window => "capture-window",
+            Self::Text => "capture-text",
             Self::Record => "record",
         }
     }
@@ -42,6 +50,7 @@ impl ShortcutAction {
             Self::Region => "Capture a region",
             Self::Fullscreen => "Capture every screen",
             Self::Window => "Capture a window",
+            Self::Text => "Copy the text in a region",
             Self::Record => "Start or stop a recording",
         }
     }
@@ -59,7 +68,7 @@ impl ShortcutAction {
         match self {
             Self::Region => Some("Print"),
             Self::Fullscreen => Some("SHIFT+Print"),
-            Self::Window | Self::Record => None,
+            Self::Window | Self::Text | Self::Record => None,
         }
     }
 
@@ -103,6 +112,8 @@ pub struct Shortcuts {
     #[serde(skip_serializing_if = "Slot::is_off")]
     pub capture_window: Slot,
     #[serde(skip_serializing_if = "Slot::is_off")]
+    pub capture_text: Slot,
+    #[serde(skip_serializing_if = "Slot::is_off")]
     pub record: Slot,
 }
 
@@ -120,6 +131,7 @@ impl Default for Shortcuts {
             capture_region: ShortcutAction::Region.default_slot(),
             capture_fullscreen: ShortcutAction::Fullscreen.default_slot(),
             capture_window: ShortcutAction::Window.default_slot(),
+            capture_text: ShortcutAction::Text.default_slot(),
             record: ShortcutAction::Record.default_slot(),
         }
     }
@@ -131,6 +143,7 @@ impl Shortcuts {
             ShortcutAction::Region => &self.capture_region,
             ShortcutAction::Fullscreen => &self.capture_fullscreen,
             ShortcutAction::Window => &self.capture_window,
+            ShortcutAction::Text => &self.capture_text,
             ShortcutAction::Record => &self.record,
         }
     }
@@ -140,6 +153,7 @@ impl Shortcuts {
             ShortcutAction::Region => self.capture_region = slot,
             ShortcutAction::Fullscreen => self.capture_fullscreen = slot,
             ShortcutAction::Window => self.capture_window = slot,
+            ShortcutAction::Text => self.capture_text = slot,
             ShortcutAction::Record => self.record = slot,
         }
     }

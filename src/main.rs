@@ -17,6 +17,7 @@ mod ids;
 mod library;
 mod mascot;
 mod notify;
+mod ocr;
 mod output;
 mod overlay;
 mod pin;
@@ -49,7 +50,11 @@ fn main() -> glib::ExitCode {
         }
         Some("capture") => match parse_capture(&arguments[1..], trigger_us) {
             Ok(CaptureCommand::Interactive(request)) => {
-                match check_available(request.mode, || windows::availability(windows::detect())) {
+                match check_available(
+                    request.mode,
+                    || windows::availability(windows::detect()),
+                    ocr::availability,
+                ) {
                     Ok(()) => app::run(Command::Capture(request)),
                     Err(message) => {
                         warn!("{message}");

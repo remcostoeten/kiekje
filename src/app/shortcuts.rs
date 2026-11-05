@@ -15,10 +15,14 @@ use crate::shortcuts::{
     Shortcuts, hyprland, kde,
 };
 
-fn offered_actions(window: Availability) -> Vec<ShortcutAction> {
+fn offered_actions(window: Availability, text: Availability) -> Vec<ShortcutAction> {
     ShortcutAction::ALL
         .into_iter()
-        .filter(|action| *action != ShortcutAction::Window || window.is_available())
+        .filter(|action| match action {
+            ShortcutAction::Window => window.is_available(),
+            ShortcutAction::Text => text.is_available(),
+            _ => true,
+        })
         .collect()
 }
 
@@ -26,6 +30,7 @@ pub(super) fn register_shortcuts(
     app: &gtk::Application,
     session: &Rc<Session>,
     window: Availability,
+    text: Availability,
 ) {
     let Some(connection) = app.dbus_connection() else {
         warn!("no session bus, global shortcuts are off");
@@ -64,7 +69,7 @@ pub(super) fn register_shortcuts(
         let registrar = PortalShortcuts::new(
             connection.clone(),
             shortcuts.clone(),
-            offered_actions(window),
+            offered_actions(window, text),
             move |key| {
                 if let Some(session) = stop_session.upgrade() {
                     escape::handle(&session, key);
@@ -234,6 +239,7 @@ pub(super) fn action_mode(action: ShortcutAction) -> Option<CaptureMode> {
         ShortcutAction::Region => Some(CaptureMode::Region),
         ShortcutAction::Fullscreen => Some(CaptureMode::Fullscreen),
         ShortcutAction::Window => Some(CaptureMode::Window),
+        ShortcutAction::Text => Some(CaptureMode::Text),
         ShortcutAction::Record => None,
     }
 }
@@ -267,12 +273,26 @@ mod tests {
     #[test]
     fn offers_the_window_shortcut_only_where_window_capture_works() {
         assert_eq!(
-            offered_actions(Availability::Available),
+            offered_actions(Availability::Available, Availability::Available),
             ShortcutAction::ALL.to_vec()
         );
-        let offered = offered_actions(Availability::Unavailable(windows::UNAVAILABLE));
+        let offered = offered_actions(
+            Availability::Unavailable(windows::UNAVAILABLE),
+            Availability::Available,
+        );
         assert!(!offered.contains(&ShortcutAction::Window));
         assert!(offered.contains(&ShortcutAction::Region));
         assert!(offered.contains(&ShortcutAction::Fullscreen));
+    }
+
+    #[test]
+    fn offers_the_text_shortcut_only_where_tesseract_works() {
+        let offered = offered_actions(
+            Availability::Available,
+            Availability::Unavailable(crate::ocr::NOT_INSTALLED),
+        );
+        assert!(!offered.contains(&ShortcutAction::Text));
+        assert!(offered.contains(&ShortcutAction::Window));
+        assert_eq!(action_mode(ShortcutAction::Text), Some(CaptureMode::Text));
     }
 }

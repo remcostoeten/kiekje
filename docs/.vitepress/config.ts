@@ -106,6 +106,7 @@ export default defineConfig({
           items: [
             { text: "Rewrite proposal", link: "/project/proposal" },
             { text: "Lab results", link: "/project/lab-results" },
+            { text: "AI core proposal", link: "/project/ai-core" },
           ],
         },
       ],

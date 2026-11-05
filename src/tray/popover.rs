@@ -55,6 +55,7 @@ pub struct Placement {
 pub struct Content {
     pub shortcuts: Vec<(CaptureMode, String)>,
     pub window: Availability,
+    pub text: Availability,
     pub recording: bool,
     pub microphone: bool,
 }
@@ -407,6 +408,12 @@ fn build(
             Pick::Capture(CaptureMode::Window),
         ),
         (
+            "Copy text from region",
+            "kiekje-text-symbolic",
+            shortcut_of(CaptureMode::Text),
+            Pick::Capture(CaptureMode::Text),
+        ),
+        (
             "Repeat last region",
             "kiekje-repeat-symbolic",
             shortcut_of(CaptureMode::Repeat),
@@ -416,9 +423,12 @@ fn build(
     for (title, icon_name, shortcut, pick) in capture_actions {
         let button = action(icon_name, title, shortcut);
         connect_pick(&button, window, picked, pick);
-        if let (Pick::Capture(CaptureMode::Window), Availability::Unavailable(reason)) =
-            (pick, content.window)
-        {
+        let support = match pick {
+            Pick::Capture(CaptureMode::Window) => content.window,
+            Pick::Capture(CaptureMode::Text) => content.text,
+            _ => Availability::Available,
+        };
+        if let Availability::Unavailable(reason) = support {
             button.set_sensitive(false);
             button.set_tooltip_text(Some(reason));
         }

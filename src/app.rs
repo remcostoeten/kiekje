@@ -30,6 +30,7 @@ mod recording;
 mod save;
 mod shortcuts;
 mod startup;
+mod text;
 mod tray;
 
 use flow::start_capture;

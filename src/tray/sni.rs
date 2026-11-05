@@ -13,6 +13,7 @@ use crate::capture::{Availability, CaptureMode};
 
 pub struct SniTray {
     pub window: Availability,
+    pub text: Availability,
     pub microphone: bool,
 }
 
@@ -36,6 +37,7 @@ pub struct Item {
     commands: async_channel::Sender<TrayCommand>,
     pose: Option<Pose>,
     window: Availability,
+    text: Availability,
     recording: bool,
     microphone: bool,
 }
@@ -60,6 +62,7 @@ impl TrayHost for SniTray {
             commands,
             pose: None,
             window: self.window,
+            text: self.text,
             recording: false,
             microphone: self.microphone,
         }
@@ -185,6 +188,7 @@ impl Tray for Item {
                 },
             ),
             window_item(self.window),
+            text_item(self.text),
             command_item("Annotate region", TrayCommand::Annotate),
             command_item(
                 "Repeat last region",
@@ -257,6 +261,21 @@ fn window_item(window: Availability) -> MenuItem<Item> {
         Availability::Available => command_item("Capture window", command),
         Availability::Unavailable(_) => StandardItem {
             label: "Capture window (not on this desktop)".into(),
+            enabled: false,
+            ..Default::default()
+        }
+        .into(),
+    }
+}
+
+fn text_item(text: Availability) -> MenuItem<Item> {
+    let command = TrayCommand::Capture {
+        mode: CaptureMode::Text,
+    };
+    match text {
+        Availability::Available => command_item("Copy text from region", command),
+        Availability::Unavailable(_) => StandardItem {
+            label: "Copy text from region (install Tesseract)".into(),
             enabled: false,
             ..Default::default()
         }

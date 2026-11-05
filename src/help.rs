@@ -61,6 +61,12 @@ const CAPTURE: &[Entry] = &[
         description: "Capture the last selected region again",
         note: "",
     },
+    Entry {
+        name: "capture",
+        argument: "text",
+        description: "Select an area and copy the text in it",
+        note: "",
+    },
 ];
 
 const SESSION: &[Entry] = &[
@@ -166,6 +172,12 @@ const MODES: &[Entry] = &[
         description: "Capture the last selected region again",
         note: "",
     },
+    Entry {
+        name: "text",
+        argument: "",
+        description: "Select an area and copy the text in it",
+        note: "",
+    },
 ];
 
 const FLAGS: &[Entry] = &[
@@ -220,6 +232,7 @@ const EXAMPLES: &[(&str, &str)] = &[
         "capture --delay 5",
     ),
     ("Select a region and annotate it", "capture --edit"),
+    ("Select a region and copy its text", "capture text"),
     (
         "Grab every monitor through KWin, clipboard only",
         "capture fullscreen --backend kwin --no-save",
@@ -364,7 +377,10 @@ fn animate_intro(style: &Style) -> std::io::Result<()> {
 fn usage(style: &Style, topic: Topic) -> String {
     let (command, arguments) = match topic {
         Topic::Overview => ("<command>", "[...flags]"),
-        Topic::Capture => ("capture", "[region|fullscreen|window|repeat] [...flags]"),
+        Topic::Capture => (
+            "capture",
+            "[region|fullscreen|window|repeat|text] [...flags]",
+        ),
     };
     format!(
         "{} {} {} {}\n",

@@ -1,6 +1,6 @@
 ---
 title: Capture
-description: Region, full screen, window and repeat modes, the overlay, delay, multi-monitor handling, the loupe and the colour picker.
+description: Region, full screen, window, repeat and text modes, the overlay, delay, multi-monitor handling, the loupe and the colour picker.
 ---
 
 # Capture
@@ -15,6 +15,7 @@ Every capture starts with a frozen frame. Kiekje grabs all monitors at trigger t
 | Full screen | <kbd>Shift</kbd>+<kbd>Print</kbd>, `kiekje capture fullscreen` | Every monitor stitched into one image, no overlay |
 | Window | `kiekje capture window`, Capture window in the tray, a shortcut without a default key | The window you click or hover and confirm with <kbd>Enter</kbd> |
 | Repeat | `kiekje capture repeat`, Repeat last region in the tray | The last selected region again, without the overlay |
+| Text | `kiekje capture text`, Copy text from region in the tray, a shortcut without a default key, Text in the overlay's top bar | The text in the region you drag, copied as plain text |
 
 Window mode needs the compositor to report where its windows are. That exists on KDE Plasma 6 and Hyprland. Elsewhere the tray item and shortcut are disabled with the reason, the CLI exits non-zero and `doctor` lists window capture as unavailable. Window capture crops the frozen frame, so anything on top of the window ends up in the capture.
 
@@ -29,14 +30,14 @@ The overlay dims the frozen frame and shows the selection with a 1 px accent bor
 | <kbd>F</kbd> | Take the monitor under the pointer |
 | <kbd>W</kbd>, <kbd>Enter</kbd> | Take the hovered window |
 | <kbd>Shift</kbd>+<kbd>R</kbd> | Take the last region |
-| <kbd>G</kbd> | Cycle Screenshot, Video and GIF; a selection then records instead of taking a screenshot |
+| <kbd>G</kbd> | Cycle Screenshot, Video, GIF and Text; a selection then records or copies its text instead of taking a screenshot |
 | <kbd>D</kbd>, a tool key or a tool in the top bar | Start drawing first, pick the region afterwards with <kbd>S</kbd> |
 | <kbd>Z</kbd> | Show or hide the loupe for this capture |
 | <kbd>C</kbd> | Copy the colour under the pointer |
 | <kbd>?</kbd> | Show or hide the hint bar |
 | <kbd>Esc</kbd> | Cancel, nothing is saved |
 
-A small bar at the top of the overlay shows the same choice as three buttons: Screenshot, Video and GIF. Above it sits the inline editor's drawing palette, with Region picked because a drag selects a region. Clicking another tool starts drawing on that monitor with it, like <kbd>D</kbd> does with the pen, and the colour, size and opacity picked there carry over into the editor. With Video or GIF selected, a drag, a click on a window, <kbd>F</kbd> or <kbd>Enter</kbd> starts a recording of that region instead of taking a screenshot, and the inline editor is skipped. See [Record and share](/guide/record-and-share#record-a-region). The choice resets to Screenshot for every capture.
+A small bar at the top of the overlay shows the same choice as four buttons: Screenshot, Video, GIF and Text. Above it sits the inline editor's drawing palette, with Region picked because a drag selects a region. Clicking another tool starts drawing on that monitor with it, like <kbd>D</kbd> does with the pen, and the colour, size and opacity picked there carry over into the editor. With Video or GIF selected, a drag, a click on a window, <kbd>F</kbd> or <kbd>Enter</kbd> starts a recording of that region instead of taking a screenshot, and the inline editor is skipped. See [Record and share](/guide/record-and-share#record-a-region). The choice resets to Screenshot for every capture.
 
 Hold <kbd>Shift</kbd> while moving to slow the pointer to an eighth of its speed, which makes single pixels easy to hit. The factor is set under Settings, Capture, Magnifier.
 
@@ -45,6 +46,16 @@ With **Snap to windows** on, the window under the pointer lights up and one clic
 ### Window snapping and the hint bar
 
 The hint bar lists the keys at the bottom of the overlay, and every key that does something is also a button. It stays while you draw, with <kbd>S</kbd> for the region, <kbd>Enter</kbd> to accept, <kbd>G</kbd> to record, <kbd>Z</kbd> for the loupe and <kbd>C</kbd> to copy a colour while the loupe shows. <kbd>G</kbd> records the region when there is one and otherwise goes back to selecting with Video on; the annotations are dropped either way. `[overlay] hints = false` hides the bar for good; <kbd>?</kbd> hides it once.
+
+## Copy text from a region
+
+Text mode reads the words in a region and puts them on the clipboard as plain text instead of an image. Start it with `kiekje capture text`, Copy text from region in the tray, or a shortcut you set under Settings, Shortcuts. In an open overlay, pick Text in the top bar or press <kbd>G</kbd> until it is chosen, then select a region the usual way. While drawing on a region, Copy text in the action bar or <kbd>Ctrl</kbd>+<kbd>T</kbd> does the same with the region as it stands; the annotations are ignored.
+
+[Tesseract](https://github.com/tesseract-ocr/tesseract) reads the text on your computer and nothing is sent anywhere. Before reading, Kiekje turns the region grey, inverts it when the background is dark and doubles it in size when it is at most 4 megapixels, which is what Tesseract reads screen text best from. A notification shows the first lines of what was copied. When nothing is found the clipboard stays as it was.
+
+Kiekje loads `libtesseract.so.5` when it starts. Install Tesseract with English data (`tesseract` and `tesseract-data-eng` on Arch, `libtesseract5` and `tesseract-ocr-eng` on Debian and Ubuntu, `tesseract-libs` and `tesseract-langpack-eng` on Fedora). Without it the Text button, the tray item and the shortcut are disabled with the reason, `kiekje capture text` exits non-zero and `doctor` says what is missing.
+
+Text is read in English until you switch on more languages under Settings, Capture, Text, which lists every language Tesseract has data for. Accented letters such as ë and ö come out right only with that language on, so Dutch text needs `nld`. Each extra language makes reading a little slower. Indentation in code is not kept.
 
 ## Selecting across monitors
 

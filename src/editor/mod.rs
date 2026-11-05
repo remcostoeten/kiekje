@@ -654,6 +654,7 @@ impl Editor {
             (true, "p") if self.is_inline() => self.conclude(Finish::Pin),
             (true, "r") if shift && self.is_inline() => self.record(true),
             (true, "r") if self.is_inline() => self.record(false),
+            (true, "t") if self.is_inline() => self.read_text(),
             (false, "Return" | "KP_Enter") if self.keyboard_drawing.get() => {
                 self.place_stamp();
             }

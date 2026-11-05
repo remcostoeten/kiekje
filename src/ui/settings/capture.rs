@@ -6,6 +6,7 @@ use gtk::prelude::*;
 use super::Model;
 use super::general::{Changes, Page, send};
 use super::preview::{self, Part, Preview, Settings};
+use super::text::{self, Text};
 use crate::config::{AfterSelection, Config, SlowPointer};
 use crate::ui::widgets::{group, keycap, problem, row, switch, tagged_row};
 
@@ -29,6 +30,7 @@ pub(super) struct Capture {
     system_audio: gtk::Switch,
     microphone: gtk::Switch,
     problem: gtk::Label,
+    text: Rc<Text>,
 }
 
 struct Foot {
@@ -37,7 +39,8 @@ struct Foot {
     speed: gtk::Label,
 }
 
-/// Builds the Capture page: the overlay preview, the after-selection choices and the overlay, magnifier and recording rows.
+/// Builds the Capture page: the overlay preview, the after-selection choices and the overlay,
+/// magnifier, recording and text rows.
 ///
 /// # Examples
 ///
@@ -104,6 +107,8 @@ pub(super) fn append(page: &gtk::Box, model: &Model, changes: &Changes) -> Rc<Ca
         Some(&microphone),
     ));
 
+    let text = text::append(page, model, changes);
+
     let capture = Rc::new(Capture {
         quiet: Cell::new(false),
         preview,
@@ -120,6 +125,7 @@ pub(super) fn append(page: &gtk::Box, model: &Model, changes: &Changes) -> Rc<Ca
         system_audio,
         microphone,
         problem,
+        text,
     });
     capture.sync();
     connect(&capture, changes);
@@ -507,6 +513,7 @@ impl Capture {
         self.magnifier.set_active(config.overlay.magnifier);
         self.system_audio.set_active(config.recording.system_audio);
         self.microphone.set_active(config.recording.microphone);
+        self.text.reset(config);
         for (speed, chip) in &self.speeds {
             if *speed == config.overlay.slow_pointer {
                 chip.set_active(true);

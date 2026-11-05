@@ -7,6 +7,7 @@ use super::Session;
 use super::shortcuts::{configure_shortcuts, hyprland_labels};
 use crate::capture::Availability;
 use crate::config::{self};
+use crate::ocr;
 use crate::pin;
 use crate::shortcuts::ShortcutAction;
 use crate::ui::{gallery, settings};
@@ -120,6 +121,8 @@ pub(super) fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             host: session.shortcuts.host.borrow().clone(),
             bound,
             window_capture: window_capture(&session),
+            text_capture: ocr::availability(),
+            text: config.text,
         };
         let saved_session = Rc::downgrade(&session);
         let configure_session = Rc::downgrade(&session);
