@@ -20,6 +20,7 @@ One instance runs at a time. Every command below talks to the running daemon ove
 | `kiekje capture fullscreen` | Freeze the screen and keep all of it, every monitor stitched into one image |
 | `kiekje capture window` | Freeze the screen and pick a window. Plasma 6 and Hyprland; exits non-zero elsewhere |
 | `kiekje capture repeat` | Capture the last selected region again, without the overlay |
+| `kiekje capture text` | Freeze the screen, select a region and copy the text in it. Needs Tesseract; exits non-zero without it |
 
 ### Flags
 
@@ -43,7 +44,7 @@ kiekje capture fullscreen --backend kwin --no-save    # every monitor through KW
 
 | Flag | What it does |
 | --- | --- |
-| `--output <path>` | Write `fullscreen` or `window` to this new file. `region`, `repeat`, `--edit` and `--no-save` do not combine with it |
+| `--output <path>` | Write `fullscreen` or `window` to this new file. `region`, `repeat`, `text`, `--edit` and `--no-save` do not combine with it |
 | `--id <window id>` | The window to capture, as `kiekje windows` prints it. Required for `window` |
 | `--crop <x,y,w,h>` | Keep part of the capture, in its pixels |
 
@@ -79,4 +80,4 @@ kiekje capture fullscreen --output detail.png --crop 0,0,800,600   # the top-lef
 
 ## Exit codes and output
 
-A command exits non-zero when the daemon refuses it, such as window capture on a desktop without window geometry, or when the arguments are wrong. An unknown command suggests the nearest one: `unknown command 'doctr', did you mean 'doctor'?`. Help and errors print in colour on a terminal and plain when piped or when `NO_COLOR` is set.
+A command exits non-zero when the daemon refuses it, such as window capture on a desktop without window geometry or text capture without Tesseract, or when the arguments are wrong. An unknown command suggests the nearest one: `unknown command 'doctr', did you mean 'doctor'?`. Help and errors print in colour on a terminal and plain when piped or when `NO_COLOR` is set.

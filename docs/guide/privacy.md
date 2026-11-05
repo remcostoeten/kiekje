@@ -14,6 +14,8 @@ description: What Kiekje sends over the network, which is nothing unless you ask
 
 An uploaded file is public to anyone with the link until it expires after 1, 12, 24 or 72 hours. Kiekje can't delete it earlier.
 
+Text capture runs Tesseract inside Kiekje on your computer. The region and the text it reads never leave it.
+
 ## Where data lives
 
 | Data | Location |

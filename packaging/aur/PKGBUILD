@@ -14,6 +14,8 @@ optdepends=(
     'gst-plugins-base: capture sound'
     'gst-plugins-good: capture sound through PulseAudio, and screen recording'
     'gst-plugin-pipewire: screen recording'
+    'tesseract: copying the text in a region'
+    'tesseract-data-eng: English for text capture; add tesseract-data-nld and others for more languages'
 )
 options=('!lto')
 source=("$pkgname-$_tag.tar.gz::$url/archive/refs/tags/v$_tag.tar.gz")

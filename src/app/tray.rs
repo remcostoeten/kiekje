@@ -12,6 +12,7 @@ use super::shortcuts::action_mode;
 use super::{Request, Session};
 use crate::capture::Availability;
 use crate::config;
+use crate::ocr;
 use crate::tray::popover::{self, Pick};
 use crate::tray::{SniTray, TrayCommand, TrayGuard, TrayHost};
 
@@ -20,6 +21,7 @@ const TRAY_MENU_CLOSE: Duration = Duration::from_millis(150);
 pub(super) fn start_tray(app: &gtk::Application, session: &Rc<Session>, window: Availability) {
     let mut host = SniTray {
         window,
+        text: ocr::availability(),
         microphone: false,
     };
     let name = host.name();
@@ -118,6 +120,7 @@ pub(super) fn toggle_menu(
                 .filter_map(|(action, label)| Some((action_mode(*action)?, label.clone())))
                 .collect(),
             window: window_capture(&session),
+            text: ocr::availability(),
             recording: session.recorder.active.borrow().is_some(),
             microphone,
         };

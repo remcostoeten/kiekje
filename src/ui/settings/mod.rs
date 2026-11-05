@@ -7,6 +7,7 @@ mod drawing;
 mod general;
 mod preview;
 mod search;
+mod text;
 mod zoom;
 
 use std::cell::{Cell, RefCell};
@@ -22,7 +23,7 @@ use thiserror::Error;
 use crate::capture::Availability;
 use crate::config::{
     self, Capture, Config, ConfigError, General, Notifications, Overlay, Recording, Saving,
-    Storage, Upload,
+    Storage, Text, Upload,
 };
 use crate::editor::DrawingKeys;
 use crate::ids::APP_ID;
@@ -41,6 +42,8 @@ pub struct Model {
     pub host: ShortcutHost,
     pub bound: Vec<(ShortcutAction, String)>,
     pub window_capture: Availability,
+    pub text_capture: Availability,
+    pub text: Text,
     pub storage: Storage,
     pub saving: Saving,
     pub notifications: Notifications,
@@ -535,8 +538,9 @@ pub fn show(
     let mut resets = Vec::new();
     let mut unavailable = Vec::new();
     for action in ShortcutAction::ALL {
-        let reason = match (action, model.window_capture) {
-            (ShortcutAction::Window, Availability::Unavailable(reason)) => Some(reason),
+        let reason = match (action, model.window_capture, model.text_capture) {
+            (ShortcutAction::Window, Availability::Unavailable(reason), _)
+            | (ShortcutAction::Text, _, Availability::Unavailable(reason)) => Some(reason),
             _ => None,
         };
         let face = match reason {

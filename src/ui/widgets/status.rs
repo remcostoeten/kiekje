@@ -15,6 +15,7 @@ pub enum Failure {
     Recording(String),
     PartialRecording { path: PathBuf, reason: String },
     Gif(String),
+    Text(String),
 }
 
 impl Failure {
@@ -31,6 +32,7 @@ impl Failure {
                 )
             }
             Self::Gif(reason) => format!("GIF not made: {reason}"),
+            Self::Text(reason) => format!("Text not copied: {reason}"),
         }
     }
 

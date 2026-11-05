@@ -13,6 +13,7 @@ use crate::capture::{BackendChoice, BackendKind};
 use crate::config::{self, Config};
 use crate::desktop_file;
 use crate::ids::APP_ID;
+use crate::ocr::{self, Language};
 use crate::overlay;
 use crate::pin::{self, Stacking};
 use crate::record;
@@ -96,6 +97,22 @@ struct Report {
     fonts: Vec<Result<PathBuf, FontError>>,
     clipboard_manager: Option<ClipboardManager>,
     recording: Result<(), record::GstError>,
+    text: Result<TextSupport, ocr::OcrError>,
+}
+
+struct TextSupport {
+    version: String,
+    installed: Vec<Language>,
+    chosen: Vec<Language>,
+}
+
+impl TextSupport {
+    fn missing(&self) -> Vec<&Language> {
+        self.chosen
+            .iter()
+            .filter(|language| !self.installed.contains(language))
+            .collect()
+    }
 }
 
 /// Prints the capabilities this session exposes, followed by every problem and its fix.
@@ -154,6 +171,10 @@ fn collect() -> Report {
         Ok(Some(config)) => config.recording,
         Ok(None) | Err(_) => config::Recording::default(),
     };
+    let chosen = match &config {
+        Ok(Some(config)) => config.text.languages.clone(),
+        Ok(None) | Err(_) => config::Text::default().languages,
+    };
     Report {
         session_type: variable("XDG_SESSION_TYPE"),
         desktop: variable("XDG_CURRENT_DESKTOP"),
@@ -171,7 +192,16 @@ fn collect() -> Report {
         fonts: fonts::locate(&fonts::search_dirs()),
         clipboard_manager: clipboard::detect(),
         recording: record::check(audio),
+        text: text_support(chosen),
     }
+}
+
+fn text_support(chosen: Vec<Language>) -> Result<TextSupport, ocr::OcrError> {
+    Ok(TextSupport {
+        version: ocr::version()?,
+        installed: ocr::installed_languages()?,
+        chosen,
+    })
 }
 
 fn hyprland_binds() -> HyprlandBinds {
@@ -251,8 +281,54 @@ fn traits(capabilities: &Capabilities) -> String {
     .join(", ")
 }
 
+fn text_capture(report: &Report, style: &Style) -> String {
+    match &report.text {
+        Ok(support) if support.missing().is_empty() => style.good(&format!(
+            "Tesseract {}, {}",
+            support.version,
+            names(&support.chosen)
+        )),
+        Ok(support) => style.warn(&format!(
+            "Tesseract {}, no data for {}",
+            support.version,
+            names(support.missing())
+        )),
+        Err(ocr::OcrError::NotInstalled) => {
+            style.warn(&format!("unavailable, {}", ocr::NOT_INSTALLED))
+        }
+        Err(error) => style.warn(&format!("unavailable, {error}")),
+    }
+}
+
+fn names<'a>(languages: impl IntoIterator<Item = &'a Language>) -> String {
+    languages
+        .into_iter()
+        .map(Language::as_str)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn problems(report: &Report) -> Vec<Problem> {
     let mut found = Vec::new();
+    match &report.text {
+        Ok(support) if !support.missing().is_empty() => found.push(Problem {
+            severity: Severity::Warning,
+            message: format!(
+                "Text capture has no language data for {}",
+                names(support.missing())
+            ),
+            fix: Some(format!(
+                "install the Tesseract data for it, such as tesseract-data-{}, or pick another language in Settings",
+                support.missing()[0].as_str()
+            )),
+        }),
+        Ok(_) => {}
+        Err(error) => found.push(Problem {
+            severity: Severity::Warning,
+            message: format!("Text capture is unavailable: {error}"),
+            fix: Some("install tesseract and tesseract-data-eng".into()),
+        }),
+    }
     let reinstall = Some(format!("run {BINARY} install-desktop-file"));
 
     if report.overlay.is_none() {
@@ -454,6 +530,7 @@ fn render(report: &Report, style: &Style) -> String {
     };
     text.push_str(&field(style, "clipboard", &keeper));
     text.push_str(&field(style, "recording", &recording(report, style)));
+    text.push_str(&field(style, "text capture", &text_capture(report, style)));
     if report.kwin_present {
         let access = match report.kwin_access {
             Some(KwinAccess::Ready) => style.good("desktop file installed"),
@@ -619,7 +696,32 @@ mod tests {
                 .collect(),
             clipboard_manager: Some(ClipboardManager::Klipper),
             recording: Ok(()),
+            text: Ok(TextSupport {
+                version: "5.5.0".into(),
+                installed: vec![Language::english()],
+                chosen: vec![Language::english()],
+            }),
         }
+    }
+
+    #[test]
+    fn lists_text_capture_with_its_languages_or_why_not() {
+        assert!(render(&report(), &PLAIN).contains("text capture      Tesseract 5.5.0, eng"));
+        let mut dutch = report();
+        if let Ok(support) = &mut dutch.text {
+            support
+                .chosen
+                .push(Language::try_from("nld".to_owned()).unwrap());
+        }
+        let rendered = render(&dutch, &PLAIN);
+        assert!(rendered.contains("text capture      Tesseract 5.5.0, no data for nld"));
+        assert!(rendered.contains("tesseract-data-nld"));
+        let mut bare = report();
+        bare.text = Err(ocr::OcrError::NotInstalled);
+        assert!(
+            render(&bare, &PLAIN)
+                .contains("text capture      unavailable, Tesseract is not installed")
+        );
     }
 
     #[test]

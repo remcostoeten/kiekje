@@ -8,15 +8,19 @@ use super::countdown;
 use super::deliver::{Filing, deliver, finish_delivery, finish_edit};
 use super::notice::notify;
 use super::recording::record_region;
+use super::text::copy_text;
 use super::{Request, Session};
 use crate::backends;
 use crate::backends::windows::{self, WindowError};
 use crate::capture::mapping::{self, SelectionPlan};
 use crate::capture::monitors::{gdk_monitors, monitor_info};
-use crate::capture::{Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo};
+use crate::capture::{
+    Availability, Capture, CaptureError, CaptureMode, Frame, LogicalRect, MonitorInfo,
+};
 use crate::config::{self, AfterSelection};
 use crate::editor::Finish;
 use crate::notify::Notice;
+use crate::ocr;
 use crate::output::{self};
 use crate::overlay::{self, Outcome, Selection};
 use crate::pin;
@@ -85,7 +89,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         let config = config::load();
         let windows = match window_list {
             Some(handle) => Some(handle),
-            None if request.mode == CaptureMode::Region && config.overlay.window_snap => {
+            None if request.mode.picks_region() && config.overlay.window_snap => {
                 Some(thread::spawn(|| Ok(snapshot_windows())))
             }
             None => None,
@@ -95,7 +99,9 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             sound::check();
         }
         let inline = config.capture.after_selection == AfterSelection::Edit;
-        let previous_region = (request.mode == CaptureMode::Region)
+        let previous_region = request
+            .mode
+            .picks_region()
             .then(|| known_region.or_else(last_region::load))
             .flatten();
         let result = match capturing {
@@ -119,6 +125,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
         });
         let overlay = config.overlay;
         let drawing = config.drawing;
+        let text = (request.mode.selects()).then(ocr::availability);
         // The receiver only disappears when the app is quitting.
         let _ = sender.send_blocking((
             result,
@@ -127,6 +134,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             overlay,
             drawing,
             previous_region,
+            text,
             glib::monotonic_time(),
             config,
         ));
@@ -142,6 +150,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
             overlay,
             drawing,
             previous_region,
+            text,
             captured_us,
             config,
         )) = receiver.recv().await
@@ -164,6 +173,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
                     overlay,
                     drawing,
                     last_region: previous_region,
+                    text: text.unwrap_or(Availability::Unavailable(ocr::NOT_INSTALLED)),
                 };
                 handle_capture(&app, request, capture, region, &monitors, options, session)
             }
@@ -235,7 +245,7 @@ fn handle_capture(
             );
             session.busy.set(false);
         }
-        (CaptureMode::Region | CaptureMode::Window, _) => {
+        (CaptureMode::Region | CaptureMode::Window | CaptureMode::Text, _) => {
             let frames = Arc::new(capture.frames);
             let selection_frames = frames.clone();
             let trigger_us = request.trigger_us;
@@ -282,6 +292,11 @@ fn handle_capture(
                         log_selection(&selection_frames, plan);
                         record_region(&session, &selection_frames, plan, gif);
                         session.busy.set(false);
+                    }
+                    Outcome::Text(Selection { rect, plan }) => {
+                        remember_region(&session, rect);
+                        log_selection(&selection_frames, plan);
+                        copy_text(&session, selection_frames.clone(), plan);
                     }
                     Outcome::Saved(notice) => finish_delivery(&session, notice),
                     Outcome::Canceled => {

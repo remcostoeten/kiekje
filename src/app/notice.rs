@@ -55,6 +55,7 @@ fn failure_for(notice: &Notice) -> Option<Failure> {
             reason: reason.clone(),
         }),
         Notice::GifFailed { reason } => Some(Failure::Gif(reason.clone())),
+        Notice::TextFailed { reason } => Some(Failure::Text(reason.clone())),
         _ => None,
     }
 }

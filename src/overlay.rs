@@ -18,7 +18,7 @@ use precision::Precision;
 use crate::capture::mapping::{
     PixelRect, SelectionPlan, logical_to_pixels, pixels_to_logical, plan_selection, rect_from_drag,
 };
-use crate::capture::{CaptureMode, Frame, LogicalRect};
+use crate::capture::{Availability, CaptureMode, Frame, LogicalRect};
 use crate::config;
 use crate::editor::{Ending, Finish, Inline, Starter, Tool};
 use crate::output::Image;
@@ -35,13 +35,14 @@ const LABEL_BACKGROUND: gdk::RGBA = gdk::RGBA::new(10.0 / 255.0, 10.0 / 255.0, 1
 const LABEL_TEXT: gdk::RGBA = gdk::RGBA::new(237.0 / 255.0, 237.0 / 255.0, 237.0 / 255.0, 1.0);
 const MIN_SELECTION: i32 = 3;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Options {
     pub mode: CaptureMode,
     pub edit: bool,
     pub overlay: config::Overlay,
     pub drawing: config::Drawing,
     pub last_region: Option<LogicalRect>,
+    pub text: Availability,
 }
 
 #[derive(Clone, Copy)]
@@ -63,6 +64,7 @@ pub enum Outcome {
         selection: Selection,
         gif: bool,
     },
+    Text(Selection),
     Canceled,
     MonitorLost(String),
 }
@@ -131,52 +133,61 @@ struct Area {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Film {
-    Off,
+enum Kind {
+    Screenshot,
     Video,
     Gif,
+    Text,
 }
 
-impl Film {
-    const ALL: [Self; 3] = [Self::Off, Self::Video, Self::Gif];
+impl Kind {
+    const ALL: [Self; 4] = [Self::Screenshot, Self::Video, Self::Gif, Self::Text];
 
-    fn next(self) -> Self {
+    fn next(self, text: Availability) -> Self {
         match self {
-            Self::Off => Self::Video,
+            Self::Screenshot => Self::Video,
             Self::Video => Self::Gif,
-            Self::Gif => Self::Off,
+            Self::Gif if text.is_available() => Self::Text,
+            Self::Gif | Self::Text => Self::Screenshot,
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Off => "Screenshot",
+            Self::Screenshot => "Screenshot",
             Self::Video => "Video",
             Self::Gif => "GIF",
+            Self::Text => "Text",
         }
     }
 
     fn digit(self) -> &'static str {
         match self {
-            Self::Off => "1",
+            Self::Screenshot => "1",
             Self::Video => "2",
             Self::Gif => "3",
+            Self::Text => "4",
         }
     }
 
     fn for_key(key: gdk::Key) -> Option<Self> {
         match key {
-            gdk::Key::_1 | gdk::Key::KP_1 => Some(Self::Off),
+            gdk::Key::_1 | gdk::Key::KP_1 => Some(Self::Screenshot),
             gdk::Key::_2 | gdk::Key::KP_2 => Some(Self::Video),
             gdk::Key::_3 | gdk::Key::KP_3 => Some(Self::Gif),
+            gdk::Key::_4 | gdk::Key::KP_4 => Some(Self::Text),
             _ => None,
         }
+    }
+
+    fn records(self) -> bool {
+        matches!(self, Self::Video | Self::Gif)
     }
 }
 
 struct ModeBar {
     bar: gtk::Box,
-    buttons: Vec<(Film, gtk::Button)>,
+    buttons: Vec<(Kind, gtk::Button)>,
 }
 
 struct Mounted {
@@ -229,7 +240,8 @@ struct Shared {
     hints_on: Cell<bool>,
     lens: Cell<bool>,
     mounted: RefCell<Option<Mounted>>,
-    film: Cell<Film>,
+    kind: Cell<Kind>,
+    text: Availability,
     modes: RefCell<Vec<ModeBar>>,
     drawing: config::Drawing,
     starter: Starter,
@@ -254,7 +266,7 @@ struct Shared {
 /// # Examples
 ///
 /// ```ignore
-/// overlay::show(&app, frames, &windows, monitors, Options::default(), |outcome| {}, || {});
+/// overlay::show(&app, frames, &windows, monitors, options, |outcome| {}, || {});
 /// ```
 pub fn show(
     app: &gtk::Application,
@@ -297,7 +309,8 @@ pub fn show(
         hints_on: Cell::new(options.overlay.hints),
         lens: Cell::new(false),
         mounted: RefCell::new(None),
-        film: Cell::new(Film::Off),
+        kind: Cell::new(initial_kind(options.mode, options.text)),
+        text: options.text,
         modes: RefCell::new(Vec::new()),
         drawing: options.drawing,
         starter: Starter::new(options.drawing),
@@ -776,8 +789,10 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
         return false;
     }
     let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
-    if let Some(film) = Film::for_key(key).filter(|_| !shift) {
-        set_film(shared, film);
+    if let Some(kind) = Kind::for_key(key).filter(|_| !shift) {
+        if kind != Kind::Text || shared.text.is_available() {
+            set_kind(shared, kind);
+        }
         return true;
     }
     match key.to_lower() {
@@ -790,7 +805,7 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
             .hovered()
             .is_some_and(|window| choose(shared, window)),
         gdk::Key::g if !shift => {
-            set_film(shared, shared.film.get().next());
+            set_kind(shared, shared.kind.get().next(shared.text));
             true
         }
         _ if picks_windows(shared) => false,
@@ -819,11 +834,12 @@ fn choose(shared: &Rc<Shared>, rect: LogicalRect) -> bool {
     };
     let selection = Selection { rect, plan };
     match plan {
-        _ if shared.film.get() != Film::Off => finish(
+        _ if shared.kind.get() == Kind::Text => finish(shared, Outcome::Text(selection)),
+        _ if shared.kind.get().records() => finish(
             shared,
             Outcome::Record {
                 selection,
-                gif: shared.film.get() == Film::Gif,
+                gif: shared.kind.get() == Kind::Gif,
             },
         ),
         SelectionPlan::Crop { frame_index, .. } if shared.edit => {
@@ -832,6 +848,14 @@ fn choose(shared: &Rc<Shared>, rect: LogicalRect) -> bool {
         _ => finish(shared, Outcome::Selected(selection)),
     }
     true
+}
+
+fn initial_kind(mode: CaptureMode, text: Availability) -> Kind {
+    if mode == CaptureMode::Text && text.is_available() {
+        Kind::Text
+    } else {
+        Kind::Screenshot
+    }
 }
 
 fn picks_windows(shared: &Shared) -> bool {
@@ -918,7 +942,7 @@ fn hints_for(stage: Stage) -> Vec<Hint> {
                 Some((gdk::Key::R, gdk::ModifierType::SHIFT_MASK)),
                 false,
             ),
-            (true, "G", "film mode", plain(gdk::Key::g), false),
+            (true, "G", "mode", plain(gdk::Key::g), false),
             (region, "D", "draw", plain(gdk::Key::d), false),
             (true, "Z", "loupe", plain(gdk::Key::z), loupe),
             (loupe, "C", "colour", None, false),
@@ -1050,38 +1074,42 @@ fn mode_bar(shared: &Rc<Shared>, frame_index: usize) -> ModeBar {
         .css_classes(["panel", "overlay-modes"])
         .build();
     let mut buttons = Vec::new();
-    for film in Film::ALL {
+    for kind in Kind::ALL {
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(6)
             .build();
         content.append(
             &gtk::Label::builder()
-                .label(film.digit())
+                .label(kind.digit())
                 .css_classes(["keycap"])
                 .build(),
         );
-        content.append(&gtk::Label::new(Some(film.label())));
+        content.append(&gtk::Label::new(Some(kind.label())));
         let button = gtk::Button::builder()
             .child(&content)
-            .tooltip_text(format!("{} (key {}, G cycles)", film.label(), film.digit()))
+            .tooltip_text(format!("{} (key {}, G cycles)", kind.label(), kind.digit()))
             .css_classes(["act"])
             .focus_on_click(false)
             .build();
         button.update_property(&[gtk::accessible::Property::Label(&format!(
             "{} ({})",
-            film.label(),
-            film.digit()
+            kind.label(),
+            kind.digit()
         ))]);
-        button.set_css_classes(&mode_classes(film, shared.film.get()));
+        button.set_css_classes(&mode_classes(kind, shared.kind.get()));
+        if let (Kind::Text, Availability::Unavailable(reason)) = (kind, shared.text) {
+            button.set_sensitive(false);
+            button.set_tooltip_text(Some(reason));
+        }
         let weak = Rc::downgrade(shared);
         button.connect_clicked(move |_| {
             if let Some(shared) = weak.upgrade() {
-                set_film(&shared, film);
+                set_kind(&shared, kind);
             }
         });
         bar.append(&button);
-        buttons.push((film, button));
+        buttons.push((kind, button));
     }
     column.append(&bar);
     ModeBar {
@@ -1090,7 +1118,7 @@ fn mode_bar(shared: &Rc<Shared>, frame_index: usize) -> ModeBar {
     }
 }
 
-fn mode_classes(button: Film, current: Film) -> Vec<&'static str> {
+fn mode_classes(button: Kind, current: Kind) -> Vec<&'static str> {
     if button == current {
         vec!["act", "selected"]
     } else {
@@ -1098,11 +1126,11 @@ fn mode_classes(button: Film, current: Film) -> Vec<&'static str> {
     }
 }
 
-fn set_film(shared: &Shared, film: Film) {
-    shared.film.set(film);
+fn set_kind(shared: &Shared, kind: Kind) {
+    shared.kind.set(kind);
     for modes in shared.modes.borrow().iter() {
         for (own, button) in &modes.buttons {
-            button.set_css_classes(&mode_classes(*own, film));
+            button.set_css_classes(&mode_classes(*own, kind));
         }
     }
 }
@@ -1152,7 +1180,7 @@ fn record_from_drawing(shared: &Rc<Shared>, inline: &Inline) {
         return;
     }
     stop_drawing(shared);
-    set_film(shared, Film::Video);
+    set_kind(shared, Kind::Video);
 }
 
 fn stop_drawing(shared: &Rc<Shared>) {
@@ -1189,7 +1217,7 @@ fn begin_edit(
 ) {
     let monitor = shared.frames[frame_index].monitor.logical;
     shared.chosen.set(Some(region.unwrap_or(monitor)));
-    set_film(shared, Film::Off);
+    set_kind(shared, Kind::Screenshot);
     show_hints(shared, false);
     show_modes(shared, false);
     for area in shared.areas.borrow().iter() {
@@ -1239,6 +1267,14 @@ fn begin_edit(
                             }
                         }
                     }
+                    Ending::Text { region } => match edited_selection(&shared, frame_index, region)
+                    {
+                        Some(selection) => finish(&shared, Outcome::Text(selection)),
+                        None => {
+                            warn!("the region to read is not on its monitor, nothing copied");
+                            finish(&shared, Outcome::Canceled);
+                        }
+                    },
                     Ending::Finished {
                         image,
                         finish: how,
@@ -1513,10 +1549,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cycles_through_every_film_mode_back_to_screenshot() {
-        assert_eq!(Film::Off.next(), Film::Video);
-        assert_eq!(Film::Video.next(), Film::Gif);
-        assert_eq!(Film::Gif.next(), Film::Off);
+    fn cycles_through_every_kind_back_to_screenshot() {
+        let text = Availability::Available;
+        assert_eq!(Kind::Screenshot.next(text), Kind::Video);
+        assert_eq!(Kind::Video.next(text), Kind::Gif);
+        assert_eq!(Kind::Gif.next(text), Kind::Text);
+        assert_eq!(Kind::Text.next(text), Kind::Screenshot);
+    }
+
+    #[test]
+    fn skips_text_when_text_recognition_is_unavailable() {
+        let missing = Availability::Unavailable("no Tesseract");
+        assert_eq!(Kind::Gif.next(missing), Kind::Screenshot);
+        assert_eq!(initial_kind(CaptureMode::Text, missing), Kind::Screenshot);
+        assert_eq!(
+            initial_kind(CaptureMode::Text, Availability::Available),
+            Kind::Text
+        );
+        assert_eq!(
+            initial_kind(CaptureMode::Region, Availability::Available),
+            Kind::Screenshot
+        );
     }
 
     fn labels(stage: Stage) -> Vec<&'static str> {
@@ -1566,7 +1619,7 @@ mod tests {
             ..Stage::default()
         };
         let hints = hints_for(selecting);
-        assert!(hints.iter().any(|hint| hint.label == "film mode"));
+        assert!(hints.iter().any(|hint| hint.label == "mode"));
         assert!(hints.iter().any(|hint| hint.label == "draw"));
         let last = hints
             .iter()
@@ -1581,16 +1634,17 @@ mod tests {
     }
 
     #[test]
-    fn maps_digit_keys_to_film_modes() {
-        assert_eq!(Film::for_key(gdk::Key::_1), Some(Film::Off));
-        assert_eq!(Film::for_key(gdk::Key::KP_2), Some(Film::Video));
-        assert_eq!(Film::for_key(gdk::Key::_3), Some(Film::Gif));
-        assert_eq!(Film::for_key(gdk::Key::_4), None);
+    fn maps_digit_keys_to_kinds() {
+        assert_eq!(Kind::for_key(gdk::Key::_1), Some(Kind::Screenshot));
+        assert_eq!(Kind::for_key(gdk::Key::KP_2), Some(Kind::Video));
+        assert_eq!(Kind::for_key(gdk::Key::_3), Some(Kind::Gif));
+        assert_eq!(Kind::for_key(gdk::Key::_4), Some(Kind::Text));
+        assert_eq!(Kind::for_key(gdk::Key::_5), None);
     }
 
     #[test]
-    fn marks_only_the_current_film_mode_as_selected() {
-        assert_eq!(mode_classes(Film::Video, Film::Video), ["act", "selected"]);
-        assert_eq!(mode_classes(Film::Gif, Film::Video), ["act"]);
+    fn marks_only_the_current_kind_as_selected() {
+        assert_eq!(mode_classes(Kind::Video, Kind::Video), ["act", "selected"]);
+        assert_eq!(mode_classes(Kind::Gif, Kind::Video), ["act"]);
     }
 }

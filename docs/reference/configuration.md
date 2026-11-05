@@ -68,6 +68,9 @@ turn_right = "."
 enabled = false
 expiry = "24h"
 
+[text]
+languages = ["eng"]
+
 [shortcuts]
 capture-region = "Print"
 capture-fullscreen = "SHIFT+Print"
@@ -178,6 +181,12 @@ One key per drawing action, pressed without modifiers. A letter, a digit or punc
 | `enabled` | `false` | Show Upload and copy link in the gallery, which sends the file to Litterbox |
 | `expiry` | `"24h"` | How long the link lives: `"1h"`, `"12h"`, `"24h"` or `"72h"` |
 
+## `[text]`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `languages` | `["eng"]` | The Tesseract languages text capture reads in, by their data file names such as `"eng"`, `"nld"` or `"chi_sim"`. An empty list reads English. A language without installed data is skipped |
+
 ## `[shortcuts]`
 
 | Key | Default | Action |
@@ -185,6 +194,7 @@ One key per drawing action, pressed without modifiers. A letter, a digit or punc
 | `capture-region` | `"Print"` | Freeze the screen and select a region |
 | `capture-fullscreen` | `"SHIFT+Print"` | Capture every monitor |
 | `capture-window` | off | Freeze the screen and pick a window |
+| `capture-text` | off | Freeze the screen and copy the text in a region |
 | `record` | off | Start a recording, or stop the one that is running |
 
 A shortcut is modifiers and a key joined with `+`: `CTRL`, `ALT`, `SHIFT` and `LOGO` (also written `SUPER` or `META`), then a key name such as `Print`, `F9` or `s`. An empty string turns a shortcut off. The recorder in Settings enforces the same rules the parser does:

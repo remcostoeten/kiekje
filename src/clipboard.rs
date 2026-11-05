@@ -23,6 +23,35 @@ use wayland_protocols::ext::data_control::v1::client::ext_data_control_source_v1
 };
 
 const PNG_MIME: &str = "image/png";
+const TEXT_MIMES: [&str; 5] = [
+    "text/plain;charset=utf-8",
+    "text/plain",
+    "UTF8_STRING",
+    "STRING",
+    "TEXT",
+];
+
+#[derive(Clone)]
+enum Offer {
+    Png(Arc<Vec<u8>>),
+    Text(Arc<String>),
+}
+
+impl Offer {
+    fn mimes(&self) -> &'static [&'static str] {
+        match self {
+            Self::Png(_) => &[PNG_MIME],
+            Self::Text(_) => &TEXT_MIMES,
+        }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Png(png) => png,
+            Self::Text(text) => text.as_bytes(),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ClipboardError {
@@ -42,7 +71,7 @@ pub enum ClipboardError {
 
 #[derive(Clone)]
 pub struct Clipboard {
-    images: Sender<Arc<Vec<u8>>>,
+    offers: Sender<Offer>,
     waker: Arc<UnixStream>,
 }
 
@@ -76,14 +105,14 @@ impl Clipboard {
         let (waker, wake) = UnixStream::pair()?;
         waker.set_nonblocking(true)?;
         wake.set_nonblocking(true)?;
-        let (images, receiver) = mpsc::channel();
+        let (offers, receiver) = mpsc::channel();
         let worker = Worker {
             connection,
             queue,
             state,
             manager,
             device,
-            images: receiver,
+            offers: receiver,
             wake,
         };
         thread::Builder::new()
@@ -95,7 +124,7 @@ impl Clipboard {
             })?;
 
         Ok(Self {
-            images,
+            offers,
             waker: Arc::new(waker),
         })
     }
@@ -108,7 +137,24 @@ impl Clipboard {
     /// clipboard.set_png(Arc::new(output::encode_rgba(&rgba, ImageFormat::Png, quality)?))?;
     /// ```
     pub fn set_png(&self, png: Arc<Vec<u8>>) -> Result<(), ClipboardError> {
-        self.images.send(png).map_err(|_| ClipboardError::Stopped)?;
+        self.offer(Offer::Png(png))
+    }
+
+    /// Makes `text` the clipboard content, offered as UTF-8 plain text.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// clipboard.set_text("read from the region".to_owned())?;
+    /// ```
+    pub fn set_text(&self, text: String) -> Result<(), ClipboardError> {
+        self.offer(Offer::Text(Arc::new(text)))
+    }
+
+    fn offer(&self, offer: Offer) -> Result<(), ClipboardError> {
+        self.offers
+            .send(offer)
+            .map_err(|_| ClipboardError::Stopped)?;
         match (&*self.waker).write(&[1]) {
             Ok(_) => Ok(()),
             // A full wake buffer already guarantees the thread wakes up.
@@ -128,7 +174,7 @@ struct Worker {
     state: State,
     manager: ExtDataControlManagerV1,
     device: ExtDataControlDeviceV1,
-    images: Receiver<Arc<Vec<u8>>>,
+    offers: Receiver<Offer>,
     wake: UnixStream,
 }
 
@@ -164,13 +210,13 @@ impl Worker {
             } else {
                 drop(guard);
             }
-            if wake_ready && !self.take_latest_image()? {
+            if wake_ready && !self.take_latest_offer()? {
                 return Ok(());
             }
         }
     }
 
-    fn take_latest_image(&mut self) -> io::Result<bool> {
+    fn take_latest_offer(&mut self) -> io::Result<bool> {
         let mut buffer = [0u8; 64];
         loop {
             match self.wake.read(&mut buffer) {
@@ -183,15 +229,18 @@ impl Worker {
 
         let mut latest = None;
         loop {
-            match self.images.try_recv() {
-                Ok(png) => latest = Some(png),
+            match self.offers.try_recv() {
+                Ok(offer) => latest = Some(offer),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return Ok(false),
             }
         }
-        if let Some(png) = latest {
-            let source = self.manager.create_data_source(&self.queue.handle(), png);
-            source.offer(PNG_MIME.into());
+        if let Some(offer) = latest {
+            let mimes = offer.mimes();
+            let source = self.manager.create_data_source(&self.queue.handle(), offer);
+            for mime in mimes {
+                source.offer((*mime).into());
+            }
             self.device.set_selection(Some(&source));
         }
         Ok(true)
@@ -273,19 +322,21 @@ impl Dispatch<ExtDataControlOfferV1, ()> for State {
     }
 }
 
-impl Dispatch<ExtDataControlSourceV1, Arc<Vec<u8>>> for State {
+impl Dispatch<ExtDataControlSourceV1, Offer> for State {
     fn event(
         _: &mut Self,
         source: &ExtDataControlSourceV1,
         event: ext_data_control_source_v1::Event,
-        png: &Arc<Vec<u8>>,
+        offer: &Offer,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
         match event {
-            ext_data_control_source_v1::Event::Send { mime_type, fd } if mime_type == PNG_MIME => {
-                let png = png.clone();
-                thread::spawn(move || match File::from(fd).write_all(&png) {
+            ext_data_control_source_v1::Event::Send { mime_type, fd }
+                if offer.mimes().contains(&mime_type.as_str()) =>
+            {
+                let offer = offer.clone();
+                thread::spawn(move || match File::from(fd).write_all(offer.bytes()) {
                     Ok(()) => {}
                     Err(error) if error.kind() == ErrorKind::BrokenPipe => {}
                     Err(error) => error!("clipboard transfer failed: {error}"),

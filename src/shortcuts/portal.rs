@@ -431,6 +431,10 @@ mod tests {
                     trigger: Some("Alt+W".into()),
                 },
                 Binding {
+                    action: ShortcutAction::Text,
+                    trigger: None,
+                },
+                Binding {
                     action: ShortcutAction::Record,
                     trigger: None,
                 },

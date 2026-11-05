@@ -16,10 +16,17 @@ pub enum CaptureMode {
     Fullscreen,
     Window,
     Repeat,
+    Text,
 }
 
 impl CaptureMode {
-    pub const ALL: [Self; 4] = [Self::Region, Self::Fullscreen, Self::Window, Self::Repeat];
+    pub const ALL: [Self; 5] = [
+        Self::Region,
+        Self::Fullscreen,
+        Self::Window,
+        Self::Repeat,
+        Self::Text,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -27,6 +34,7 @@ impl CaptureMode {
             Self::Fullscreen => "fullscreen",
             Self::Window => "window",
             Self::Repeat => "repeat",
+            Self::Text => "text",
         }
     }
 
@@ -45,7 +53,7 @@ impl CaptureMode {
     /// ```
     pub fn file_label(self) -> &'static str {
         match self {
-            Self::Region | Self::Repeat => "region",
+            Self::Region | Self::Repeat | Self::Text => "region",
             Self::Fullscreen => "fullscreen",
             Self::Window => "window",
         }
@@ -59,7 +67,18 @@ impl CaptureMode {
     /// assert!(CaptureMode::Window.selects());
     /// ```
     pub fn selects(self) -> bool {
-        matches!(self, Self::Region | Self::Window)
+        matches!(self, Self::Region | Self::Window | Self::Text)
+    }
+
+    /// Whether this mode lets the user drag a free region, as opposed to only picking windows.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// assert!(CaptureMode::Text.picks_region());
+    /// ```
+    pub fn picks_region(self) -> bool {
+        matches!(self, Self::Region | Self::Text)
     }
 }
 

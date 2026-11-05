@@ -24,6 +24,8 @@ pub enum CliError {
     BadDelay(String),
     #[error("window capture is unavailable: {0}")]
     WindowUnavailable(&'static str),
+    #[error("text capture is unavailable: {0}")]
+    TextUnavailable(&'static str),
     #[error("pin takes the path of one image")]
     PinArguments,
     #[error("could not resolve `{path}`: {source}")]
@@ -172,23 +174,31 @@ fn parse_crop(value: &str) -> Result<PixelRect, CliError> {
     }
 }
 
-/// Refuses a window capture where the session has no window source.
+/// Refuses a window capture where the session has no window source, and a text capture where
+/// Tesseract does not work.
+///
+/// Only the probe for the requested mode runs.
 ///
 /// # Examples
 ///
 /// ```ignore
-/// check_available(CaptureMode::Window, || windows::availability(windows::detect()))?;
+/// check_available(CaptureMode::Window, || windows::availability(windows::detect()), ocr::availability)?;
 /// ```
 pub fn check_available(
     mode: CaptureMode,
     window: impl FnOnce() -> Availability,
+    text: impl FnOnce() -> Availability,
 ) -> Result<(), CliError> {
-    if mode != CaptureMode::Window {
-        return Ok(());
-    }
-    match window() {
-        Availability::Available => Ok(()),
-        Availability::Unavailable(reason) => Err(CliError::WindowUnavailable(reason)),
+    match mode {
+        CaptureMode::Window => match window() {
+            Availability::Available => Ok(()),
+            Availability::Unavailable(reason) => Err(CliError::WindowUnavailable(reason)),
+        },
+        CaptureMode::Text => match text() {
+            Availability::Available => Ok(()),
+            Availability::Unavailable(reason) => Err(CliError::TextUnavailable(reason)),
+        },
+        _ => Ok(()),
     }
 }
 
@@ -395,11 +405,27 @@ mod tests {
     #[test]
     fn refuses_window_capture_where_the_session_reports_no_windows() {
         let unavailable = || Availability::Unavailable("no window source");
+        let unprobed = || panic!("probed text support for a window capture");
         assert!(matches!(
-            check_available(CaptureMode::Window, unavailable),
+            check_available(CaptureMode::Window, unavailable, unprobed),
             Err(CliError::WindowUnavailable("no window source"))
         ));
-        assert!(check_available(CaptureMode::Window, || Availability::Available).is_ok());
+        assert!(check_available(CaptureMode::Window, || Availability::Available, unprobed).is_ok());
+    }
+
+    #[test]
+    fn refuses_text_capture_without_tesseract() {
+        let missing = || Availability::Unavailable("Tesseract is not installed");
+        let unprobed = || panic!("probed window support for a text capture");
+        assert!(matches!(
+            check_available(CaptureMode::Text, unprobed, missing),
+            Err(CliError::TextUnavailable("Tesseract is not installed"))
+        ));
+        assert_eq!(parse(&["text"]).unwrap().mode, CaptureMode::Text);
+        assert!(matches!(
+            parse_capture(&["text".into(), "--output".into(), "a.png".into()], 0),
+            Err(CliError::ModeWithOutput("text"))
+        ));
     }
 
     #[test]
@@ -409,7 +435,14 @@ mod tests {
             CaptureMode::Fullscreen,
             CaptureMode::Repeat,
         ] {
-            assert!(check_available(mode, || panic!("probed for {mode:?}")).is_ok());
+            assert!(
+                check_available(
+                    mode,
+                    || panic!("probed windows for {mode:?}"),
+                    || panic!("probed text for {mode:?}")
+                )
+                .is_ok()
+            );
         }
     }
 

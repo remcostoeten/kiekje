@@ -76,7 +76,6 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | X11 capture backend | On hold | Pure X11 sessions other than Plasma have no capture path. `doctor` reports it as unavailable. |
 | Flatpak | Not yet | Native packages come first. A portal-only Flatpak build is planned later. |
 | macOS, Windows | Not planned | Kiekje is Linux only. |
-| Text recognition (OCR) | Post-V1 | Planned with Tesseract. |
 | Window capture on GNOME, Sway and X11 | Not built | Window capture needs the compositor to report where its windows are, which only Plasma 6 and Hyprland do. Elsewhere the tray item and shortcut are disabled, `kiekje capture window` exits with an error and `doctor` lists it as unavailable. |
 | Real hardware | Unverified | No run on physical machines with Omarchy, Plasma or GNOME yet. See [issue #41](https://github.com/remcostoeten/kiekje/issues/41). |
 
@@ -91,6 +90,7 @@ Linux Mint 22 shares Ubuntu 24.04's GTK 4.14 and behaves the same, but is not in
 | Full screen | Every monitor, stitched into one image | Lab tested |
 | Window capture | `kiekje capture window`, the tray or its own shortcut opens the overlay in window mode: the window under the pointer lights up and a click or Enter takes it. It crops the frozen frame, so anything on top of the window is in the capture | Plasma 6 and Hyprland, unverified |
 | Repeat last region | Crops the last selected area again without the overlay | Lab tested on sway |
+| Copy text | `kiekje capture text`, the tray, its own shortcut or Text in the overlay reads the region with Tesseract on this computer and copies the text. Needs `libtesseract.so.5` and language data | Read path unit and benchmark tested, overlay unverified |
 | Delay | `--delay` up to 60 seconds | Lab tested on sway |
 | Multi-monitor | Selections can cross monitors and mixed scales, cropped at native resolution | Lab tested on Plasma, sway, Hyprland |
 | Fractional scaling and rotation | Mapped back to physical pixels | Lab tested on sway and Hyprland virtual outputs |

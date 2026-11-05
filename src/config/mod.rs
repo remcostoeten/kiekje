@@ -11,6 +11,7 @@ use thiserror::Error;
 use toml::Table;
 
 use crate::editor::{Color, DrawAction, DrawKey, DrawingKeys, KeyConflict};
+use crate::ocr::Language;
 use crate::shortcuts::{Conflict, ShortcutAction, Shortcuts, Slot};
 use crate::storage::{self, ImageFormat, Quality, Template};
 use crate::upload::Expiry;
@@ -38,6 +39,8 @@ pub struct Config {
     pub upload: Upload,
     #[serde(default)]
     pub recording: Recording,
+    #[serde(default)]
+    pub text: Text,
     #[serde(default)]
     pub shortcuts: Shortcuts,
 }
@@ -78,6 +81,12 @@ pub struct Upload {
 pub struct Recording {
     pub system_audio: bool,
     pub microphone: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Text {
+    pub languages: Vec<Language>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -211,6 +220,7 @@ impl Default for Config {
             drawing: Drawing::default(),
             upload: Upload::default(),
             recording: Recording::default(),
+            text: Text::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -242,6 +252,14 @@ impl Default for Recording {
         Self {
             system_audio: true,
             microphone: false,
+        }
+    }
+}
+
+impl Default for Text {
+    fn default() -> Self {
+        Self {
+            languages: vec![Language::english()],
         }
     }
 }
@@ -797,6 +815,26 @@ mod tests {
         assert_eq!(light.general.theme, Theme::Light);
         assert_eq!(light.general.theme.toggled(), Theme::Dark);
         assert!(parse("[general]\ntheme = \"sepia\"", Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn reads_text_in_english_until_other_languages_are_chosen() {
+        let older = parse("version = 1", Path::new("config.toml")).unwrap();
+        assert_eq!(older.text.languages, [crate::ocr::Language::english()]);
+        let dutch = parse(
+            "[text]\nlanguages = [\"eng\", \"nld\"]",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        let names: Vec<&str> = dutch.text.languages.iter().map(|l| l.as_str()).collect();
+        assert_eq!(names, ["eng", "nld"]);
+        assert!(
+            parse(
+                "[text]\nlanguages = [\"eng+nld\"]",
+                Path::new("config.toml")
+            )
+            .is_err()
+        );
     }
 
     #[test]

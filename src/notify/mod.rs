@@ -53,7 +53,17 @@ pub enum Notice {
     GifFailed {
         reason: String,
     },
+    TextCopied {
+        text: String,
+    },
+    NoText,
+    TextFailed {
+        reason: String,
+    },
 }
+
+const PREVIEW_LINES: usize = 3;
+const PREVIEW_CHARS: usize = 160;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -132,7 +142,10 @@ impl Notice {
             | Self::RecordingStarted
             | Self::RecordingFailed { .. }
             | Self::GifExporting { .. }
-            | Self::GifFailed { .. } => None,
+            | Self::GifFailed { .. }
+            | Self::TextCopied { .. }
+            | Self::NoText
+            | Self::TextFailed { .. } => None,
         }
     }
 
@@ -297,8 +310,47 @@ impl Notice {
                 actions: Vec::new(),
                 urgency: Urgency::Critical,
             },
+            Self::TextCopied { text } => Content {
+                summary: "Text copied",
+                body: escape(&preview(text)),
+                icon: "edit-copy",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Normal,
+            },
+            Self::NoText => Content {
+                summary: "No text found",
+                body: "Kiekje read no text in the region. The clipboard is unchanged.".to_owned(),
+                icon: "dialog-information",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Normal,
+            },
+            Self::TextFailed { reason } => Content {
+                summary: "Text not copied",
+                body: escape(reason),
+                icon: "dialog-error",
+                image: None,
+                actions: Vec::new(),
+                urgency: Urgency::Critical,
+            },
         }
     }
+}
+
+fn preview(text: &str) -> String {
+    let lines = text.lines().count();
+    let mut shown: String = text
+        .lines()
+        .take(PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if shown.chars().count() > PREVIEW_CHARS {
+        shown = shown.chars().take(PREVIEW_CHARS).collect::<String>() + "…";
+    } else if lines > PREVIEW_LINES {
+        shown.push('…');
+    }
+    shown
 }
 
 fn file_name(path: &std::path::Path) -> String {
@@ -455,6 +507,21 @@ mod tests {
         );
         assert!(content.actions.is_empty());
         assert_eq!(Notice::MonitorLost.target(), None);
+    }
+
+    #[test]
+    fn previews_copied_text_in_at_most_three_lines() {
+        let content = Notice::TextCopied {
+            text: "one\ntwo <b>\nthree\nfour".into(),
+        }
+        .content();
+        assert_eq!(content.summary, "Text copied");
+        assert_eq!(content.body, "one\ntwo &lt;b&gt;\nthree…");
+        let long = Notice::TextCopied {
+            text: "x".repeat(400),
+        }
+        .content();
+        assert_eq!(long.body.chars().count(), PREVIEW_CHARS + 1);
     }
 
     #[test]
