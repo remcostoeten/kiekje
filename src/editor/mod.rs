@@ -574,6 +574,7 @@ impl Editor {
     }
 
     fn edited(&self) {
+        debug!("annotations: {}", self.document.borrow().shapes().len());
         self.discard.set(false);
         self.sync();
         self.place_bars();

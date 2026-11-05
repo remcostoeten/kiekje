@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+set -u
+
+if [[ "${1:-}" != "--scenario" ]]; then
+    if [[ $# -ne 2 || "$1" == "-h" || "$1" == "--help" ]]; then
+        cat <<'EOF'
+Usage: lab/xvfb-audit BIN OUTDIR
+
+Runs the pin zoom, editor undo and settings checks of issue 41 against BIN on a private
+Xvfb display with a private session bus, AT-SPI and isolated XDG directories, so nothing
+shows on the desktop. Each check writes one name=verdict line to OUTDIR/checks.txt, and
+the app log and screenshots land in OUTDIR too.
+EOF
+        exit 1
+    fi
+    for tool in xvfb-run dbus-run-session xdotool import sqlite3 python3; do
+        if ! command -v "$tool" >/dev/null; then
+            echo "lab/xvfb-audit: $tool is not installed" >&2
+            exit 1
+        fi
+    done
+    BIN="$(readlink -f "$1")"
+    OUT="$(mkdir -p "$2" && cd "$2" && pwd)"
+    LAB="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+    export OUT LAB BIN
+fi
+
+function scenario {
+    local name="$1" root="$OUT/$1"
+    rm -rf "$root"
+    mkdir -p "$root/config" "$root/data" "$root/cache"
+    XDG_CONFIG_HOME="$root/config" XDG_DATA_HOME="$root/data" XDG_CACHE_HOME="$root/cache" ROOT="$root" \
+        GDK_BACKEND=x11 KIEKJE_LOG=debug NO_COLOR=1 WAYLAND_DISPLAY="" XDG_CURRENT_DESKTOP="" \
+        timeout -k 5 150 xvfb-run -a -s "-screen 0 1280x860x24" dbus-run-session -- \
+        "$LAB/xvfb-audit" --scenario "$name" >"$root/harness.log" 2>&1 </dev/null ||
+        echo "$name=fail the scenario timed out or crashed, see $name/harness.log" >>"$OUT/checks.txt"
+}
+
+function start_session {
+    /usr/lib/at-spi-bus-launcher --launch-immediately >/dev/null 2>&1 &
+    sleep 1
+    /usr/lib/at-spi2-registryd >/dev/null 2>&1 &
+    sleep 1
+    "$BIN" daemon >>"$ROOT/app.log" 2>&1 &
+    DAEMON=$!
+    sleep 3
+}
+
+function stop_session {
+    "$BIN" quit >/dev/null 2>&1
+    sleep 1
+    # Word splitting is wanted: one pid per argument.
+    # shellcheck disable=SC2046
+    kill $(jobs -p) 2>/dev/null
+}
+
+function a11y {
+    timeout 20 "$LAB/a11y" "$@" 2>>"$ROOT/a11y.log"
+}
+
+function verdict {
+    echo "$1=$2" >>"$OUT/checks.txt"
+}
+
+function crashed {
+    ! kill -0 "$DAEMON" 2>/dev/null || grep -q panicked "$ROOT/app.log"
+}
+
+function write_png {
+    python3 - "$1" <<'EOF'
+import struct, sys, zlib
+width, height = 800, 500
+rows = b"".join(b"\0" + bytes((255 - y // 2, 160 - y // 4, 0) * width) for y in range(height))
+def chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+with open(sys.argv[1], "wb") as out:
+    out.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+              + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+EOF
+}
+
+function pin_width {
+    xdotool search --name "Kiekje pin" getwindowgeometry 2>/dev/null | sed -nE 's/.*Geometry: ([0-9]+)x.*/\1/p' | head -n 1
+}
+
+function pin_zoom {
+    local before after
+    write_png "$ROOT/shot.png"
+    start_session
+    "$BIN" pin "$ROOT/shot.png" >>"$ROOT/cli.log" 2>&1
+    sleep 2
+    before="$(pin_width)"
+    xdotool mousemove 300 200 click 4
+    sleep 2
+    xdotool click 4 click 5
+    sleep 2
+    after="$(pin_width)"
+    import -window root "$ROOT/pin.png"
+    if crashed; then
+        verdict pin_zoom "fail the daemon crashed while zooming the pin"
+    elif [[ -z "$before" || -z "$after" ]]; then
+        verdict pin_zoom "fail no pin window showed"
+    elif ((after <= before)); then
+        verdict pin_zoom "fail the pin stayed ${before} px wide after scrolling up"
+    else
+        verdict pin_zoom "pass three scroll zooms over two toasts, 2 s apart, grew the pin from $before to $after px, the daemon stayed up"
+    fi
+    stop_session
+}
+
+function editor_undo {
+    local counts expected="1 2 1 2 3 0 3" missing=""
+    write_png "$ROOT/shot.png"
+    start_session
+    sqlite3 "$XDG_DATA_HOME/kiekje/library.db" "INSERT INTO captures (path, mode, width, height, bytes, created_us)
+        VALUES ('$ROOT/shot.png', 'region', 800, 500, 1000, 1)"
+    "$BIN" gallery >>"$ROOT/cli.log" 2>&1
+    sleep 3
+    xdotool mousemove 425 280 click 1
+    sleep 0.5
+    xdotool key ctrl+e
+    sleep 3
+    xdotool key t
+    sleep 0.5
+    xdotool mousemove 400 250 click 1
+    sleep 0.5
+    xdotool type --delay 80 one
+    xdotool key Return
+    sleep 0.5
+    xdotool mousemove 400 400 click 1
+    sleep 0.5
+    xdotool type --delay 80 two
+    sleep 0.5
+    a11y press Undo || missing+=" Undo"
+    sleep 0.5
+    a11y press Redo || missing+=" Redo"
+    sleep 0.5
+    xdotool mousemove 400 550 click 1
+    sleep 0.5
+    xdotool type --delay 80 six
+    sleep 0.5
+    a11y press Clear || missing+=" Clear"
+    sleep 0.5
+    a11y press Undo || missing+=" Undo"
+    sleep 1
+    import -window root "$ROOT/editor.png"
+    counts="$(sed -n 's/^kiekje: \[editor\] debug: annotations: //p' "$ROOT/app.log" | paste -sd' ')"
+    if crashed; then
+        verdict editor_undo "fail the daemon crashed"
+    elif [[ "$counts" == "$expected" ]]; then
+        verdict editor_undo "pass undo, redo and clear while typing kept every shape: $counts"
+    elif [[ -n "$missing" ]]; then
+        verdict editor_undo "fail could not press$missing over AT-SPI, annotation counts: ${counts:-none}"
+    else
+        verdict editor_undo "fail annotation counts ${counts:-none}, expected $expected"
+    fi
+    stop_session
+}
+
+SWITCHES=("Notify after each capture" "Play a capture sound" "Light theme" "Upload to a temporary link")
+
+function switch_states {
+    local name
+    for name in "${SWITCHES[@]}"; do
+        a11y state "$name" | sed -nE 's/^checked=([01]).*/\1/p'
+    done | paste -sd' '
+}
+
+function settings_persist {
+    local before toggled restored name
+    start_session
+    "$BIN" settings >>"$ROOT/cli.log" 2>&1
+    a11y --wait 15 press General
+    sleep 1
+    before="$(switch_states)"
+    for name in "${SWITCHES[@]}"; do
+        a11y press "$name"
+    done
+    sleep 1
+    toggled="$(switch_states)"
+    sleep 1
+    "$BIN" quit >/dev/null 2>&1
+    sleep 2
+    "$BIN" daemon >>"$ROOT/app.log" 2>&1 &
+    DAEMON=$!
+    sleep 3
+    "$BIN" settings >>"$ROOT/cli.log" 2>&1
+    a11y --wait 15 press General
+    sleep 1
+    restored="$(switch_states)"
+    if [[ "$(wc -w <<<"$before")" != "${#SWITCHES[@]}" ]]; then
+        verdict settings_persist "fail could not read the switches over AT-SPI: '$before'"
+    elif [[ "$(tr 01 10 <<<"$before")" != "$toggled" ]]; then
+        verdict settings_persist "fail the switches went from $before to $toggled, expected every one flipped"
+    elif [[ "$restored" != "$toggled" ]]; then
+        verdict settings_persist "fail after a restart the switches read $restored, set to $toggled"
+    else
+        verdict settings_persist "pass ${#SWITCHES[@]} switches toggled back to back went from $before to $toggled and survived a restart"
+    fi
+    stop_session
+}
+
+if [[ "${1:-}" == "--scenario" ]]; then
+    "$2"
+    exit 0
+fi
+
+: >"$OUT/checks.txt"
+for name in pin_zoom editor_undo settings_persist; do
+    scenario "$name"
+done
+cat "$OUT/checks.txt"
+! grep -q '=fail' "$OUT/checks.txt"

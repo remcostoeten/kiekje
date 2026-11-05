@@ -298,6 +298,7 @@ fn nav_item(icon_name: &str, title: &str) -> (gtk::ToggleButton, gtk::Label) {
         .child(&content)
         .css_classes(["nav"])
         .build();
+    button.update_property(&[gtk::accessible::Property::Label(title)]);
     (button, hits)
 }
 
