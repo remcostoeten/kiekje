@@ -4,10 +4,24 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+## [0.1.0-alpha.11] - 2026-11-05
+
 ### Added
 
+- Screen recordings capture system audio, on by default, and optionally the microphone, mixed into one file. Both are switches in Settings and the tray has a microphone toggle.
 - `kiekje capture window --id <id> --output <path>` and `kiekje capture fullscreen --output <path>` write one capture to a new file without the overlay, the clipboard, a notification or a gallery entry, and print the path. `--crop x,y,w,h` keeps part of it, in pixels of the capture. Window capture renders the window on its own through KWin, so windows above it do not show. Plasma only.
 - `kiekje windows` lists the open windows with the ids `--id` takes, their geometry, application and title.
+
+### Changed
+
+- The settings window is redesigned: a near-black palette, a full-height sidebar with search on `/`, and a live preview of the overlay on the Capture page.
+- A capture shortcut may share its key with the record shortcut. The key then captures when nothing records and stops a running recording.
+- Global shortcuts pause while you record a new shortcut in Settings.
+
+### Fixed
+
+- The settings window shows minimize, maximize and close again.
+- The settings sidebar buttons have an accessible name, so screen readers no longer announce them as unnamed toggles.
 
 ## [0.1.0-alpha.10] - 2026-11-01
 
@@ -158,7 +172,9 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 First alpha: region capture with an overlay, a gallery, an editor with shapes, text and crop, a tray, and settings.
 
-[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.9...HEAD
+[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.11...HEAD
+[0.1.0-alpha.11]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.11
+[0.1.0-alpha.10]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.10
 [0.1.0-alpha.9]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.9
 [0.1.0-alpha.8]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.7
