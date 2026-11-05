@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+import sys
+import time
+
+import gi
+
+gi.require_version("Atspi", "2.0")
+from gi.repository import Atspi, GLib
+
+USAGE = """Usage: lab/a11y [--wait SECONDS] COMMAND NAME
+
+Finds a showing widget of a running Kiekje by its accessible name over AT-SPI.
+
+  press NAME   run the widget's first action, like a click on a button or a switch
+  state NAME   print checked=0|1 sensitive=0|1
+  name PREFIX  print the full name of the first widget whose name starts with PREFIX
+
+Exits 2 when nothing matches, 3 when the widget is insensitive, 4 when the action fails."""
+
+LIMIT = 4000
+
+
+def kiekje_apps():
+    desktop = Atspi.get_desktop(0)
+    for index in range(desktop.get_child_count()):
+        app = desktop.get_child_at_index(index)
+        if app is not None and "kiekje" in (app.get_name() or "").lower():
+            yield app
+
+
+def walk(root):
+    stack = [root]
+    seen = 0
+    while stack and seen < LIMIT:
+        node = stack.pop()
+        seen += 1
+        yield node
+        try:
+            count = node.get_child_count()
+        except GLib.Error:
+            continue
+        for index in reversed(range(count)):
+            child = node.get_child_at_index(index)
+            if child is not None:
+                stack.append(child)
+
+
+def actionable(node):
+    return node.get_role() not in (Atspi.Role.LABEL, Atspi.Role.STATIC)
+
+
+def showing(node):
+    states = node.get_state_set()
+    return states.contains(Atspi.StateType.SHOWING) and states.contains(Atspi.StateType.VISIBLE)
+
+
+def matches(name, target, prefix):
+    return name.startswith(target) if prefix else name == target
+
+
+def find(target, prefix):
+    for app in kiekje_apps():
+        for node in walk(app):
+            name = node.get_name() or ""
+            if name and matches(name, target, prefix) and actionable(node) and showing(node):
+                return node
+    return None
+
+
+def lookup(command, target, wait):
+    deadline = time.monotonic() + wait
+    while True:
+        node = find(target, command == "name")
+        if node is not None or time.monotonic() >= deadline:
+            return node
+        time.sleep(0.3)
+
+
+def main(arguments):
+    wait = 0.0
+    if arguments[:1] == ["--wait"] and len(arguments) > 1:
+        wait = float(arguments[1])
+        arguments = arguments[2:]
+    if len(arguments) != 2 or arguments[0] not in ("press", "state", "name"):
+        print(USAGE, file=sys.stderr)
+        return 1
+    command, target = arguments
+    node = lookup(command, target, wait)
+    if node is None:
+        print(f"a11y: nothing named {target!r} is showing", file=sys.stderr)
+        return 2
+    states = node.get_state_set()
+    sensitive = states.contains(Atspi.StateType.SENSITIVE)
+    if command == "name":
+        print(node.get_name())
+        return 0
+    if command == "state":
+        checked = states.contains(Atspi.StateType.CHECKED)
+        print(f"checked={int(checked)} sensitive={int(sensitive)}")
+        return 0
+    if not sensitive:
+        print(f"a11y: {target!r} is insensitive", file=sys.stderr)
+        return 3
+    action = node.get_action_iface()
+    if action is None or action.get_n_actions() == 0 or not action.do_action(0):
+        print(f"a11y: {target!r} has no action that ran", file=sys.stderr)
+        return 4
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
