@@ -155,6 +155,23 @@ impl Film {
             Self::Gif => "GIF",
         }
     }
+
+    fn digit(self) -> &'static str {
+        match self {
+            Self::Off => "1",
+            Self::Video => "2",
+            Self::Gif => "3",
+        }
+    }
+
+    fn for_key(key: gdk::Key) -> Option<Self> {
+        match key {
+            gdk::Key::_1 | gdk::Key::KP_1 => Some(Self::Off),
+            gdk::Key::_2 | gdk::Key::KP_2 => Some(Self::Video),
+            gdk::Key::_3 | gdk::Key::KP_3 => Some(Self::Gif),
+            _ => None,
+        }
+    }
 }
 
 struct ModeBar {
@@ -759,6 +776,10 @@ fn shortcut(shared: &Rc<Shared>, key: gdk::Key, state: gdk::ModifierType) -> boo
         return false;
     }
     let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+    if let Some(film) = Film::for_key(key).filter(|_| !shift) {
+        set_film(shared, film);
+        return true;
+    }
     match key.to_lower() {
         _ if key == gdk::Key::question => {
             toggle_hints(shared);
@@ -1030,12 +1051,28 @@ fn mode_bar(shared: &Rc<Shared>, frame_index: usize) -> ModeBar {
         .build();
     let mut buttons = Vec::new();
     for film in Film::ALL {
+        let content = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .build();
+        content.append(
+            &gtk::Label::builder()
+                .label(film.digit())
+                .css_classes(["keycap"])
+                .build(),
+        );
+        content.append(&gtk::Label::new(Some(film.label())));
         let button = gtk::Button::builder()
-            .label(film.label())
-            .tooltip_text("Choose what a selection makes (G)")
+            .child(&content)
+            .tooltip_text(format!("{} (key {}, G cycles)", film.label(), film.digit()))
             .css_classes(["act"])
             .focus_on_click(false)
             .build();
+        button.update_property(&[gtk::accessible::Property::Label(&format!(
+            "{} ({})",
+            film.label(),
+            film.digit()
+        ))]);
         button.set_css_classes(&mode_classes(film, shared.film.get()));
         let weak = Rc::downgrade(shared);
         button.connect_clicked(move |_| {
@@ -1541,6 +1578,14 @@ mod tests {
         );
         let drag = hints.iter().find(|hint| hint.label == "select").unwrap();
         assert_eq!(drag.press, None);
+    }
+
+    #[test]
+    fn maps_digit_keys_to_film_modes() {
+        assert_eq!(Film::for_key(gdk::Key::_1), Some(Film::Off));
+        assert_eq!(Film::for_key(gdk::Key::KP_2), Some(Film::Video));
+        assert_eq!(Film::for_key(gdk::Key::_3), Some(Film::Gif));
+        assert_eq!(Film::for_key(gdk::Key::_4), None);
     }
 
     #[test]
