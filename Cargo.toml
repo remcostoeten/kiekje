@@ -42,6 +42,8 @@ test = true
 debug = "line-tables-only"
 
 [profile.release]
-lto = "thin"
+lto = "fat"
+opt-level = "s"
+panic = "abort"
 codegen-units = 1
 strip = true
