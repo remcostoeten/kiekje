@@ -121,3 +121,4 @@ CI runs fmt, clippy and test. All three must pass before a change is done.
 
 - Conventional Commit prefixes, short and imperative: `feat: add kwin screenshot2 backend`.
 - PRs state what changed, why, the checks run, and which desktops were tested. Attach screenshots for UI changes.
+- Every release bumps the version on the GitHub social preview too: change the `.version` text in `docs/branding/social-preview/social-preview.html` to the new `Cargo.toml` version, run `python3 docs/branding/social-preview/render.py` and commit the new `social-preview.png` with the release. Remind Remco to upload it under the repository's Settings, Social preview, because GitHub has no API for it.
