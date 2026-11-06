@@ -32,7 +32,8 @@ Releases are pre-release alphas from GitHub Releases. The release workflow runs 
    ```
 
    Without the file, the tag's annotation becomes the body.
-3. Merge, then tag and push:
+3. Set the version in `docs/branding/social-preview/social-preview.html` and run `python3 docs/branding/social-preview/render.py`. After the release, upload the new `social-preview.png` under the repository's Settings, Social preview; GitHub has no API for it.
+4. Merge, then tag and push:
 
    ```bash
    git tag -a v0.1.0-alpha.7 -m "kiekje 0.1.0-alpha.7"
