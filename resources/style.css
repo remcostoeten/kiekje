@@ -297,7 +297,6 @@ popover.context-menu * {
 
 .panel button.thumbnail picture {
   border-radius: 4px;
-  overflow: hidden;
 }
 
 .panel button.thumbnail:hover {
@@ -1321,11 +1320,21 @@ window.settings-window .sidebar {
 }
 
 .overlay-modes {
-  background-color: color-mix(in srgb, var(--surface) 92%, transparent);
+  background-color: var(--surface);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 14px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
   box-shadow: var(--specular);
-  padding: 4px;
+  padding: 6px;
+}
+
+.panel.overlay-modes button.act {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  font-weight: 500;
 }
 
 .overlay-hints .keycap {
@@ -1712,6 +1721,7 @@ window.kiekje-pin popover.menu modelbutton:focus-visible {
   background-color: color-mix(in srgb, var(--fg) 45%, transparent);
   border: none;
   border-radius: 999px;
+  margin: 0;
 }
 
 .editor scale > trough > slider {

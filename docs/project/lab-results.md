@@ -461,3 +461,19 @@ Run on 2026-11-05: Arch Linux, GTK 4.24.1, debug build, X11 backend with no wind
 | `settings_persist` | Pass. Four General switches toggled back to back went from `1 1 0 0` to `0 0 1 1` and read the same after a daemon restart. |
 
 The settings sidebar buttons had no accessible name, so screen readers announced them as unnamed toggles; they now carry their page name. Unverified here: the layer-shell pin on Plasma and Hyprland, the inline editor on the overlay, and a shortcut recorded through KGlobalAccel or the Hyprland bind file. The VM runs of `verify` cover those.
+
+## Headless capture timing and storage errors on Plasma
+
+Run on 2026-11-06 on the host: i7-10700F, Arch Linux, kernel 7.2.9, Plasma 6.7.5 on Wayland, one 3840x2160 monitor, release build. The desktop was in use during the runs. Each run is one `kiekje capture fullscreen --output` process timed from start to exit, 50 runs per series, 0.5 s apart, nearest-rank percentiles:
+
+| Series | p50 | p95 |
+| --- | --- | --- |
+| Full 3840x2160 PNG, about 2.1 MB | 282.8 ms | 463.4 ms |
+| Same capture with `--crop 0,0,1,1` | 223.6 ms | 351.6 ms |
+| `kiekje --version`, process start only | 48.9 ms | 111.8 ms |
+
+This is wall time for the whole CLI process (start, GTK init, KWin `ScreenShot2`, encoding, write), not the trigger-to-frame latency of section 8, which only the daemon logs.
+
+Storage errors with `--output`, each exit 1 with the OS error and no file left: a read-only folder (`Permission denied`), an existing file, untouched (`File exists`), a missing folder (`No such file or directory`) and a full 512 KiB or 1 MiB tmpfs (`No space left on device`; the partial file is removed). 20 processes started together on 20 paths wrote 20 valid files in 1.6 s.
+
+Unverified: the daemon's save path and its error notice for the same cases, and 20 triggers in one second, which the daemon drops while one capture runs. `saves_twenty_captures_with_the_same_name` covers 20 saves under one name, one after another.

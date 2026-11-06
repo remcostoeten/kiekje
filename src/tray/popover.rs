@@ -713,6 +713,7 @@ fn thumbnail_button(path: PathBuf, texture: &gdk::Texture) -> gtk::Button {
     let picture = gtk::Picture::for_paintable(texture);
     picture.set_content_fit(gtk::ContentFit::Cover);
     picture.set_size_request(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+    picture.set_overflow(gtk::Overflow::Hidden);
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
