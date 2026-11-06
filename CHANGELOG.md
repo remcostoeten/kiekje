@@ -4,6 +4,21 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12] - 2026-11-06
+
+### Added
+
+- Text capture: a Text mode in the overlay, Copy text (Ctrl+T) in the inline editor, `kiekje capture text`, a tray item and a `capture-text` shortcut read a region with Tesseract and copy its text. Tesseract is optional and loaded at runtime; `[text] languages` picks the languages.
+- The keys 1 to 4 pick Screenshot, Video, GIF and Text in the overlay.
+
+### Changed
+
+- The overlay mode bar is opaque, as tall as the tool bar and set apart from it.
+
+### Fixed
+
+- The overlay and the tray popover no longer log GTK style warnings.
+
 ## [0.1.0-alpha.11] - 2026-11-05
 
 ### Added
@@ -172,7 +187,8 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 First alpha: region capture with an overlay, a gallery, an editor with shapes, text and crop, a tray, and settings.
 
-[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.11...HEAD
+[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.12...HEAD
+[0.1.0-alpha.12]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.12
 [0.1.0-alpha.11]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.11
 [0.1.0-alpha.10]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.10
 [0.1.0-alpha.9]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.9
