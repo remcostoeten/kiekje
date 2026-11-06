@@ -1049,7 +1049,7 @@ fn mode_bar(shared: &Rc<Shared>, frame_index: usize) -> ModeBar {
     let region = !picks_windows(shared);
     let column = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
+        .spacing(12)
         .halign(gtk::Align::Center)
         .valign(gtk::Align::Start)
         .margin_top(if region { 8 } else { 32 })
