@@ -8,6 +8,7 @@ mod cli;
 mod clipboard;
 mod config;
 mod desktop_file;
+mod dock;
 mod doctor;
 mod editor;
 mod fuzzy;

@@ -42,6 +42,8 @@ pub struct Config {
     #[serde(default)]
     pub text: Text,
     #[serde(default)]
+    pub dock: Dock,
+    #[serde(default)]
     pub shortcuts: Shortcuts,
 }
 
@@ -66,6 +68,49 @@ impl Theme {
             Self::Dark => Self::Light,
             Self::Light => Self::Dark,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Dock {
+    pub enabled: bool,
+    pub corner: Corner,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Corner {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl Corner {
+    pub const ALL: [Self; 4] = [
+        Self::TopLeft,
+        Self::TopRight,
+        Self::BottomLeft,
+        Self::BottomRight,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TopLeft => "Top left",
+            Self::TopRight => "Top right",
+            Self::BottomLeft => "Bottom left",
+            Self::BottomRight => "Bottom right",
+        }
+    }
+
+    pub fn is_left(self) -> bool {
+        matches!(self, Self::TopLeft | Self::BottomLeft)
+    }
+
+    pub fn is_top(self) -> bool {
+        matches!(self, Self::TopLeft | Self::TopRight)
     }
 }
 
@@ -221,6 +266,7 @@ impl Default for Config {
             upload: Upload::default(),
             recording: Recording::default(),
             text: Text::default(),
+            dock: Dock::default(),
             shortcuts: Shortcuts::default(),
         }
     }
@@ -783,6 +829,25 @@ mod tests {
     #[test]
     fn rejects_an_unknown_drawing_colour() {
         assert!(parse("[drawing]\ncolor = \"purple\"", Path::new("config.toml")).is_err());
+    }
+
+    #[test]
+    fn reads_the_dock_corner_and_defaults_it_off_at_the_top_right() {
+        let config = parse(
+            "[dock]\nenabled = true\ncorner = \"bottom-left\"",
+            Path::new("config.toml"),
+        )
+        .unwrap();
+        assert!(config.dock.enabled);
+        assert_eq!(config.dock.corner, Corner::BottomLeft);
+        assert_eq!(
+            Config::default().dock,
+            Dock {
+                enabled: false,
+                corner: Corner::TopRight
+            }
+        );
+        assert!(parse("[dock]\ncorner = \"middle\"", Path::new("config.toml")).is_err());
     }
 
     #[test]

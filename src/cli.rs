@@ -82,6 +82,7 @@ pub fn parse_capture(arguments: &[String], trigger_us: i64) -> Result<CaptureCom
         backend: BackendChoice::Auto,
         save: true,
         edit: false,
+        gif: false,
         delay: Duration::ZERO,
         trigger_us,
     };

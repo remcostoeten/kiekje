@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use crate::capture::Availability;
 use crate::config::{
-    self, Capture, Config, ConfigError, General, Notifications, Overlay, Recording, Saving,
+    self, Capture, Config, ConfigError, Dock, General, Notifications, Overlay, Recording, Saving,
     Storage, Text, Upload,
 };
 use crate::editor::DrawingKeys;
@@ -52,6 +52,7 @@ pub struct Model {
     pub general: General,
     pub upload: Upload,
     pub recording: Recording,
+    pub dock: Dock,
     pub drawing_keys: DrawingKeys,
 }
 
@@ -93,7 +94,7 @@ const PAGE_SPECS: [PageSpec; 6] = [
     PageSpec {
         name: "general",
         title: "General",
-        subtitle: "Appearance, notifications, startup, updates, sharing and the clipboard.",
+        subtitle: "Appearance, the edge dock, notifications, startup, updates, sharing and the clipboard.",
         icon: "kiekje-sliders-symbolic",
     },
     PageSpec {

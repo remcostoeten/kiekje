@@ -81,7 +81,7 @@ fn handle_tray_command(app: &gtk::Application, session: &Rc<Session>, command: T
     }
 }
 
-fn capture_after_menu(app: &gtk::Application, session: &Rc<Session>, request: Request) {
+pub(super) fn capture_after_menu(app: &gtk::Application, session: &Rc<Session>, request: Request) {
     let app = app.clone();
     let session = session.clone();
     glib::timeout_add_local_once(TRAY_MENU_CLOSE, move || {

@@ -4,6 +4,7 @@ use std::time::Duration;
 use gtk::{gio, glib};
 
 use super::Session;
+use super::dock::start_dock;
 use super::shortcuts::register_shortcuts;
 use super::tray::start_tray;
 use crate::backends::windows::{self};
@@ -25,16 +26,18 @@ pub(super) fn start_session_services(app: &gtk::Application, session: &Rc<Sessio
             (
                 windows::availability(windows::detect()),
                 ocr::availability(),
+                config::load().dock,
             )
         })
         .await;
-        let (window, text) = match detected {
+        let (window, text, dock) = match detected {
             Ok(detected) => detected,
             Err(_) => {
                 error!("the capability detection worker stopped");
                 (
                     Availability::Unavailable(windows::UNAVAILABLE),
                     Availability::Unavailable(ocr::NOT_INSTALLED),
+                    config::Dock::default(),
                 )
             }
         };
@@ -47,6 +50,7 @@ pub(super) fn start_session_services(app: &gtk::Application, session: &Rc<Sessio
         session.window_capture.set(Some(window));
         register_shortcuts(&app, &session, window, text);
         start_tray(&app, &session, window);
+        start_dock(&app, &session, dock);
     });
 }
 

@@ -22,6 +22,7 @@ use crate::ui::{self, fonts, gallery, settings};
 
 mod countdown;
 mod deliver;
+mod dock;
 mod escape;
 mod flow;
 mod notice;
@@ -102,6 +103,7 @@ pub struct Request {
     pub backend: BackendChoice,
     pub save: bool,
     pub edit: bool,
+    pub gif: bool,
     pub delay: Duration,
     pub trigger_us: i64,
 }
@@ -115,8 +117,16 @@ impl Request {
             backend: BackendChoice::Auto,
             save: true,
             edit: false,
+            gif: false,
             delay: Duration::ZERO,
             trigger_us: glib::monotonic_time(),
+        }
+    }
+
+    fn gif() -> Self {
+        Self {
+            gif: true,
+            ..Self::saved(CaptureMode::Region)
         }
     }
 
@@ -150,6 +160,7 @@ impl Request {
             backend: BackendChoice::parse(&backend)?,
             save,
             edit,
+            gif: false,
             delay: Duration::from_millis(u64::from(delay_ms)),
             trigger_us,
         })
@@ -427,6 +438,7 @@ mod tests {
             backend: BackendChoice::Wlroots,
             save: false,
             edit: true,
+            gif: false,
             delay: Duration::from_secs(3),
             trigger_us: 42,
         };
