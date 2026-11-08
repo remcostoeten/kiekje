@@ -170,6 +170,7 @@ fn grab(app: &gtk::Application, request: Request, session: &Rc<Session>) {
                 let options = overlay::Options {
                     mode: request.mode,
                     edit: request.edit || inline,
+                    gif: request.gif,
                     overlay,
                     drawing,
                     last_region: previous_region,

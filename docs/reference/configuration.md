@@ -71,6 +71,10 @@ expiry = "24h"
 [text]
 languages = ["eng"]
 
+[dock]
+enabled = false
+corner = "top-right"
+
 [shortcuts]
 capture-region = "Print"
 capture-fullscreen = "SHIFT+Print"
@@ -186,6 +190,13 @@ One key per drawing action, pressed without modifiers. A letter, a digit or punc
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `languages` | `["eng"]` | The Tesseract languages text capture reads in, by their data file names such as `"eng"`, `"nld"` or `"chi_sim"`. An empty list reads English. A language without installed data is skipped |
+
+## `[dock]`
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | `false` | Show the edge dock: push the pointer into the chosen screen corner and a column of buttons slides out for Capture every screen, Capture region, Record screen, Record a GIF of a region and Copy text from region. It slides back 350 ms after the pointer leaves and hides before a capture starts. Needs layer shell (KDE Plasma, Hyprland, Sway) |
+| `corner` | `"top-right"` | `"top-left"`, `"top-right"`, `"bottom-left"` or `"bottom-right"`. A screen whose corner edge touches another screen gets no dock there, so crossing between screens doesn't pop it |
 
 ## `[shortcuts]`
 

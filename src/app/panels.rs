@@ -117,6 +117,7 @@ pub(super) fn open_settings(app: &gtk::Application, session: &Rc<Session>) {
             general: config.general,
             upload: config.upload,
             recording: config.recording,
+            dock: config.dock,
             drawing_keys: config.drawing.keys,
             host: session.shortcuts.host.borrow().clone(),
             bound,

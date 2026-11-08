@@ -39,6 +39,7 @@ const MIN_SELECTION: i32 = 3;
 pub struct Options {
     pub mode: CaptureMode,
     pub edit: bool,
+    pub gif: bool,
     pub overlay: config::Overlay,
     pub drawing: config::Drawing,
     pub last_region: Option<LogicalRect>,
@@ -309,7 +310,7 @@ pub fn show(
         hints_on: Cell::new(options.overlay.hints),
         lens: Cell::new(false),
         mounted: RefCell::new(None),
-        kind: Cell::new(initial_kind(options.mode, options.text)),
+        kind: Cell::new(initial_kind(options.mode, options.text, options.gif)),
         text: options.text,
         modes: RefCell::new(Vec::new()),
         drawing: options.drawing,
@@ -850,8 +851,10 @@ fn choose(shared: &Rc<Shared>, rect: LogicalRect) -> bool {
     true
 }
 
-fn initial_kind(mode: CaptureMode, text: Availability) -> Kind {
-    if mode == CaptureMode::Text && text.is_available() {
+fn initial_kind(mode: CaptureMode, text: Availability, gif: bool) -> Kind {
+    if gif && mode == CaptureMode::Region {
+        Kind::Gif
+    } else if mode == CaptureMode::Text && text.is_available() {
         Kind::Text
     } else {
         Kind::Screenshot
@@ -1561,13 +1564,27 @@ mod tests {
     fn skips_text_when_text_recognition_is_unavailable() {
         let missing = Availability::Unavailable("no Tesseract");
         assert_eq!(Kind::Gif.next(missing), Kind::Screenshot);
-        assert_eq!(initial_kind(CaptureMode::Text, missing), Kind::Screenshot);
         assert_eq!(
-            initial_kind(CaptureMode::Text, Availability::Available),
+            initial_kind(CaptureMode::Text, missing, false),
+            Kind::Screenshot
+        );
+        assert_eq!(
+            initial_kind(CaptureMode::Text, Availability::Available, false),
             Kind::Text
         );
         assert_eq!(
-            initial_kind(CaptureMode::Region, Availability::Available),
+            initial_kind(CaptureMode::Region, Availability::Available, false),
+            Kind::Screenshot
+        );
+    }
+
+    #[test]
+    fn starts_in_gif_mode_only_for_a_region() {
+        let text = Availability::Available;
+        assert_eq!(initial_kind(CaptureMode::Region, text, true), Kind::Gif);
+        assert_eq!(initial_kind(CaptureMode::Text, text, true), Kind::Text);
+        assert_eq!(
+            initial_kind(CaptureMode::Fullscreen, text, true),
             Kind::Screenshot
         );
     }

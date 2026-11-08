@@ -6,8 +6,10 @@ use gtk::{gio, glib};
 
 use super::capture::{self, Capture};
 use super::{Model, Pages};
+use crate::capture::Availability;
 use crate::capture::CaptureMode;
-use crate::config::{self, Config, Folder, Theme};
+use crate::config::{self, Config, Corner, Folder, Theme};
+use crate::dock;
 use crate::storage::{
     self, ImageFormat, Naming, Quality, Template, autostart, template::DEFAULT_TEMPLATE,
 };
@@ -48,6 +50,9 @@ pub(super) struct General {
     capture: Rc<Capture>,
     autostart: gtk::Switch,
     light_theme: gtk::Switch,
+    dock: gtk::Switch,
+    dock_corner: gtk::DropDown,
+    dock_corner_row: gtk::ListBoxRow,
     updates: gtk::Switch,
     upload: gtk::Switch,
     expiry: gtk::DropDown,
@@ -156,6 +161,29 @@ pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
         Some(&light_theme),
     ));
 
+    let edge = group(&pages.general, "Edge dock");
+    let dock_support = dock::availability();
+    let dock = switch(model.dock.enabled && dock_support.is_available());
+    let dock_row = edge.add(row(
+        "Show the edge dock",
+        Some("Push the pointer into a screen corner to slide out the capture and record buttons."),
+        Some(&dock),
+    ));
+    let corners: Vec<&str> = Corner::ALL.iter().map(|corner| corner.label()).collect();
+    let dock_corner = gtk::DropDown::from_strings(&corners);
+    dock_corner.set_selected(corner_index(model.dock.corner));
+    dock_corner.update_property(&[gtk::accessible::Property::Label("Dock corner")]);
+    let dock_corner_row = edge.add(row(
+        "Corner",
+        Some("The dock sits flush in this corner of each screen, except on edges shared with another screen."),
+        Some(&dock_corner),
+    ));
+    dock_corner_row.set_sensitive(model.dock.enabled && dock_support.is_available());
+    if let Availability::Unavailable(reason) = dock_support {
+        dock_row.set_sensitive(false);
+        edge.footer(&note(reason));
+    }
+
     let alerts = group(&pages.general, "Notifications");
     let enabled = switch(notifications.enabled);
     alerts.add(row(
@@ -228,6 +256,9 @@ pub(super) fn append(pages: &Pages, model: &Model) -> Weak<General> {
         capture,
         autostart,
         light_theme,
+        dock,
+        dock_corner,
+        dock_corner_row,
         updates,
         upload,
         expiry,
@@ -369,6 +400,43 @@ fn connect(general: &Rc<General>, choose: &gtk::Button, changes: &Changes) {
             Box::new(move |config| config.general.theme = theme),
         );
     });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general.dock.connect_active_notify(move |check| {
+        let on = check.is_active();
+        let Some(general) = weak.upgrade() else {
+            return;
+        };
+        general.dock_corner_row.set_sensitive(on);
+        if general.quiet.get() {
+            return;
+        }
+        send(
+            &sender,
+            Page::General,
+            Box::new(move |config| config.dock.enabled = on),
+        );
+    });
+    let weak = Rc::downgrade(general);
+    let sender = changes.clone();
+    general
+        .dock_corner
+        .connect_selected_notify(move |dropdown| {
+            let picked = usize::try_from(dropdown.selected())
+                .ok()
+                .and_then(|index| Corner::ALL.get(index).copied());
+            let Some(corner) = picked else {
+                return;
+            };
+            if weak.upgrade().is_none_or(|general| general.quiet.get()) {
+                return;
+            }
+            send(
+                &sender,
+                Page::General,
+                Box::new(move |config| config.dock.corner = corner),
+            );
+        });
     let weak = Rc::downgrade(general);
     let sender = changes.clone();
     general.updates.connect_active_notify(move |check| {
@@ -613,6 +681,7 @@ impl General {
 
     fn saved(&self, config: &Config) {
         set_theme(config.general.theme);
+        dock::configure(config.dock);
         for page in [Page::Capture, Page::Saving, Page::General] {
             self.complain(page, "");
         }
@@ -640,6 +709,11 @@ impl General {
         self.capture.reset(config);
         self.light_theme
             .set_active(config.general.theme == Theme::Light);
+        let dock_on = config.dock.enabled && dock::availability().is_available();
+        self.dock.set_active(dock_on);
+        self.dock_corner_row.set_sensitive(dock_on);
+        self.dock_corner
+            .set_selected(corner_index(config.dock.corner));
         self.updates.set_active(config.general.check_for_updates);
         self.upload.set_active(config.upload.enabled);
         self.expiry_row.set_sensitive(config.upload.enabled);
@@ -676,6 +750,14 @@ fn controls(widgets: &[&gtk::Widget]) -> gtk::Box {
         controls.append(*widget);
     }
     controls
+}
+
+fn corner_index(corner: Corner) -> u32 {
+    Corner::ALL
+        .iter()
+        .position(|candidate| *candidate == corner)
+        .and_then(|index| u32::try_from(index).ok())
+        .unwrap_or(0)
 }
 
 fn expiry_index(expiry: Expiry) -> u32 {
