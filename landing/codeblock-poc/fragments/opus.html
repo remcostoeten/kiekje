@@ -1,0 +1,805 @@
+<style>
+  .poc-opus {
+    --o-panel: color-mix(in srgb, var(--raised) 55%, var(--bg));
+    --o-wash: color-mix(in srgb, var(--fg) 6%, transparent);
+    --o-wash-strong: color-mix(in srgb, var(--fg) 11%, transparent);
+    --o-accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
+    --o-accent-strong: color-mix(in srgb, var(--accent) 26%, transparent);
+    --o-url: color-mix(in srgb, var(--accent-text) 55%, var(--fg));
+    --o-flag: color-mix(in srgb, var(--muted) 80%, var(--fg));
+    color: var(--fg);
+    font-family: var(--sans);
+  }
+  .poc-opus *,
+  .poc-opus *::before,
+  .poc-opus *::after {
+    box-sizing: border-box;
+  }
+  .poc-opus .o-head {
+    max-width: 660px;
+    margin-bottom: clamp(32px, 5vw, 56px);
+  }
+  .poc-opus .o-head h2 {
+    margin: 0;
+    color: var(--heading);
+    font-size: clamp(30px, 3.4vw, 42px);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+  }
+  .poc-opus .o-head p {
+    margin: 18px 0 0;
+    color: var(--muted);
+    font-size: 17px;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+  .poc-opus code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    color: var(--fg);
+  }
+  .poc-opus .o-shell {
+    display: grid;
+    grid-template-columns: 236px minmax(0, 1fr);
+    border: 1px solid var(--stroke);
+    border-radius: 14px;
+    background: var(--o-panel);
+    overflow: hidden;
+  }
+  .poc-opus .o-rail {
+    min-width: 0;
+    padding: 14px 8px 8px;
+    border-right: 1px solid var(--stroke);
+    background: var(--bg);
+  }
+  .poc-opus .o-rail-label {
+    margin: 0 10px 10px;
+    color: var(--faint);
+    font-size: 13px;
+  }
+  .poc-opus .o-tabs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .poc-opus .o-tab {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    height: 40px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 14px var(--sans);
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-opus .o-dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--stroke-hi);
+    transition: background-color 150ms ease;
+  }
+  .poc-opus .o-tab-label {
+    flex: 1;
+    white-space: nowrap;
+  }
+  .poc-opus .o-tab-hint {
+    color: var(--faint);
+    font: 12px var(--mono);
+    transition: color 150ms ease;
+  }
+  .poc-opus .o-tab[aria-selected="true"] {
+    background: var(--o-accent-wash);
+    color: var(--heading);
+  }
+  .poc-opus .o-tab[aria-selected="true"] .o-dot {
+    background: var(--accent);
+  }
+  .poc-opus .o-tab[aria-selected="true"] .o-tab-hint {
+    color: var(--accent-text);
+  }
+  .poc-opus .o-tab:focus-visible {
+    outline: none;
+    background: var(--o-accent-strong);
+    color: var(--heading);
+  }
+  .poc-opus .o-tab:focus-visible .o-tab-hint {
+    color: var(--heading);
+  }
+  .poc-opus .o-panel {
+    min-width: 0;
+    padding: clamp(20px, 3vw, 32px);
+  }
+  .poc-opus .o-panel:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--fg) 2%, transparent);
+  }
+  .poc-opus .o-panel-head h3 {
+    margin: 0;
+    color: var(--heading);
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .poc-opus .o-panel-head p {
+    max-width: 62ch;
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+  .poc-opus .o-steps {
+    margin: 26px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .poc-opus .o-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 16px;
+    padding-bottom: 26px;
+  }
+  .poc-opus .o-step:last-child {
+    padding-bottom: 0;
+  }
+  .poc-opus .o-step::before {
+    content: "";
+    position: absolute;
+    top: 30px;
+    bottom: 6px;
+    left: 11.5px;
+    width: 1px;
+    background: var(--stroke-hi);
+  }
+  .poc-opus .o-step:last-child::before {
+    display: none;
+  }
+  .poc-opus .o-num {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--stroke-hi);
+    border-radius: 50%;
+    background: var(--raised);
+    color: var(--muted);
+    font: 500 12px var(--mono);
+  }
+  .poc-opus .o-step[data-main] .o-num {
+    border-color: transparent;
+    background: var(--o-accent-wash);
+    color: var(--accent-text);
+  }
+  .poc-opus .o-step-title {
+    margin: 2px 0 10px;
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .poc-opus .o-file {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--stroke);
+    border-radius: 10px;
+    background: var(--raised);
+    color: var(--fg);
+    text-decoration: none;
+    transition: background-color 150ms ease;
+  }
+  .poc-opus .o-file-icon {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 7px;
+    background: var(--raised-hi);
+    color: var(--muted);
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-opus .o-file-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .poc-opus .o-file-name {
+    overflow: hidden;
+    color: var(--heading);
+    font: 13px var(--mono);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .poc-opus .o-file-meta {
+    color: var(--faint);
+    font-size: 12px;
+  }
+  .poc-opus .o-file-go {
+    flex: none;
+    color: var(--faint);
+    transition:
+      color 150ms ease,
+      transform 200ms var(--ease);
+  }
+  .poc-opus .o-file:focus-visible {
+    outline: none;
+    background: var(--o-accent-wash);
+  }
+  .poc-opus .o-file:focus-visible .o-file-icon {
+    background: var(--o-accent-strong);
+    color: var(--accent-text);
+  }
+  .poc-opus .o-file:focus-visible .o-file-go {
+    color: var(--accent-text);
+  }
+  .poc-opus .o-term {
+    border: 1px solid var(--stroke-hi);
+    border-radius: 10px;
+    background: var(--deep);
+    overflow: hidden;
+  }
+  .poc-opus .o-term-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 6px 6px 14px;
+    background: color-mix(in srgb, var(--raised) 50%, var(--deep));
+  }
+  .poc-opus .o-term-meta {
+    color: var(--faint);
+    font: 12px var(--mono);
+    white-space: nowrap;
+  }
+  .poc-opus .o-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 30px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 13px var(--sans);
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease,
+      transform 150ms var(--ease);
+  }
+  .poc-opus .o-copy:active {
+    transform: scale(0.96);
+  }
+  .poc-opus .o-copy:focus-visible {
+    outline: none;
+    background: var(--o-wash-strong);
+    color: var(--heading);
+  }
+  .poc-opus .o-copy[data-copied="true"] {
+    background: var(--o-accent-wash);
+    color: var(--accent-text);
+  }
+  .poc-opus .o-copy .o-i-check,
+  .poc-opus .o-copy[data-copied="true"] .o-i-copy {
+    display: none;
+  }
+  .poc-opus .o-copy[data-copied="true"] .o-i-check {
+    display: block;
+  }
+  .poc-opus .o-code {
+    margin: 0;
+    padding: 14px 16px 16px;
+    font: 14px/1.75 var(--mono);
+    counter-reset: o-line;
+  }
+  .poc-opus .o-line {
+    display: grid;
+    grid-template-columns: 1.4em minmax(0, 1fr);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .poc-opus .o-line::before {
+    content: "$";
+    color: var(--accent-text);
+    user-select: none;
+  }
+  .poc-opus .t-cmd {
+    color: var(--heading);
+    font-weight: 500;
+  }
+  .poc-opus .t-dim {
+    color: var(--faint);
+  }
+  .poc-opus .t-flag {
+    color: var(--o-flag);
+  }
+  .poc-opus .t-url {
+    color: var(--o-url);
+  }
+  .poc-opus .t-path {
+    color: var(--accent-text);
+  }
+  .poc-opus .t-arg {
+    color: var(--fg);
+  }
+  .poc-opus .o-after {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.65;
+    text-wrap: pretty;
+  }
+  .poc-opus .o-after code {
+    white-space: nowrap;
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--raised-hi);
+    color: var(--heading);
+  }
+  .poc-opus .o-inline-link {
+    color: var(--accent-text);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+    text-underline-offset: 3px;
+    border-radius: 4px;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-opus .o-inline-link:focus-visible {
+    outline: none;
+    background: var(--o-accent-strong);
+    color: var(--heading);
+  }
+  .poc-opus .o-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 20px;
+  }
+  .poc-opus .o-foot-meta {
+    margin-left: auto;
+    color: var(--faint);
+    font-size: 13px;
+  }
+  .poc-opus .o-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    height: 44px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 8px;
+    font: 500 14px var(--sans);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      transform 150ms var(--ease),
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-opus .o-btn:active {
+    transform: scale(0.97);
+  }
+  .poc-opus .o-btn svg {
+    transition: transform 180ms var(--ease);
+  }
+  .poc-opus .o-btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .poc-opus .o-btn-primary:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--accent) 85%, #fff);
+  }
+  .poc-opus .o-btn-ghost {
+    background: transparent;
+    color: var(--fg);
+  }
+  .poc-opus .o-btn-ghost:focus-visible {
+    outline: none;
+    background: var(--o-wash-strong);
+    color: var(--heading);
+  }
+  .poc-opus svg {
+    display: block;
+    fill: currentColor;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .poc-opus .o-tab:hover {
+      background: var(--o-wash);
+      color: var(--heading);
+    }
+    .poc-opus .o-tab:hover .o-dot {
+      background: var(--faint);
+    }
+    .poc-opus .o-tab[aria-selected="true"]:hover {
+      background: var(--o-accent-wash);
+    }
+    .poc-opus .o-tab[aria-selected="true"]:hover .o-dot {
+      background: var(--accent);
+    }
+    .poc-opus .o-file:hover {
+      background: var(--raised-hi);
+    }
+    .poc-opus .o-file:hover .o-file-icon {
+      color: var(--accent-text);
+    }
+    .poc-opus .o-file:hover .o-file-go {
+      color: var(--fg);
+      transform: translateY(2px);
+    }
+    .poc-opus .o-copy:hover {
+      background: var(--o-wash);
+      color: var(--heading);
+    }
+    .poc-opus .o-copy[data-copied="true"]:hover {
+      background: var(--o-accent-wash);
+      color: var(--accent-text);
+    }
+    .poc-opus .o-inline-link:hover {
+      color: var(--heading);
+    }
+    .poc-opus .o-btn-primary:hover {
+      background: color-mix(in srgb, var(--accent) 90%, #fff);
+    }
+    .poc-opus .o-btn-primary:hover svg {
+      transform: translateX(3px);
+    }
+    .poc-opus .o-btn-ghost:hover {
+      background: var(--o-wash);
+      color: var(--heading);
+    }
+  }
+  .poc-opus .o-enter {
+    animation: o-rise 220ms var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+  }
+  @keyframes o-rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .poc-opus .o-enter {
+      animation: none;
+    }
+    .poc-opus *,
+    .poc-opus *::before,
+    .poc-opus *::after {
+      transition-duration: 0ms !important;
+    }
+  }
+  @media (max-width: 760px) {
+    .poc-opus .o-shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .poc-opus .o-rail {
+      padding: 8px;
+      border-right: 0;
+      border-bottom: 1px solid var(--stroke);
+    }
+    .poc-opus .o-rail-label {
+      display: none;
+    }
+    .poc-opus .o-tabs {
+      flex-direction: row;
+      overflow-x: auto;
+      scrollbar-width: none;
+      scroll-padding-inline: 8px;
+    }
+    .poc-opus .o-tabs::-webkit-scrollbar {
+      display: none;
+    }
+    .poc-opus .o-tab {
+      flex: none;
+      width: auto;
+      height: 36px;
+      gap: 8px;
+    }
+    .poc-opus .o-tab-hint {
+      display: none;
+    }
+    .poc-opus .o-code {
+      padding: 12px 12px 14px;
+      font-size: 13px;
+    }
+    .poc-opus .o-foot-meta {
+      width: 100%;
+      margin: 4px 0 0;
+      order: 4;
+    }
+    .poc-opus .o-btn-primary {
+      width: 100%;
+    }
+  }
+</style>
+
+<section class="poc poc-opus" aria-labelledby="poc-opus-title">
+  <header class="o-head">
+    <h2 id="poc-opus-title">Install</h2>
+    <p>
+      Kiekje v0.1.0-alpha.12 is a pre-release. The binary links gtk4-layer-shell statically, so the
+      only runtime dependency is GTK 4.14 or newer. Every release has x86_64 and aarch64 builds with
+      a SHA256SUMS file.
+    </p>
+  </header>
+
+  <div class="o-shell">
+    <div class="o-rail">
+      <p class="o-rail-label" id="poc-opus-rail-label">Your system</p>
+      <div
+        class="o-tabs"
+        role="tablist"
+        aria-label="Install method"
+        aria-orientation="vertical"
+        data-tabs
+      ></div>
+    </div>
+    <div class="o-panel" role="tabpanel" tabindex="0" data-panel></div>
+  </div>
+
+  <div class="o-foot">
+    <a class="o-btn o-btn-primary" href="https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.12">
+      All files for v0.1.0-alpha.12
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8.47 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 1 1-1.06-1.06l2.97-2.97H2.75a.75.75 0 0 1 0-1.5h8.69L8.47 4.28a.75.75 0 0 1 0-1.06Z"/></svg>
+    </a>
+    <a class="o-btn o-btn-ghost" href="/docs/guide/install">
+      Install guide
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 .75.75V10a.75.75 0 0 1-1.5 0V5.31l-6.72 6.72a.75.75 0 0 1-1.06-1.06l6.72-6.72H6a.75.75 0 0 1-.75-.75Z"/></svg>
+    </a>
+    <a class="o-btn o-btn-ghost" href="/docs/releases/">
+      Release notes
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 .75.75V10a.75.75 0 0 1-1.5 0V5.31l-6.72 6.72a.75.75 0 0 1-1.06-1.06l6.72-6.72H6a.75.75 0 0 1-.75-.75Z"/></svg>
+    </a>
+    <span class="o-foot-meta">x86_64 and aarch64, checked against SHA256SUMS</span>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const root = document.currentScript?.previousElementSibling?.classList.contains("poc-opus")
+      ? document.currentScript.previousElementSibling
+      : document.querySelector(".poc-opus");
+    if (!root) return;
+
+    const VERSION = "0.1.0-alpha.12";
+    const PACKAGE = VERSION.replaceAll("-", ".");
+    const REPO = "https://github.com/remcostoeten/kiekje";
+    const METHODS = [
+      { id: "arch", label: "Arch", hint: "yay", commands: "yay -S kiekje-bin", note: "Installs the release binary from the AUR. yay -S kiekje builds the same version from source." },
+      { id: "script", label: "Any distro", hint: "curl", commands: "curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/master/get.sh | bash", note: "Picks the .deb, .rpm or tarball for your system from the newest release, checks it against SHA256SUMS and installs it with sudo." },
+      { id: "debian", label: "Debian, Ubuntu", hint: ".deb", commands: "sudo apt install ./kiekje_{PACKAGE}-1_amd64.deb", note: "Download the .deb first. The release also has an arm64 build.", file: "kiekje_{PACKAGE}-1_amd64.deb" },
+      { id: "fedora", label: "Fedora", hint: ".rpm", commands: "sudo dnf install ./kiekje-{PACKAGE}-1.x86_64.rpm", note: "Download the .rpm first. On openSUSE use sudo zypper install --allow-unsigned-rpm with the same file.", file: "kiekje-{PACKAGE}-1.x86_64.rpm" },
+      { id: "flatpak", label: "Flatpak", hint: "flatpak", commands: "flatpak install --user ./kiekje.flatpak", note: "Download kiekje.flatpak first. The sandbox captures through the portals, which is slower than the native package on Plasma and Hyprland.", file: "kiekje.flatpak" },
+      { id: "nix", label: "Nix", hint: "nix", commands: "nix profile install github:remcostoeten/kiekje", note: "Needs the nix-command and flakes experimental features." },
+      { id: "source", label: "Source", hint: "cargo", commands: "git clone https://github.com/remcostoeten/kiekje.git\ncd kiekje\ncargo install --path . --locked\nkiekje install-desktop-file", note: "Needs Rust 1.85 or newer, GTK 4.14 and gtk4-layer-shell 1.1." },
+    ];
+    const ICONS = {
+      copy: '<svg class="o-i-copy" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.75C5 1.78 5.78 1 6.75 1h6.5c.97 0 1.75.78 1.75 1.75v6.5c0 .97-.78 1.75-1.75 1.75h-6.5C5.78 11 5 10.22 5 9.25v-6.5Zm1.75-.25a.25.25 0 0 0-.25.25v6.5c0 .14.11.25.25.25h6.5c.14 0 .25-.11.25-.25v-6.5a.25.25 0 0 0-.25-.25h-6.5ZM2.75 5a.75.75 0 0 1 .75.75v7.5c0 .14.11.25.25.25h7.5a.75.75 0 0 1 0 1.5h-7.5A1.75 1.75 0 0 1 2 13.25v-7.5A.75.75 0 0 1 2.75 5Z"/></svg>',
+      check: '<svg class="o-i-check" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.75.75 0 1 1 1.06-1.06L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>',
+      file: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.75 1.5A1.75 1.75 0 0 0 2 3.25v9.5c0 .97.78 1.75 1.75 1.75h8.5c.97 0 1.75-.78 1.75-1.75V5.56c0-.46-.18-.9-.51-1.23L10.67 1.5c-.33-.33-.77-.51-1.23-.51H3.75Zm0 1.5h5V5.25c0 .97.78 1.75 1.75 1.75h2v5.75a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25v-9.5c0-.14.11-.25.25-.25Zm6.5.56L11.94 5.5H10.5a.25.25 0 0 1-.25-.25V3.56Z"/></svg>',
+      down: '<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.75a.75.75 0 0 1 .75.75v8.69l2.97-2.97a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L3.22 9.28a.75.75 0 0 1 1.06-1.06l2.97 2.97V2.5A.75.75 0 0 1 8 1.75Z"/></svg>',
+    };
+
+    const tablist = root.querySelector("[data-tabs]");
+    const panel = root.querySelector("[data-panel]");
+    const uid = "poc-opus-" + Math.random().toString(36).slice(2, 7);
+    const motion = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let active = 0;
+    let copyTimer = 0;
+
+    function fill(template) {
+      return template.replaceAll("{PACKAGE}", PACKAGE);
+    }
+
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function tokenClass(token, index, previous) {
+      if (token === "|" || token === "sudo") return "t-dim";
+      if (index === 0 || previous === "|" || previous === "sudo") return "t-cmd";
+      if (token.startsWith("-")) return "t-flag";
+      if (token.includes("://") || token.startsWith("github:")) return "t-url";
+      if (token.startsWith("./") || token === ".") return "t-path";
+      return "t-arg";
+    }
+
+    function renderLine(line) {
+      const row = el("span", "o-line");
+      const body = el("span");
+      const tokens = line.split(" ");
+      tokens.forEach((token, index) => {
+        if (index > 0) body.append(" ");
+        body.append(el("span", tokenClass(token, index, tokens[index - 1]), token));
+      });
+      row.append(body);
+      return row;
+    }
+
+    function step(number, title, main) {
+      const item = el("li", "o-step");
+      if (main) item.dataset.main = "";
+      const num = el("span", "o-num", String(number));
+      num.setAttribute("aria-hidden", "true");
+      const body = el("div");
+      body.append(el("p", "o-step-title", title));
+      item.append(num, body);
+      return { item, body };
+    }
+
+    async function copy(button, text) {
+      const label = button.querySelector("[data-label]");
+      try {
+        await navigator.clipboard.writeText(text);
+        button.dataset.copied = "true";
+        button.setAttribute("aria-label", "Copied");
+        label.textContent = "Copied";
+        window.clearTimeout(copyTimer);
+        copyTimer = window.setTimeout(() => {
+          button.dataset.copied = "false";
+          button.setAttribute("aria-label", "Copy command");
+          label.textContent = "Copy";
+        }, 1600);
+      } catch {
+        // Without clipboard permission the command stays selectable in the block.
+      }
+    }
+
+    function renderPanel() {
+      const method = METHODS[active];
+      const commands = fill(method.commands);
+      const file = method.file ? fill(method.file) : null;
+      const lines = commands.split("\n");
+      panel.replaceChildren();
+      panel.id = uid + "-panel";
+      panel.setAttribute("aria-labelledby", uid + "-tab-" + method.id);
+
+      const head = el("div", "o-panel-head");
+      head.append(el("h3", "", method.label), el("p", "", method.note));
+
+      const steps = el("ol", "o-steps");
+      let n = 1;
+
+      if (file) {
+        const s = step(n++, "Download the package");
+        const link = el("a", "o-file");
+        link.href = `${REPO}/releases/download/v${VERSION}/${file}`;
+        const icon = el("span", "o-file-icon");
+        icon.innerHTML = ICONS.file;
+        const text = el("span", "o-file-text");
+        text.append(el("span", "o-file-name", file), el("span", "o-file-meta", "From the v" + VERSION + " release on GitHub"));
+        const go = el("span", "o-file-go");
+        go.innerHTML = ICONS.down;
+        link.append(icon, text, go);
+        link.setAttribute("aria-label", "Download " + file);
+        s.body.append(link);
+        steps.append(s.item);
+      }
+
+      const run = step(n++, lines.length > 1 ? "Run these in a terminal" : "Run in a terminal", true);
+      const term = el("div", "o-term");
+      const bar = el("div", "o-term-bar");
+      bar.append(el("span", "o-term-meta", lines.length > 1 ? lines.length + " commands" : "terminal"));
+      const button = el("button", "o-copy");
+      button.type = "button";
+      button.dataset.copied = "false";
+      button.setAttribute("aria-label", "Copy command");
+      button.innerHTML = ICONS.copy + ICONS.check;
+      const label = el("span", "", "Copy");
+      label.dataset.label = "";
+      label.setAttribute("aria-live", "polite");
+      button.append(label);
+      button.addEventListener("click", () => copy(button, commands));
+      bar.append(button);
+      const pre = el("pre", "o-code");
+      const code = el("code");
+      lines.forEach((line) => code.append(renderLine(line)));
+      pre.append(code);
+      term.append(bar, pre);
+      run.body.append(term);
+      steps.append(run.item);
+
+      const start = step(n++, "Start Kiekje");
+      const after = el("p", "o-after");
+      after.innerHTML =
+        'Start it with <code>kiekje daemon</code>, then run <code>kiekje doctor</code> to see what your session supports. Plasma needs <code>kiekje install-desktop-file</code> once, Hyprland the <code>source</code> line that doctor prints. <a class="o-inline-link" href="/docs/guide/getting-started">Getting started</a>';
+      start.body.append(after);
+      steps.append(start.item);
+
+      panel.append(head, steps);
+
+      if (motion) {
+        [head, ...steps.children].forEach((node, index) => {
+          node.classList.add("o-enter");
+          node.style.setProperty("--i", String(index));
+        });
+      }
+    }
+
+    function select(index, focus) {
+      active = index;
+      tablist.querySelectorAll('[role="tab"]').forEach((tab, i) => {
+        const on = i === index;
+        tab.setAttribute("aria-selected", String(on));
+        tab.tabIndex = on ? 0 : -1;
+        if (on && focus) tab.focus();
+      });
+      renderPanel();
+    }
+
+    function nextIndex(key, index, last) {
+      switch (key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          return index === last ? 0 : index + 1;
+        case "ArrowLeft":
+        case "ArrowUp":
+          return index === 0 ? last : index - 1;
+        case "Home":
+          return 0;
+        case "End":
+          return last;
+        default:
+          return -1;
+      }
+    }
+
+    METHODS.forEach((method, index) => {
+      const tab = el("button", "o-tab");
+      tab.type = "button";
+      tab.id = uid + "-tab-" + method.id;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", uid + "-panel");
+      const dot = el("span", "o-dot");
+      dot.setAttribute("aria-hidden", "true");
+      const hint = el("span", "o-tab-hint", method.hint);
+      hint.setAttribute("aria-hidden", "true");
+      tab.append(dot, el("span", "o-tab-label", method.label), hint);
+      tab.addEventListener("click", () => {
+        if (index !== active) select(index, false);
+      });
+      tab.addEventListener("keydown", (event) => {
+        const next = nextIndex(event.key, active, METHODS.length - 1);
+        if (next < 0) return;
+        event.preventDefault();
+        select(next, true);
+      });
+      tablist.append(tab);
+    });
+
+    const narrow = window.matchMedia("(max-width: 760px)");
+    function orient() {
+      tablist.setAttribute("aria-orientation", narrow.matches ? "horizontal" : "vertical");
+    }
+    narrow.addEventListener("change", orient);
+    orient();
+    select(0, false);
+  })();
+</script>

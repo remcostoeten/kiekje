@@ -1,0 +1,47 @@
+{
+  "name": "kiekje-landing",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "dev": "vite dev",
+    "docs:build": "bun run scripts/build-docs.ts",
+    "build": "bun run docs:build && vite build",
+    "build:dev": "bun run docs:build && vite build --mode development",
+    "preview": "vite preview",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@tanstack/react-router": "1.170.41",
+    "@tanstack/react-start": "1.168.60",
+    "@tanstack/router-plugin": "1.168.42",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.2.1",
+    "vite-tsconfig-paths": "^6.0.2"
+  },
+  "devDependencies": {
+    "@lovable.dev/vite-tanstack-config": "2.26.5",
+    "@testing-library/jest-dom": "^6.6.0",
+    "@testing-library/react": "^16.0.0",
+    "@types/node": "^22.16.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "jsdom": "^20.0.3",
+    "nitro": "3.0.260603-beta",
+    "oxfmt": "^0.76.0",
+    "oxlint": "^1.91.0",
+    "typescript": "^5.8.3",
+    "vite": "8.1.5",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "rolldown": "1.2.1"
+  }
+}
