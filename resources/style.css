@@ -1829,7 +1829,7 @@ window.kiekje-dock {
 }
 
 .dock-trigger {
-  background-color: rgba(0, 0, 0, 0.01);
+  background-color: color-mix(in srgb, var(--ground) 1%, transparent);
 }
 
 .dock {

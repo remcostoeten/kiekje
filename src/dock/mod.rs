@@ -244,12 +244,24 @@ fn on_outer_edge(monitors: &[LogicalRect], index: usize, corner: Corner) -> bool
         .enumerate()
         .filter(|(other, _)| *other != index)
         .all(|(_, other)| {
-            let touches = if corner.is_left() {
+            let beside = if corner.is_left() {
                 other.right() == rect.x
             } else {
                 other.x == rect.right()
             };
-            !(touches && other.y < bottom && other.bottom() > top)
+            let alongside = beside && other.y < bottom && other.bottom() > top;
+            let stacked = if corner.is_top() {
+                other.bottom() == rect.y
+            } else {
+                other.y == rect.bottom()
+            };
+            let edge = if corner.is_left() {
+                rect.x
+            } else {
+                rect.right() - 1
+            };
+            let continues = stacked && other.x <= edge && other.right() > edge;
+            !(alongside || continues)
         })
 }
 
@@ -642,6 +654,19 @@ mod tests {
         let monitors = [tall, lower];
         assert!(on_outer_edge(&monitors, 0, Corner::TopRight));
         assert!(!on_outer_edge(&monitors, 0, Corner::BottomRight));
+    }
+
+    #[test]
+    fn skips_a_corner_where_a_stacked_monitor_continues_the_edge() {
+        let monitors = [screen(0, 0), screen(0, 1080)];
+        assert!(!on_outer_edge(&monitors, 0, Corner::BottomLeft));
+        assert!(!on_outer_edge(&monitors, 0, Corner::BottomRight));
+        assert!(on_outer_edge(&monitors, 0, Corner::TopLeft));
+        assert!(!on_outer_edge(&monitors, 1, Corner::TopRight));
+        assert!(on_outer_edge(&monitors, 1, Corner::BottomRight));
+        let offset = [screen(0, 0), screen(1920, 1080)];
+        assert!(on_outer_edge(&offset, 0, Corner::BottomLeft));
+        assert!(on_outer_edge(&offset, 0, Corner::BottomRight));
     }
 
     #[test]
