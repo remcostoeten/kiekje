@@ -1,0 +1,775 @@
+.kk-how {
+  --kk-play: 3.4s;
+  --kk-move: cubic-bezier(0.45, 0, 0.2, 1);
+  display: grid;
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  gap: 48px;
+  align-items: center;
+}
+
+.kk-how-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kk-how-step {
+  padding: 16px 18px 18px;
+  border-radius: var(--radius-lg);
+  transition: background-color 300ms var(--ease);
+}
+.kk-how-step[data-state="active"] {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+.kk-how-index {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--accent-text);
+  font: 500 12px/1 var(--mono);
+  transition: color 300ms var(--ease);
+}
+.kk-how-bar {
+  position: relative;
+  flex: 1;
+  height: 1px;
+  overflow: hidden;
+  background: var(--stroke-hi);
+}
+.kk-how-bar i {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: opacity 300ms var(--ease);
+}
+.kk-how-step h3 {
+  margin: 12px 0 0;
+  color: var(--fg);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: color 300ms var(--ease);
+}
+.kk-how-step p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.55;
+  text-wrap: pretty;
+  transition: color 300ms var(--ease);
+}
+.kk-how-step[data-state="idle"] .kk-how-index,
+.kk-how-step[data-state="done"] .kk-how-index {
+  color: var(--faint);
+}
+.kk-how-step[data-state="idle"] h3,
+.kk-how-step[data-state="done"] h3 {
+  color: var(--muted);
+}
+.kk-how-step[data-state="idle"] p,
+.kk-how-step[data-state="done"] p {
+  color: var(--faint);
+}
+.kk-how-step[data-state="done"] .kk-how-bar i {
+  transform: none;
+  opacity: 0.4;
+}
+.kk-how[data-motion="hold"] .kk-how-bar i {
+  animation-play-state: paused;
+}
+
+.kk-how-stage {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--stroke);
+  border-radius: 14px;
+  background: var(--raised);
+}
+.kk-how-stage .kk-art {
+  display: block;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  margin: 0;
+  padding: 0;
+}
+.kk-art .kk-x-dot {
+  fill: var(--accent);
+  stroke: none;
+}
+.kk-art .kk-x-handles rect,
+.kk-art .kk-x-loupe rect {
+  fill: var(--accent);
+  stroke: none;
+}
+.kk-art .kk-x-tile {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.kk-art .kk-x-act {
+  opacity: 0;
+}
+.kk-art .kk-x-region {
+  transform-box: fill-box;
+  transform-origin: 0 0;
+}
+.kk-art .kk-x-fly {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+.kk-art .kk-x-arrow-line {
+  stroke-dasharray: 53;
+}
+.kk-art .kk-x-check {
+  stroke-dasharray: 11;
+}
+
+.kk-how-stage[data-step="trigger"] .kk-x-keep {
+  animation: kk-x-out var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="key"] .kk-x-src-key,
+.kk-how-stage[data-step="trigger"][data-source="tray"] .kk-x-src-tray,
+.kk-how-stage[data-step="trigger"][data-source="cli"] .kk-x-src-cli {
+  animation: kk-x-press var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="key"] .kk-x-flash-key,
+.kk-how-stage[data-step="trigger"][data-source="tray"] .kk-x-flash-tray,
+.kk-how-stage[data-step="trigger"][data-source="cli"] .kk-x-flash-cli {
+  animation: kk-x-flash var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="key"] .kk-x-bead-key {
+  animation: kk-x-bead-key var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="tray"] .kk-x-bead-tray {
+  animation: kk-x-bead-tray var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="cli"] .kk-x-bead-cli {
+  animation: kk-x-bead-cli var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="key"] .kk-x-again-key {
+  animation: kk-x-again-key var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="tray"] .kk-x-again-tray {
+  animation: kk-x-again-tray var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"][data-source="cli"] .kk-x-again-cli {
+  animation: kk-x-again-cli var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"] .kk-x-inst {
+  animation: kk-x-inst var(--kk-play) both;
+}
+.kk-how-stage[data-step="trigger"] .kk-x-stop {
+  animation: kk-x-stop var(--kk-play) both;
+}
+
+.kk-how-stage[data-step="freeze"] :is(.kk-x-sel, .kk-x-done) {
+  opacity: 0;
+}
+.kk-how-stage[data-step="freeze"] .kk-x-grab {
+  animation: kk-x-grab var(--kk-play) both;
+}
+.kk-how-stage[data-step="freeze"] .kk-x-shutter {
+  animation: kk-x-shutter var(--kk-play) both;
+}
+.kk-how-stage[data-step="freeze"] .kk-x-frame {
+  animation: kk-x-lift var(--kk-play) both;
+}
+.kk-how-stage[data-step="freeze"] .kk-x-lbl {
+  animation: kk-x-in var(--kk-play) both;
+}
+
+.kk-how-stage[data-step="select"] .kk-x-done {
+  opacity: 0;
+}
+.kk-how-stage[data-step="select"] .kk-x-cursor {
+  animation: kk-x-show var(--kk-play) both;
+}
+.kk-how-stage[data-step="select"] .kk-x-loupe {
+  animation: kk-x-loupe var(--kk-play) both;
+}
+.kk-how-stage[data-step="select"] .kk-x-drag {
+  animation: kk-x-drag var(--kk-play) both;
+}
+.kk-how-stage[data-step="select"] .kk-x-region {
+  animation: kk-x-grow var(--kk-play) both;
+}
+.kk-how-stage[data-step="select"] :is(.kk-x-handles, .kk-x-size) {
+  animation: kk-x-pop var(--kk-play) both;
+}
+.kk-how-stage[data-step="select"] .kk-x-arrow-line {
+  animation: kk-x-line var(--kk-play) both;
+}
+.kk-how-stage[data-step="select"] .kk-x-arrow-head {
+  animation: kk-x-head var(--kk-play) both;
+}
+
+.kk-how-stage[data-step="keep"] .kk-x-fly {
+  animation: kk-x-flight var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] .kk-x-to-clip {
+  animation: kk-x-to-clip var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] .kk-x-to-file {
+  animation: kk-x-to-file var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] .kk-x-to-gal {
+  animation: kk-x-to-gal var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] .kk-x-lit-file {
+  animation: kk-x-lit-file var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] :is(.kk-x-lit-clip, .kk-x-lit-gal) {
+  animation: kk-x-lit var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] .kk-x-toast {
+  animation: kk-x-toast var(--kk-play) both;
+}
+.kk-how-stage[data-step="keep"] .kk-x-check {
+  animation: kk-x-check var(--kk-play) both;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .kk-how-step[data-state="active"] .kk-how-bar i {
+    animation: kk-bar var(--kk-play) linear both;
+  }
+}
+
+@keyframes kk-bar {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes kk-x-out {
+  0% {
+    opacity: 1;
+  }
+  12%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes kk-x-in {
+  0%,
+  50% {
+    opacity: 0;
+  }
+  66%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes kk-x-press {
+  0%,
+  4% {
+    transform: none;
+  }
+  9% {
+    transform: translate(0, 1.5px);
+  }
+  16%,
+  100% {
+    transform: none;
+  }
+}
+@keyframes kk-x-flash {
+  0%,
+  5% {
+    opacity: 0;
+  }
+  9% {
+    opacity: 1;
+  }
+  30%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes kk-x-bead-key {
+  0%,
+  12% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  21% {
+    transform: translate(14.9px, 10.5px);
+  }
+  30% {
+    transform: translate(26px, 33.5px);
+  }
+  39% {
+    transform: translate(37.1px, 56.5px);
+  }
+  48% {
+    transform: translate(52px, 67px);
+    opacity: 1;
+  }
+  52%,
+  100% {
+    transform: translate(52px, 67px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-bead-tray {
+  0%,
+  12% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  21% {
+    transform: translate(5.9px, 3.4px);
+  }
+  30% {
+    transform: translate(10px, 11px);
+  }
+  39% {
+    transform: translate(14.1px, 18.6px);
+  }
+  48% {
+    transform: translate(20px, 22px);
+    opacity: 1;
+  }
+  52%,
+  100% {
+    transform: translate(20px, 22px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-bead-cli {
+  0%,
+  12% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  14% {
+    opacity: 1;
+  }
+  21% {
+    transform: translate(5.9px, -2.3px);
+  }
+  30% {
+    transform: translate(10px, -7.5px);
+  }
+  39% {
+    transform: translate(14.1px, -12.7px);
+  }
+  48% {
+    transform: translate(20px, -15px);
+    opacity: 1;
+  }
+  52%,
+  100% {
+    transform: translate(20px, -15px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-inst {
+  0%,
+  46% {
+    opacity: 0;
+  }
+  52%,
+  66% {
+    opacity: 1;
+  }
+  84%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes kk-x-again-key {
+  0%,
+  58% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  66% {
+    transform: translate(14.9px, 10.5px);
+  }
+  72% {
+    transform: translate(26px, 33.5px);
+  }
+  78% {
+    transform: translate(37.1px, 56.5px);
+    opacity: 1;
+  }
+  82%,
+  100% {
+    transform: translate(37.1px, 56.5px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-again-tray {
+  0%,
+  58% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  68% {
+    transform: translate(5.9px, 3.4px);
+  }
+  76% {
+    transform: translate(10px, 11px);
+    opacity: 1;
+  }
+  80%,
+  100% {
+    transform: translate(10px, 11px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-again-cli {
+  0%,
+  58% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  60% {
+    opacity: 1;
+  }
+  68% {
+    transform: translate(5.9px, -2.3px);
+  }
+  76% {
+    transform: translate(10px, -7.5px);
+    opacity: 1;
+  }
+  80%,
+  100% {
+    transform: translate(10px, -7.5px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-stop {
+  0%,
+  74% {
+    opacity: 0;
+  }
+  79%,
+  86% {
+    opacity: 1;
+  }
+  96%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes kk-x-grab {
+  0% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+  4% {
+    transform: translate(5.9px, -4.5px);
+  }
+  8% {
+    transform: translate(10px, -14.5px);
+  }
+  12% {
+    transform: translate(14.1px, -24.5px);
+  }
+  16% {
+    transform: translate(16px, -29px);
+    opacity: 1;
+  }
+  20%,
+  100% {
+    transform: translate(16px, -29px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-shutter {
+  0%,
+  14% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.16;
+  }
+  34%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes kk-x-lift {
+  0%,
+  16% {
+    transform: translate(6px, 6px);
+    opacity: 0;
+  }
+  24% {
+    opacity: 1;
+  }
+  52%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+}
+@keyframes kk-x-show {
+  0% {
+    opacity: 0;
+  }
+  6%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes kk-x-loupe {
+  0%,
+  10% {
+    opacity: 0;
+  }
+  16%,
+  56% {
+    opacity: 1;
+  }
+  64%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes kk-x-drag {
+  0%,
+  12% {
+    transform: translate(0, 0);
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  50%,
+  100% {
+    transform: translate(70px, 46px);
+  }
+}
+@keyframes kk-x-grow {
+  0%,
+  12% {
+    transform: scale(0.02);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+  }
+  13% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes kk-x-pop {
+  0%,
+  52% {
+    opacity: 0;
+  }
+  58%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes kk-x-line {
+  0%,
+  63.9% {
+    stroke-dashoffset: 53;
+    opacity: 0;
+  }
+  64% {
+    stroke-dashoffset: 53;
+    opacity: 1;
+  }
+  82%,
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+@keyframes kk-x-head {
+  0%,
+  80% {
+    opacity: 0;
+  }
+  86%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes kk-x-flight {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0;
+  }
+  6% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  16% {
+    transform: translate(38px, -20px) scale(0.85);
+  }
+  26% {
+    transform: translate(96px, -30px) scale(0.65);
+  }
+  36% {
+    transform: translate(150px, -16px) scale(0.42);
+  }
+  46% {
+    transform: translate(186px, 6px) scale(0.26);
+    opacity: 1;
+  }
+  50%,
+  100% {
+    transform: translate(186px, 6px) scale(0.26);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-to-clip {
+  0%,
+  46% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  48% {
+    opacity: 1;
+  }
+  53% {
+    transform: translate(2.8px, -18.1px);
+  }
+  58% {
+    transform: translate(5.4px, -36px);
+  }
+  63% {
+    transform: translate(8.6px, -50.9px);
+  }
+  68% {
+    transform: translate(13px, -60px);
+    opacity: 1;
+  }
+  71%,
+  100% {
+    transform: translate(13px, -60px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-to-file {
+  0%,
+  46% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  48% {
+    opacity: 1;
+  }
+  60% {
+    transform: translate(13px, 0);
+    opacity: 1;
+  }
+  63%,
+  100% {
+    transform: translate(13px, 0);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-to-gal {
+  0%,
+  46% {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+  48% {
+    opacity: 1;
+  }
+  53% {
+    transform: translate(2.8px, 19.6px);
+  }
+  58% {
+    transform: translate(5.4px, 37.1px);
+  }
+  63% {
+    transform: translate(7.3px, 51px);
+  }
+  68% {
+    transform: translate(10px, 60px);
+    opacity: 1;
+  }
+  71%,
+  100% {
+    transform: translate(10px, 60px);
+    opacity: 0;
+  }
+}
+@keyframes kk-x-lit-file {
+  0%,
+  60% {
+    opacity: 0;
+  }
+  64%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes kk-x-lit {
+  0%,
+  68% {
+    opacity: 0;
+  }
+  72%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes kk-x-toast {
+  0%,
+  72% {
+    transform: translate(0, 6px);
+    opacity: 0;
+  }
+  84%,
+  100% {
+    transform: translate(0, 0);
+    opacity: 1;
+  }
+}
+@keyframes kk-x-check {
+  0%,
+  80% {
+    stroke-dashoffset: 11;
+  }
+  92%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (max-width: 1000px) {
+  .kk-how {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .kk-how-stage {
+    order: -1;
+  }
+  .kk-how-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .kk-how-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

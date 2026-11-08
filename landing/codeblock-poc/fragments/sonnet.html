@@ -1,0 +1,920 @@
+<style>
+  .poc-sonnet {
+    --pocs-flag: color-mix(in srgb, var(--accent-text) 72%, var(--muted));
+    --pocs-path: color-mix(in srgb, var(--heading) 78%, var(--accent-text));
+    --pocs-wash: color-mix(in srgb, var(--fg) 6%, transparent);
+    --pocs-wash-strong: color-mix(in srgb, var(--fg) 11%, transparent);
+    --pocs-accent-wash: color-mix(in srgb, var(--accent) 14%, transparent);
+    --pocs-accent-strong: color-mix(in srgb, var(--accent) 24%, transparent);
+    padding: clamp(72px, 9vw, 120px) 0;
+    border-top: 1px solid var(--stroke);
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .poc-sonnet *,
+  .poc-sonnet *::before,
+  .poc-sonnet *::after {
+    box-sizing: border-box;
+  }
+  .poc-sonnet .pocs-container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 clamp(20px, 5vw, 64px);
+  }
+  .poc-sonnet .pocs-head {
+    max-width: 660px;
+    margin-bottom: clamp(32px, 4.5vw, 52px);
+  }
+  .poc-sonnet .pocs-head h2 {
+    margin: 0;
+    color: var(--heading);
+    font-size: clamp(30px, 3.4vw, 42px);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+  }
+  .poc-sonnet .pocs-head p {
+    margin: 18px 0 0;
+    color: var(--muted);
+    font-size: 17px;
+    text-wrap: pretty;
+  }
+
+  .poc-sonnet .pocs-console {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    border: 1px solid var(--stroke-hi);
+    border-radius: 16px;
+    background: var(--deep);
+    overflow: hidden;
+  }
+
+  .poc-sonnet .pocs-rail {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px;
+    border-right: 1px solid var(--stroke);
+    background: var(--raised);
+  }
+  .poc-sonnet .pocs-thumb {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    border-radius: 8px;
+    background: var(--pocs-accent-wash);
+    pointer-events: none;
+    transition:
+      transform 250ms var(--ease),
+      width 250ms var(--ease),
+      height 250ms var(--ease);
+  }
+  .poc-sonnet .pocs-thumb[data-ready="false"] {
+    transition: none;
+  }
+  .poc-sonnet .pocs-tab {
+    position: relative;
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 14px var(--sans);
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-sonnet .pocs-tab-meta {
+    color: var(--faint);
+    font: 400 12px var(--mono);
+    transition: color 150ms ease;
+  }
+  .poc-sonnet .pocs-tab[aria-selected="true"] {
+    color: var(--heading);
+  }
+  .poc-sonnet .pocs-tab[aria-selected="true"] .pocs-tab-meta {
+    color: var(--accent-text);
+  }
+  .poc-sonnet .pocs-tab:focus-visible {
+    outline: 0;
+    background: var(--pocs-accent-strong);
+    color: var(--heading);
+  }
+  .poc-sonnet .pocs-tab:focus-visible .pocs-tab-meta {
+    color: var(--accent-text);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .poc-sonnet .pocs-tab:hover {
+      background: var(--pocs-wash);
+      color: var(--heading);
+    }
+    .poc-sonnet .pocs-tab[aria-selected="true"]:hover {
+      background: transparent;
+    }
+  }
+
+  .poc-sonnet .pocs-pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: radial-gradient(
+      70% 90% at 100% 0%,
+      color-mix(in srgb, var(--accent) 7%, transparent),
+      transparent 70%
+    );
+  }
+  .poc-sonnet .pocs-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 52px;
+    padding: 10px 12px 10px 20px;
+    border-bottom: 1px solid var(--stroke);
+  }
+  .poc-sonnet .pocs-bar-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    color: var(--faint);
+    font-size: 13px;
+  }
+  .poc-sonnet .pocs-bar-title svg {
+    flex: none;
+  }
+  .poc-sonnet .pocs-bar-name {
+    overflow: hidden;
+    color: var(--heading);
+    font-size: 14px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .poc-sonnet .pocs-bar-count {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .poc-sonnet .pocs-copy {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 7px;
+    height: 32px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--pocs-wash);
+    color: var(--muted);
+    font: 500 13px var(--sans);
+    cursor: pointer;
+    transition:
+      transform 150ms var(--ease),
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-sonnet .pocs-copy:active {
+    transform: scale(0.97);
+  }
+  .poc-sonnet .pocs-copy:focus-visible {
+    outline: 0;
+    background: var(--pocs-wash-strong);
+    color: var(--heading);
+  }
+  .poc-sonnet .pocs-copy[data-copied="true"] {
+    background: var(--pocs-accent-wash);
+    color: var(--accent-text);
+  }
+  .poc-sonnet .pocs-copy[data-copied="true"] svg {
+    animation: pocs-pop 200ms var(--ease);
+  }
+  .poc-sonnet .pocs-copy-icon-check,
+  .poc-sonnet .pocs-copy[data-copied="true"] .pocs-copy-icon-copy {
+    display: none;
+  }
+  .poc-sonnet .pocs-copy[data-copied="true"] .pocs-copy-icon-check {
+    display: block;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .poc-sonnet .pocs-copy:hover {
+      background: var(--pocs-wash-strong);
+      color: var(--heading);
+    }
+    .poc-sonnet .pocs-copy[data-copied="true"]:hover {
+      background: var(--pocs-accent-strong);
+      color: var(--accent-text);
+    }
+  }
+  @keyframes pocs-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.6);
+    }
+  }
+
+  .poc-sonnet .pocs-file {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 16px 16px 0;
+    padding: 12px 14px;
+    border: 1px solid var(--stroke-hi);
+    border-radius: 10px;
+    background: var(--raised);
+    color: var(--muted);
+    font-size: 14px;
+    text-decoration: none;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-sonnet .pocs-file[hidden] {
+    display: none;
+  }
+  .poc-sonnet .pocs-file-label {
+    flex: none;
+  }
+  .poc-sonnet .pocs-file-name {
+    flex: 1;
+    min-width: 0;
+    color: var(--heading);
+    font: 400 13.5px var(--mono);
+    overflow-wrap: anywhere;
+  }
+  .poc-sonnet .pocs-file svg {
+    flex: none;
+    color: var(--accent-text);
+    transition: transform 180ms var(--ease);
+  }
+  .poc-sonnet .pocs-file:focus-visible {
+    outline: 0;
+    background: var(--pocs-accent-strong);
+    color: var(--heading);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .poc-sonnet .pocs-file:hover {
+      background: var(--pocs-accent-wash);
+      color: var(--heading);
+    }
+    .poc-sonnet .pocs-file:hover svg {
+      transform: translateY(2px);
+    }
+  }
+
+  .poc-sonnet .pocs-code {
+    margin: 0;
+    padding: 20px 24px 8px;
+    color: var(--heading);
+    font: 400 14px/1.75 var(--mono);
+  }
+  .poc-sonnet .pocs-code code {
+    display: block;
+    font: inherit;
+  }
+  .poc-sonnet .pocs-line {
+    display: flex;
+    gap: 14px;
+  }
+  .poc-sonnet .pocs-prompt {
+    flex: none;
+    color: var(--accent-text);
+    user-select: none;
+  }
+  .poc-sonnet .pocs-text {
+    flex: 1;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .poc-sonnet .t-cmd {
+    color: var(--heading);
+    font-weight: 500;
+  }
+  .poc-sonnet .t-pre {
+    color: var(--faint);
+  }
+  .poc-sonnet .t-sub {
+    color: var(--fg);
+  }
+  .poc-sonnet .t-flag {
+    color: var(--pocs-flag);
+  }
+  .poc-sonnet .t-url {
+    color: var(--muted);
+  }
+  .poc-sonnet .t-path {
+    color: var(--pocs-path);
+  }
+  .poc-sonnet .t-op {
+    color: var(--faint);
+  }
+
+  .poc-sonnet .pocs-note {
+    display: flex;
+    gap: 10px;
+    margin: 0;
+    padding: 12px 24px 22px;
+    color: var(--muted);
+    font-size: 14px;
+    text-wrap: pretty;
+  }
+  .poc-sonnet .pocs-note svg {
+    flex: none;
+    margin-top: 3px;
+    color: var(--faint);
+  }
+
+  .poc-sonnet .pocs-after {
+    display: flex;
+    gap: 14px;
+    grid-column: 1 / -1;
+    margin: 0;
+    padding: 18px 22px;
+    border-top: 1px solid var(--stroke);
+    background: var(--raised);
+    color: var(--muted);
+    font-size: 14px;
+    text-wrap: pretty;
+  }
+  .poc-sonnet .pocs-after > svg {
+    flex: none;
+    margin-top: 3px;
+    color: var(--accent-text);
+  }
+  .poc-sonnet .pocs-after code {
+    padding: 2px 6px;
+    border-radius: 5px;
+    background: var(--pocs-wash);
+    color: var(--heading);
+    font: 400 13px var(--mono);
+    white-space: nowrap;
+  }
+  .poc-sonnet .pocs-inline-link {
+    border-radius: 3px;
+    color: var(--accent-text);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
+    text-underline-offset: 3px;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-sonnet .pocs-inline-link:focus-visible {
+    outline: 0;
+    background: var(--pocs-accent-strong);
+    color: var(--heading);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .poc-sonnet .pocs-inline-link:hover {
+      background: var(--pocs-accent-wash);
+      color: var(--heading);
+    }
+  }
+
+  .poc-sonnet .pocs-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 24px;
+  }
+  .poc-sonnet .pocs-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    height: 44px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 8px;
+    font: 500 14px var(--sans);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      transform 150ms var(--ease),
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-sonnet .pocs-btn:active {
+    transform: scale(0.97);
+  }
+  .poc-sonnet .pocs-btn svg {
+    transition: transform 180ms var(--ease);
+  }
+  .poc-sonnet .pocs-btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .poc-sonnet .pocs-btn-primary:focus-visible {
+    outline: 0;
+    background: color-mix(in srgb, var(--accent) 80%, #fff);
+  }
+  .poc-sonnet .pocs-btn-ghost {
+    background: transparent;
+    color: var(--fg);
+  }
+  .poc-sonnet .pocs-btn-ghost:focus-visible {
+    outline: 0;
+    background: var(--pocs-wash-strong);
+    color: var(--heading);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .poc-sonnet .pocs-btn-primary:hover {
+      background: color-mix(in srgb, var(--accent) 88%, #fff);
+    }
+    .poc-sonnet .pocs-btn-primary:hover svg {
+      transform: translateX(3px);
+    }
+    .poc-sonnet .pocs-btn-ghost:hover {
+      background: var(--pocs-wash);
+      color: var(--heading);
+    }
+  }
+
+  .poc-sonnet .pocs-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  @media (max-width: 760px) {
+    .poc-sonnet .pocs-head p {
+      font-size: 16px;
+    }
+    .poc-sonnet .pocs-console {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .poc-sonnet .pocs-rail {
+      flex-direction: row;
+      overflow-x: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--stroke);
+      scrollbar-width: none;
+    }
+    .poc-sonnet .pocs-rail::-webkit-scrollbar {
+      display: none;
+    }
+    .poc-sonnet .pocs-tab {
+      height: 40px;
+    }
+    .poc-sonnet .pocs-tab-meta {
+      display: none;
+    }
+    .poc-sonnet .pocs-bar {
+      padding-left: 16px;
+    }
+    .poc-sonnet .pocs-code {
+      padding: 16px 16px 4px;
+      font-size: 13px;
+    }
+    .poc-sonnet .pocs-note {
+      padding: 10px 16px 18px;
+    }
+    .poc-sonnet .pocs-file {
+      margin: 14px 12px 0;
+    }
+    .poc-sonnet .pocs-file-label {
+      display: none;
+    }
+    .poc-sonnet .pocs-after {
+      padding: 16px;
+    }
+    .poc-sonnet .pocs-btn-primary {
+      width: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .poc-sonnet .pocs-thumb,
+    .poc-sonnet .pocs-tab,
+    .poc-sonnet .pocs-copy,
+    .poc-sonnet .pocs-file,
+    .poc-sonnet .pocs-file svg,
+    .poc-sonnet .pocs-btn,
+    .poc-sonnet .pocs-btn svg {
+      transition-duration: 0.01ms;
+    }
+    .poc-sonnet .pocs-copy[data-copied="true"] svg {
+      animation: none;
+    }
+  }
+</style>
+
+<section class="poc poc-sonnet" id="install" aria-labelledby="pocs-title">
+  <div class="pocs-container">
+    <header class="pocs-head">
+      <h2 id="pocs-title">Install</h2>
+      <p>
+        Kiekje 0.1.0-alpha.12 is a pre-release. The binary links gtk4-layer-shell statically, so
+        the only runtime dependency is GTK 4.14 or newer. Every release has x86_64 and aarch64
+        builds with a SHA256SUMS file.
+      </p>
+    </header>
+
+    <div class="pocs-console">
+      <div class="pocs-rail" role="tablist" aria-label="Install method" data-rail>
+        <span class="pocs-thumb" data-thumb data-ready="false" aria-hidden="true"></span>
+      </div>
+
+      <div class="pocs-pane" role="tabpanel" id="pocs-panel" data-pane>
+        <div class="pocs-bar">
+          <div class="pocs-bar-title">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2.5"></rect>
+              <path d="m6 8 2.5 2L6 12M10.5 12.5H14"></path>
+            </svg>
+            <span class="pocs-bar-name" data-name></span>
+            <span class="pocs-bar-count" data-count></span>
+          </div>
+          <button type="button" class="pocs-copy" data-copy aria-label="Copy command">
+            <svg class="pocs-copy-icon-copy" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M7 7V5.5A1.5 1.5 0 0 1 8.5 4h6A1.5 1.5 0 0 1 16 5.5v6a1.5 1.5 0 0 1-1.5 1.5H13M5.5 7h6A1.5 1.5 0 0 1 13 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 4 14.5v-6A1.5 1.5 0 0 1 5.5 7z"></path>
+            </svg>
+            <svg class="pocs-copy-icon-check" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4.5 10.5 8 14l7.5-8"></path>
+            </svg>
+            <span data-copy-label>Copy</span>
+          </button>
+        </div>
+
+        <a class="pocs-file" data-file hidden>
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 3.5V13M6.5 9.5 10 13l3.5-3.5M4 12.5v2A2.5 2.5 0 0 0 6.5 17h7a2.5 2.5 0 0 0 2.5-2.5v-2"></path>
+          </svg>
+          <span class="pocs-file-label">Download</span>
+          <code class="pocs-file-name" data-file-name></code>
+        </a>
+
+        <pre class="pocs-code"><code data-code></code></pre>
+
+        <p class="pocs-note">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="10" cy="10" r="7"></circle>
+            <path d="M10 9v4.5M10 6.5v.01"></path>
+          </svg>
+          <span data-note></span>
+        </p>
+      </div>
+
+      <p class="pocs-after">
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7 4.5v11l8.5-5.5z"></path>
+        </svg>
+        <span>
+          Start it with <code>kiekje daemon</code>, then run <code>kiekje doctor</code> to see what
+          your session supports. Plasma needs <code>kiekje install-desktop-file</code> once,
+          Hyprland the <code>source</code> line that doctor prints.
+          <a class="pocs-inline-link" href="/docs/guide/getting-started">Getting started</a>
+        </span>
+      </p>
+    </div>
+
+    <div class="pocs-links">
+      <a class="pocs-btn pocs-btn-primary" href="https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.12">
+        All files for 0.1.0-alpha.12
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 10h12m0 0-4.5-4.5M16 10l-4.5 4.5"></path>
+        </svg>
+      </a>
+      <a class="pocs-btn pocs-btn-ghost" href="/docs/guide/install">
+        Install guide
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16h9a1.5 1.5 0 0 0 1.5-1.5V12M11 4h5v5M16 4l-7 7"></path>
+        </svg>
+      </a>
+      <a class="pocs-btn pocs-btn-ghost" href="/docs/releases/">
+        Release notes
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16h9a1.5 1.5 0 0 0 1.5-1.5V12M11 4h5v5M16 4l-7 7"></path>
+        </svg>
+      </a>
+    </div>
+
+    <span class="pocs-sr" role="status" aria-live="polite" data-status></span>
+  </div>
+</section>
+
+<script>
+  (() => {
+    const root = document.querySelector(".poc-sonnet");
+    if (!root) return;
+
+    const REPO = "https://github.com/remcostoeten/kiekje";
+    const VERSION = "0.1.0-alpha.12";
+    const PACKAGE = VERSION.replaceAll("-", ".");
+
+    const METHODS = [
+      {
+        id: "arch",
+        label: "Arch",
+        meta: "AUR",
+        commands: "yay -S kiekje-bin",
+        note: "Installs the release binary from the AUR. yay -S kiekje builds the same version from source.",
+      },
+      {
+        id: "script",
+        label: "Any distro",
+        meta: "curl",
+        commands: "curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/master/get.sh | bash",
+        note: "Picks the .deb, .rpm or tarball for your system from the newest release, checks it against SHA256SUMS and installs it with sudo.",
+      },
+      {
+        id: "debian",
+        label: "Debian, Ubuntu",
+        meta: ".deb",
+        commands: "sudo apt install ./kiekje_{PACKAGE}-1_amd64.deb",
+        note: "Download the .deb first. The release also has an arm64 build.",
+        file: "kiekje_{PACKAGE}-1_amd64.deb",
+      },
+      {
+        id: "fedora",
+        label: "Fedora",
+        meta: ".rpm",
+        commands: "sudo dnf install ./kiekje-{PACKAGE}-1.x86_64.rpm",
+        note: "Download the .rpm first. On openSUSE use sudo zypper install --allow-unsigned-rpm with the same file.",
+        file: "kiekje-{PACKAGE}-1.x86_64.rpm",
+      },
+      {
+        id: "flatpak",
+        label: "Flatpak",
+        meta: ".flatpak",
+        commands: "flatpak install --user ./kiekje.flatpak",
+        note: "Download kiekje.flatpak first. The sandbox captures through the portals, which is slower than the native package on Plasma and Hyprland.",
+        file: "kiekje.flatpak",
+      },
+      {
+        id: "nix",
+        label: "Nix",
+        meta: "flake",
+        commands: "nix profile install github:remcostoeten/kiekje",
+        note: "Needs the nix-command and flakes experimental features.",
+      },
+      {
+        id: "source",
+        label: "Source",
+        meta: "cargo",
+        commands:
+          "git clone https://github.com/remcostoeten/kiekje.git\ncd kiekje\ncargo install --path . --locked\nkiekje install-desktop-file",
+        note: "Needs Rust 1.85 or newer, GTK 4.14 and gtk4-layer-shell 1.1.",
+      },
+    ];
+
+    const SUBCOMMAND_HOSTS = new Set(["yay", "apt", "dnf", "flatpak", "nix", "cargo", "git", "kiekje"]);
+
+    const rail = root.querySelector("[data-rail]");
+    const thumb = root.querySelector("[data-thumb]");
+    const pane = root.querySelector("[data-pane]");
+    const nameEl = root.querySelector("[data-name]");
+    const countEl = root.querySelector("[data-count]");
+    const codeEl = root.querySelector("[data-code]");
+    const noteEl = root.querySelector("[data-note]");
+    const fileEl = root.querySelector("[data-file]");
+    const fileNameEl = root.querySelector("[data-file-name]");
+    const copyBtn = root.querySelector("[data-copy]");
+    const copyLabel = root.querySelector("[data-copy-label]");
+    const status = root.querySelector("[data-status]");
+    if (!rail || !thumb || !pane || !codeEl || !copyBtn) return;
+
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const narrow = window.matchMedia("(max-width: 760px)");
+    const fill = (value) => value.replaceAll("{PACKAGE}", PACKAGE);
+
+    const tabs = METHODS.map((method) => {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.setAttribute("role", "tab");
+      tab.id = "pocs-tab-" + method.id;
+      tab.setAttribute("aria-controls", "pocs-panel");
+      tab.setAttribute("aria-selected", "false");
+      tab.tabIndex = -1;
+      tab.className = "pocs-tab";
+      const label = document.createElement("span");
+      label.textContent = method.label;
+      const meta = document.createElement("span");
+      meta.className = "pocs-tab-meta";
+      meta.textContent = method.meta;
+      tab.append(label, meta);
+      rail.append(tab);
+      return tab;
+    });
+
+    function tokenize(line) {
+      const parts = line.split(/(\s+)/);
+      const frag = document.createDocumentFragment();
+      let word = 0;
+      let cmdSeen = false;
+      for (const part of parts) {
+        if (part === "") continue;
+        if (/^\s+$/.test(part)) {
+          frag.append(part);
+          continue;
+        }
+        const span = document.createElement("span");
+        span.textContent = part;
+        if (part === "|") {
+          span.className = "t-op";
+          cmdSeen = false;
+        } else if (!cmdSeen && part === "sudo") {
+          span.className = "t-pre";
+        } else if (!cmdSeen) {
+          span.className = "t-cmd";
+          cmdSeen = true;
+          word = 0;
+        } else if (/^https?:\/\//.test(part) || part.startsWith("github:")) {
+          span.className = "t-url";
+          word += 1;
+        } else if (part.startsWith("-")) {
+          span.className = "t-flag";
+          word += 1;
+        } else if (part.startsWith("./") || /\.(deb|rpm|flatpak)$/.test(part) || part === ".") {
+          span.className = "t-path";
+          word += 1;
+        } else {
+          if (word === 0 && SUBCOMMAND_HOSTS.has(line.trim().split(/\s+/).find((w) => w !== "sudo") || "")) {
+            span.className = "t-sub";
+          }
+          word += 1;
+        }
+        frag.append(span);
+      }
+      return frag;
+    }
+
+    let current = -1;
+    let copyTimer = 0;
+    let commandText = "";
+
+    function placeThumb(animate) {
+      const tab = tabs[current];
+      if (!tab) return;
+      thumb.dataset.ready = animate ? "true" : "false";
+      thumb.style.width = tab.offsetWidth + "px";
+      thumb.style.height = tab.offsetHeight + "px";
+      thumb.style.transform = "translate(" + tab.offsetLeft + "px, " + tab.offsetTop + "px)";
+    }
+
+    function revealTab(tab) {
+      if (!narrow.matches) return;
+      const left = tab.offsetLeft - (rail.clientWidth - tab.offsetWidth) / 2;
+      rail.scrollTo({ left, behavior: reduceMotion.matches ? "auto" : "smooth" });
+    }
+
+    function resetCopy() {
+      window.clearTimeout(copyTimer);
+      copyBtn.dataset.copied = "false";
+      copyBtn.setAttribute("aria-label", "Copy command");
+      copyLabel.textContent = "Copy";
+    }
+
+    function animateIn(elements) {
+      if (reduceMotion.matches) return;
+      elements.forEach((element, index) => {
+        element.animate(
+          [
+            { opacity: 0, transform: "translateY(6px)" },
+            { opacity: 1, transform: "translateY(0)" },
+          ],
+          { duration: 220, delay: index * 40, easing: "cubic-bezier(0.23, 1, 0.32, 1)", fill: "backwards" },
+        );
+      });
+    }
+
+    function select(index, focus) {
+      const method = METHODS[index];
+      if (!method) return;
+      const first = current === -1;
+      current = index;
+
+      tabs.forEach((tab, i) => {
+        const on = i === index;
+        tab.setAttribute("aria-selected", on ? "true" : "false");
+        tab.tabIndex = on ? 0 : -1;
+      });
+      pane.setAttribute("aria-labelledby", tabs[index].id);
+
+      commandText = fill(method.commands);
+      const lines = commandText.split("\n");
+      nameEl.textContent = method.label;
+      countEl.textContent = lines.length === 1 ? "1 command" : lines.length + " commands";
+      noteEl.textContent = method.note;
+
+      codeEl.textContent = "";
+      const lineEls = lines.map((line) => {
+        const row = document.createElement("span");
+        row.className = "pocs-line";
+        const prompt = document.createElement("span");
+        prompt.className = "pocs-prompt";
+        prompt.setAttribute("aria-hidden", "true");
+        prompt.textContent = "$";
+        const text = document.createElement("span");
+        text.className = "pocs-text";
+        text.append(tokenize(line));
+        row.append(prompt, text);
+        codeEl.append(row);
+        return row;
+      });
+
+      if (method.file) {
+        const file = fill(method.file);
+        fileEl.hidden = false;
+        fileEl.href = REPO + "/releases/download/v" + VERSION + "/" + file;
+        fileNameEl.textContent = file;
+      } else {
+        fileEl.hidden = true;
+        fileEl.removeAttribute("href");
+        fileNameEl.textContent = "";
+      }
+
+      resetCopy();
+      placeThumb(!first);
+      revealTab(tabs[index]);
+      if (focus) tabs[index].focus();
+      if (!first) animateIn([...(method.file ? [fileEl] : []), ...lineEls, noteEl]);
+    }
+
+    function nextIndex(key, index) {
+      const last = METHODS.length - 1;
+      switch (key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          return index === last ? 0 : index + 1;
+        case "ArrowLeft":
+        case "ArrowUp":
+          return index === 0 ? last : index - 1;
+        case "Home":
+          return 0;
+        case "End":
+          return last;
+        default:
+          return -1;
+      }
+    }
+
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => select(index, false));
+      tab.addEventListener("keydown", (event) => {
+        const next = nextIndex(event.key, index);
+        if (next === -1) return;
+        event.preventDefault();
+        select(next, true);
+      });
+    });
+
+    function syncOrientation() {
+      rail.setAttribute("aria-orientation", narrow.matches ? "horizontal" : "vertical");
+    }
+    syncOrientation();
+    narrow.addEventListener("change", () => {
+      syncOrientation();
+      placeThumb(false);
+    });
+
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(commandText);
+      } catch {
+        status.textContent = "Copy failed, select the command and copy it manually";
+        return;
+      }
+      window.clearTimeout(copyTimer);
+      copyBtn.dataset.copied = "true";
+      copyBtn.setAttribute("aria-label", "Copied");
+      copyLabel.textContent = "Copied";
+      status.textContent = "Copied";
+      copyTimer = window.setTimeout(resetCopy, 1600);
+    });
+
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => placeThumb(false)).observe(rail);
+    }
+    window.addEventListener("resize", () => placeThumb(false));
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => placeThumb(false));
+    }
+
+    select(0, false);
+  })();
+</script>

@@ -3,6 +3,9 @@ import { crateVersion, releaseVersions } from "./releases";
 
 const repo = "https://github.com/remcostoeten/kiekje";
 const version = crateVersion();
+const base = process.env.DOCS_BASE ?? "/kiekje/";
+const outDir = process.env.DOCS_OUT_DIR;
+const embedded = base !== "/kiekje/";
 
 export default defineConfig({
   lang: "en",
@@ -10,7 +13,8 @@ export default defineConfig({
   titleTemplate: ":title | Kiekje",
   description:
     "A screenshot tray app for Linux. It freezes the screen when you press the shortcut, then you pick what to keep.",
-  base: "/kiekje/",
+  base,
+  ...(outDir ? { outDir } : {}),
   srcExclude: ["branding/**"],
   cleanUrls: true,
   lastUpdated: true,
@@ -22,7 +26,7 @@ export default defineConfig({
     },
   },
   head: [
-    ["link", { rel: "icon", type: "image/png", href: "/kiekje/favicon.png" }],
+    ["link", { rel: "icon", type: "image/png", href: `${base}favicon.png` }],
     ["meta", { name: "theme-color", content: "#0a0a0a" }],
     ["meta", { property: "og:type", content: "website" }],
     ["meta", { property: "og:title", content: "Kiekje" }],
@@ -38,6 +42,7 @@ export default defineConfig({
   themeConfig: {
     logo: { src: "/kiekje-icon.png", alt: "Kiekje" },
     siteTitle: "Kiekje",
+    ...(embedded ? { logoLink: "/" } : {}),
     nav: [
       { text: "Guide", link: "/guide/introduction", activeMatch: "^/guide/" },
       { text: "Reference", link: "/reference/cli", activeMatch: "^/reference/" },

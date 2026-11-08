@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "jsx-a11y", "unicorn", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "func-style": [
+      "error",
+      "declaration",
+      {
+        "allowArrowFunctions": false
+      }
+    ],
+    "prefer-arrow-callback": "error",
+    "react/react-in-jsx-scope": "off",
+    "react-hooks/rules-of-hooks": "error",
+    "react-hooks/exhaustive-deps": "warn",
+    "no-underscore-dangle": [
+      "warn",
+      {
+        "allow": ["__lovableEvents", "__lovableReportRuntimeError", "__timeline"]
+      }
+    ],
+    "import/no-unassigned-import": "off",
+    "unicorn/no-array-fill-with-reference-type": "off"
+  },
+  "ignorePatterns": ["src/routeTree.gen.ts", "dist", ".output", "node_modules"]
+}

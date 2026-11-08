@@ -1,0 +1,731 @@
+<style>
+  .poc-fable {
+    padding: clamp(80px, 10vw, 136px) 0;
+    border-top: 1px solid var(--stroke);
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  .poc-fable *,
+  .poc-fable *::before,
+  .poc-fable *::after {
+    box-sizing: border-box;
+  }
+  .poc-fable :focus-visible {
+    outline: none;
+  }
+  .poc-fable code,
+  .poc-fable pre {
+    font-family: var(--mono);
+  }
+  .poc-fable a {
+    color: inherit;
+    text-decoration: none;
+  }
+  .poc-fable-container {
+    width: 100%;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 clamp(20px, 5vw, 64px);
+  }
+  .poc-fable-head {
+    max-width: 660px;
+    margin-bottom: clamp(40px, 5vw, 64px);
+  }
+  .poc-fable-head h2 {
+    margin: 0;
+    color: var(--heading);
+    font-size: clamp(30px, 3.4vw, 42px);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    text-wrap: balance;
+  }
+  .poc-fable-head p {
+    margin: 18px 0 0;
+    color: var(--muted);
+    font-size: 17px;
+    text-wrap: pretty;
+  }
+
+  .poc-fable-session {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--stroke);
+    border-radius: 16px;
+  }
+
+  .poc-fable-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0;
+  }
+  .poc-fable-tab {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    column-gap: 10px;
+    width: 100%;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 14px var(--sans);
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-fable-tab-hint {
+    color: var(--faint);
+    font: 400 12px var(--mono);
+    transition: color 150ms ease;
+  }
+  .poc-fable-tab[aria-selected="true"] {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--heading);
+  }
+  .poc-fable-tab[aria-selected="true"] .poc-fable-tab-hint {
+    color: var(--accent-text);
+  }
+  .poc-fable-tab:focus-visible {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    color: var(--heading);
+  }
+  .poc-fable-tab:focus-visible .poc-fable-tab-hint {
+    color: var(--heading);
+  }
+
+  .poc-fable-term {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border: 1px solid var(--stroke-hi);
+    border-radius: 10px;
+    background: var(--deep);
+    overflow: hidden;
+  }
+  .poc-fable-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 46px;
+    padding: 6px 8px 6px 18px;
+    border-bottom: 1px solid var(--stroke);
+  }
+  .poc-fable-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    color: var(--heading);
+    font: 500 13px var(--sans);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .poc-fable-title small {
+    color: var(--faint);
+    font: 400 12px var(--mono);
+  }
+  .poc-fable-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 32px;
+    padding: 0 12px 0 10px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 13px var(--sans);
+    cursor: pointer;
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-fable-copy svg {
+    flex: none;
+  }
+  .poc-fable-copy:focus-visible {
+    background: color-mix(in srgb, var(--fg) 11%, transparent);
+    color: var(--heading);
+  }
+  .poc-fable-copy[data-copied="true"] {
+    color: var(--accent-text);
+  }
+
+  .poc-fable-body {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: start;
+    padding: 18px 18px 20px;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .poc-fable-gutter {
+    display: flex;
+    justify-content: center;
+    height: 24px;
+    color: var(--faint);
+    font: 500 14px/24px var(--mono);
+    user-select: none;
+  }
+  .poc-fable-gutter svg {
+    margin-top: 4px;
+  }
+  .poc-fable-gutter[data-kind="cmd"] {
+    color: var(--accent-text);
+  }
+  .poc-fable-cmd {
+    margin: 0;
+    color: var(--fg);
+    font: 400 14px/24px var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .poc-fable-tok-prog {
+    color: var(--heading);
+    font-weight: 500;
+  }
+  .poc-fable-tok-flag {
+    color: var(--muted);
+  }
+  .poc-fable-tok-path {
+    color: color-mix(in srgb, var(--accent-text) 55%, var(--fg));
+  }
+  .poc-fable-tok-pipe {
+    color: var(--faint);
+  }
+  .poc-fable-file {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    max-width: 100%;
+    margin-left: -6px;
+    padding: 0 6px;
+    border-radius: 6px;
+    color: var(--muted);
+    font: 400 14px/24px var(--sans);
+    transition:
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-fable-file code {
+    color: var(--heading);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+  .poc-fable-file:focus-visible {
+    background: color-mix(in srgb, var(--accent) 24%, transparent);
+    color: var(--heading);
+  }
+  .poc-fable-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 24px;
+    text-wrap: pretty;
+  }
+  .poc-fable-gap {
+    grid-column: 1 / -1;
+    height: 6px;
+  }
+
+  .poc-fable-then {
+    margin: 0;
+    padding: 14px 18px 16px;
+    border-top: 1px solid var(--stroke);
+    background: var(--raised);
+    color: var(--muted);
+    font-size: 14px;
+    text-wrap: pretty;
+  }
+  .poc-fable-then code {
+    padding: 1px 5px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--fg) 6%, transparent);
+    color: var(--fg);
+    font-size: 13px;
+  }
+  .poc-fable-inline {
+    color: var(--accent-text);
+    transition: color 150ms ease;
+  }
+  .poc-fable-inline:focus-visible {
+    color: var(--heading);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  .poc-fable-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 28px;
+  }
+  .poc-fable-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    height: 44px;
+    padding: 0 18px;
+    border: 0;
+    border-radius: 8px;
+    font: 500 14px var(--sans);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      transform 150ms var(--ease),
+      background-color 150ms ease,
+      color 150ms ease;
+  }
+  .poc-fable-btn:active {
+    transform: scale(0.97);
+  }
+  .poc-fable-btn svg {
+    transition: transform 180ms var(--ease);
+  }
+  .poc-fable-btn-primary {
+    background: var(--accent);
+    color: #ffffff;
+  }
+  .poc-fable-btn-primary:focus-visible {
+    background: color-mix(in srgb, var(--accent) 86%, #ffffff);
+  }
+  .poc-fable-btn-ghost {
+    background: transparent;
+    color: var(--fg);
+  }
+  .poc-fable-btn-ghost:focus-visible {
+    background: color-mix(in srgb, var(--fg) 11%, transparent);
+    color: var(--heading);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .poc-fable-tab:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      color: var(--heading);
+    }
+    .poc-fable-tab[aria-selected="true"]:hover {
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+    .poc-fable-copy:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      color: var(--heading);
+    }
+    .poc-fable-copy[data-copied="true"]:hover {
+      color: var(--accent-text);
+    }
+    .poc-fable-file:hover {
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      color: var(--heading);
+    }
+    .poc-fable-inline:hover {
+      color: var(--heading);
+    }
+    .poc-fable-btn-primary:hover {
+      background: color-mix(in srgb, var(--accent) 86%, #ffffff);
+    }
+    .poc-fable-btn-primary:hover svg {
+      transform: translateX(3px);
+    }
+    .poc-fable-btn-ghost:hover {
+      background: color-mix(in srgb, var(--fg) 6%, transparent);
+      color: var(--heading);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .poc-fable-session {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+      padding: 6px;
+      border-radius: 14px;
+    }
+    .poc-fable-rail {
+      flex-direction: row;
+      gap: 2px;
+      padding: 2px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .poc-fable-rail::-webkit-scrollbar {
+      display: none;
+    }
+    .poc-fable-tab {
+      display: inline-flex;
+      flex: none;
+      width: auto;
+      padding: 8px 12px;
+    }
+    .poc-fable-tab-hint {
+      display: none;
+    }
+    .poc-fable-bar {
+      padding-left: 14px;
+    }
+    .poc-fable-body {
+      padding: 14px 14px 16px;
+      column-gap: 8px;
+    }
+    .poc-fable-then {
+      padding: 12px 14px 14px;
+    }
+    .poc-fable-btn {
+      flex: 1 1 auto;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .poc-fable * {
+      transition-duration: 0ms !important;
+    }
+    .poc-fable-btn:active {
+      transform: none;
+    }
+  }
+</style>
+
+<section class="poc poc-fable" aria-labelledby="poc-fable-title">
+  <div class="poc-fable-container">
+    <header class="poc-fable-head">
+      <h2 id="poc-fable-title">Install</h2>
+      <p>
+        Kiekje 0.1.0-alpha.12 is a pre-release. The binary links gtk4-layer-shell statically, so
+        the only runtime dependency is GTK 4.14 or newer. Every release has x86_64 and aarch64
+        builds with a SHA256SUMS file.
+      </p>
+    </header>
+
+    <div class="poc-fable-session">
+      <div class="poc-fable-rail" role="tablist" aria-label="Install method"></div>
+
+      <div class="poc-fable-term" role="tabpanel" id="poc-fable-panel" tabindex="0">
+        <div class="poc-fable-bar">
+          <div class="poc-fable-title">
+            <span class="poc-fable-title-label"></span>
+            <small>v0.1.0-alpha.12</small>
+          </div>
+          <button type="button" class="poc-fable-copy" data-copied="false" aria-label="Copy command">
+            <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true">
+              <path class="poc-fable-ico-copy" d="M7 7V5.5A1.5 1.5 0 0 1 8.5 4h6A1.5 1.5 0 0 1 16 5.5v6a1.5 1.5 0 0 1-1.5 1.5H13M5.5 7h6A1.5 1.5 0 0 1 13 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 4 14.5v-6A1.5 1.5 0 0 1 5.5 7z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="poc-fable-copy-text" aria-live="polite">Copy</span>
+          </button>
+        </div>
+        <div class="poc-fable-body"></div>
+        <p class="poc-fable-then">
+          Start it with <code>kiekje daemon</code>, then run <code>kiekje doctor</code> to see what
+          your session supports. Plasma needs <code>kiekje install-desktop-file</code> once, Hyprland
+          the <code>source</code> line that doctor prints.
+          <a class="poc-fable-inline" href="/docs/guide/getting-started">Getting started</a>
+        </p>
+      </div>
+    </div>
+
+    <div class="poc-fable-links">
+      <a class="poc-fable-btn poc-fable-btn-primary" href="https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.12">
+        All files for 0.1.0-alpha.12
+        <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m0 0-4.5-4.5M16 10l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a class="poc-fable-btn poc-fable-btn-ghost" href="/docs/guide/install">
+        Install guide
+        <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16h9a1.5 1.5 0 0 0 1.5-1.5V12M11 4h5v5M16 4l-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+      <a class="poc-fable-btn poc-fable-btn-ghost" href="/docs/releases/">
+        Release notes
+        <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true"><path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16h9a1.5 1.5 0 0 0 1.5-1.5V12M11 4h5v5M16 4l-7 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+<script>
+  (function () {
+    var script = document.currentScript;
+    var root =
+      script && script.previousElementSibling && script.previousElementSibling.classList.contains("poc-fable")
+        ? script.previousElementSibling
+        : document.querySelector(".poc-fable");
+    if (!root) return;
+
+    var VERSION = "0.1.0-alpha.12";
+    var REPO = "https://github.com/remcostoeten/kiekje";
+    var EASE = "cubic-bezier(0.23, 1, 0.32, 1)";
+    var ICONS = {
+      copy: "M7 7V5.5A1.5 1.5 0 0 1 8.5 4h6A1.5 1.5 0 0 1 16 5.5v6a1.5 1.5 0 0 1-1.5 1.5H13M5.5 7h6A1.5 1.5 0 0 1 13 8.5v6a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 4 14.5v-6A1.5 1.5 0 0 1 5.5 7z",
+      check: "M4.5 10.5 8 14l7.5-8",
+      download: "M10 3.5V13M6.5 9.5 10 13l3.5-3.5M4 12.5v2A2.5 2.5 0 0 0 6.5 17h7a2.5 2.5 0 0 0 2.5-2.5v-2",
+    };
+    var METHODS = [
+      {
+        id: "arch",
+        label: "Arch",
+        hint: "AUR",
+        commands: "yay -S kiekje-bin",
+        note: "Installs the release binary from the AUR. yay -S kiekje builds the same version from source.",
+      },
+      {
+        id: "script",
+        label: "Any distro",
+        hint: "get.sh",
+        commands: "curl -fsSL https://raw.githubusercontent.com/remcostoeten/kiekje/master/get.sh | bash",
+        note: "Picks the .deb, .rpm or tarball for your system from the newest release, checks it against SHA256SUMS and installs it with sudo.",
+      },
+      {
+        id: "debian",
+        label: "Debian, Ubuntu",
+        hint: ".deb",
+        commands: "sudo apt install ./kiekje_{PACKAGE}-1_amd64.deb",
+        note: "Download the .deb first. The release also has an arm64 build.",
+        file: "kiekje_{PACKAGE}-1_amd64.deb",
+      },
+      {
+        id: "fedora",
+        label: "Fedora",
+        hint: ".rpm",
+        commands: "sudo dnf install ./kiekje-{PACKAGE}-1.x86_64.rpm",
+        note: "Download the .rpm first. On openSUSE use sudo zypper install --allow-unsigned-rpm with the same file.",
+        file: "kiekje-{PACKAGE}-1.x86_64.rpm",
+      },
+      {
+        id: "flatpak",
+        label: "Flatpak",
+        hint: ".flatpak",
+        commands: "flatpak install --user ./kiekje.flatpak",
+        note: "Download kiekje.flatpak first. The sandbox captures through the portals, which is slower than the native package on Plasma and Hyprland.",
+        file: "kiekje.flatpak",
+      },
+      {
+        id: "nix",
+        label: "Nix",
+        hint: "flake",
+        commands: "nix profile install github:remcostoeten/kiekje",
+        note: "Needs the nix-command and flakes experimental features.",
+      },
+      {
+        id: "source",
+        label: "Source",
+        hint: "cargo",
+        commands:
+          "git clone https://github.com/remcostoeten/kiekje.git\ncd kiekje\ncargo install --path . --locked\nkiekje install-desktop-file",
+        note: "Needs Rust 1.85 or newer, GTK 4.14 and gtk4-layer-shell 1.1.",
+      },
+    ];
+    var PROGRAMS = ["yay", "curl", "bash", "sudo", "apt", "dnf", "flatpak", "nix", "git", "cd", "cargo", "kiekje"];
+
+    var rail = root.querySelector(".poc-fable-rail");
+    var panel = root.querySelector(".poc-fable-term");
+    var body = root.querySelector(".poc-fable-body");
+    var title = root.querySelector(".poc-fable-title-label");
+    var copyButton = root.querySelector(".poc-fable-copy");
+    var copyIcon = copyButton.querySelector("path");
+    var copyText = copyButton.querySelector(".poc-fable-copy-text");
+    var reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    var activeId = METHODS[0].id;
+    var copyTimer = 0;
+    var tabs = [];
+
+    function fill(template) {
+      return template.replaceAll("{PACKAGE}", VERSION.replaceAll("-", "."));
+    }
+
+    function el(tag, className, text) {
+      var node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function icon(name) {
+      var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("width", "16");
+      svg.setAttribute("height", "16");
+      svg.setAttribute("viewBox", "0 0 20 20");
+      svg.setAttribute("aria-hidden", "true");
+      var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", ICONS[name]);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "currentColor");
+      path.setAttribute("stroke-width", "1.5");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      return svg;
+    }
+
+    function tokenClass(token, index) {
+      if (token === "|") return "poc-fable-tok-pipe";
+      if (/:\/\/|^\.\/|^github:/.test(token)) return "poc-fable-tok-path";
+      if (token.charAt(0) === "-") return "poc-fable-tok-flag";
+      if (index === 0 && PROGRAMS.indexOf(token) !== -1) return "poc-fable-tok-prog";
+      return "";
+    }
+
+    function renderCommand(line) {
+      var code = el("code", "poc-fable-cmd");
+      var parts = line.split(/(\s+)/);
+      var index = 0;
+      parts.forEach(function (part) {
+        if (part === "") return;
+        if (/^\s+$/.test(part)) {
+          code.appendChild(document.createTextNode(part));
+          return;
+        }
+        var cls = tokenClass(part, index);
+        var span = el("span", cls, part);
+        code.appendChild(span);
+        if (part === "sudo" || part === "|") index = 0;
+        else index += 1;
+      });
+      return code;
+    }
+
+    function row(kind, gutterChild, content) {
+      var gutter = el("span", "poc-fable-gutter");
+      gutter.setAttribute("data-kind", kind);
+      gutter.setAttribute("aria-hidden", "true");
+      gutter.appendChild(gutterChild);
+      body.appendChild(gutter);
+      body.appendChild(content);
+    }
+
+    function renderPanel(method) {
+      body.textContent = "";
+      title.textContent = method.label;
+      if (method.file) {
+        var file = fill(method.file);
+        var link = el("a", "poc-fable-file");
+        link.href = REPO + "/releases/download/v" + VERSION + "/" + file;
+        link.appendChild(document.createTextNode("Download "));
+        link.appendChild(el("code", "", file));
+        row("file", icon("download"), link);
+      }
+      fill(method.commands)
+        .split("\n")
+        .forEach(function (line) {
+          row("cmd", document.createTextNode("$"), renderCommand(line));
+        });
+      body.appendChild(el("span", "poc-fable-gap"));
+      row("note", document.createTextNode("#"), el("p", "poc-fable-note", method.note));
+      panel.setAttribute("aria-labelledby", "poc-fable-tab-" + method.id);
+      if (!reduced.matches && body.animate) {
+        body.animate(
+          [
+            { opacity: 0, transform: "translateY(4px)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { duration: 220, easing: EASE }
+        );
+      }
+    }
+
+    function select(id, focus) {
+      activeId = id;
+      var method = METHODS.find(function (item) {
+        return item.id === id;
+      });
+      tabs.forEach(function (tab) {
+        var selected = tab.getAttribute("data-id") === id;
+        tab.setAttribute("aria-selected", selected ? "true" : "false");
+        tab.tabIndex = selected ? 0 : -1;
+        if (selected && focus) {
+          tab.focus();
+          if (tab.scrollIntoView) tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      });
+      resetCopy();
+      renderPanel(method);
+    }
+
+    function nextIndex(key, index, last) {
+      switch (key) {
+        case "ArrowRight":
+        case "ArrowDown":
+          return index === last ? 0 : index + 1;
+        case "ArrowLeft":
+        case "ArrowUp":
+          return index === 0 ? last : index - 1;
+        case "Home":
+          return 0;
+        case "End":
+          return last;
+        default:
+          return -1;
+      }
+    }
+
+    function onTabKey(event) {
+      var index = METHODS.findIndex(function (item) {
+        return item.id === activeId;
+      });
+      var next = nextIndex(event.key, index, METHODS.length - 1);
+      if (next === -1) return;
+      event.preventDefault();
+      select(METHODS[next].id, true);
+    }
+
+    function resetCopy() {
+      window.clearTimeout(copyTimer);
+      copyButton.setAttribute("data-copied", "false");
+      copyButton.setAttribute("aria-label", "Copy command");
+      copyIcon.setAttribute("d", ICONS.copy);
+      copyText.textContent = "Copy";
+    }
+
+    function showCopied() {
+      copyButton.setAttribute("data-copied", "true");
+      copyButton.setAttribute("aria-label", "Copied");
+      copyIcon.setAttribute("d", ICONS.check);
+      copyText.textContent = "Copied";
+      window.clearTimeout(copyTimer);
+      copyTimer = window.setTimeout(resetCopy, 1600);
+    }
+
+    async function copy() {
+      var method = METHODS.find(function (item) {
+        return item.id === activeId;
+      });
+      try {
+        await navigator.clipboard.writeText(fill(method.commands));
+        showCopied();
+      } catch (error) {
+        // Without clipboard permission the command stays selectable in the block.
+      }
+    }
+
+    METHODS.forEach(function (method, index) {
+      var tab = el("button", "poc-fable-tab");
+      tab.type = "button";
+      tab.id = "poc-fable-tab-" + method.id;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("data-id", method.id);
+      tab.setAttribute("aria-controls", "poc-fable-panel");
+      tab.setAttribute("aria-selected", index === 0 ? "true" : "false");
+      tab.tabIndex = index === 0 ? 0 : -1;
+      tab.appendChild(el("span", "poc-fable-tab-label", method.label));
+      tab.appendChild(el("span", "poc-fable-tab-hint", method.hint));
+      tab.addEventListener("click", function () {
+        select(method.id, false);
+      });
+      tab.addEventListener("keydown", onTabKey);
+      rail.appendChild(tab);
+      tabs.push(tab);
+    });
+    copyButton.addEventListener("click", copy);
+    renderPanel(METHODS[0]);
+  })();
+</script>
