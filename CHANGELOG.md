@@ -4,6 +4,12 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 ## [Unreleased]
 
+## [0.1.0-alpha.13] - 2026-11-08
+
+### Added
+
+- An edge dock: push the pointer into a chosen screen corner and a column of buttons slides out for Capture every screen, Capture region, Record screen, Record a GIF of a region and Copy text from region. Turn it on and pick the corner in Settings, General, stored as `[dock] enabled` (off by default) and `[dock] corner`. Needs layer shell (KDE Plasma, Hyprland, Sway).
+
 ## [0.1.0-alpha.12] - 2026-11-06
 
 ### Added
@@ -187,7 +193,8 @@ All notable changes to Kiekje. The full notes for each release, including what w
 
 First alpha: region capture with an overlay, a gallery, an editor with shapes, text and crop, a tray, and settings.
 
-[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.12...HEAD
+[Unreleased]: https://github.com/remcostoeten/kiekje/compare/v0.1.0-alpha.13...HEAD
+[0.1.0-alpha.13]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.13
 [0.1.0-alpha.12]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.12
 [0.1.0-alpha.11]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.11
 [0.1.0-alpha.10]: https://github.com/remcostoeten/kiekje/releases/tag/v0.1.0-alpha.10
